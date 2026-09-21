@@ -21,8 +21,9 @@ export interface ManeuverOrder {
   targetUnitId?: string;
   targetFormation?: Formation;
   plannedTime: number; // in battle minutes from start (e.g. 0 to 540 for 9 hours)
+  dispatchArrivalTime?: number; // Time (in battle minutes) when the courier reaches the unit
   finalHeading?: number; // Total War arrival facing orientation
-  status: 'planned' | 'executing' | 'completed' | 'cancelled';
+  status: 'planned' | 'delivering' | 'executing' | 'completed' | 'cancelled';
 }
 
 export interface Unit {

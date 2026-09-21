@@ -814,7 +814,8 @@ export class SandtableRenderer {
     isExecuting: boolean,
     ghostUnit?: Unit,
     finalHeading?: number,
-    showMetrics?: boolean
+    showMetrics?: boolean,
+    isDelivering?: boolean
   ) {
     ctx.save();
 
@@ -852,7 +853,7 @@ export class SandtableRenderer {
     // 2. Translucent outer ribbon glow
     ctx.save();
     ctx.strokeStyle = color;
-    ctx.globalAlpha = 0.22;
+    ctx.globalAlpha = isDelivering ? 0.1 : 0.22;
     ctx.lineWidth = 7.5;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -871,7 +872,10 @@ export class SandtableRenderer {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    if (isExecuting) {
+    if (isDelivering) {
+      ctx.setLineDash([4, 6]);
+      ctx.globalAlpha = 0.6;
+    } else if (isExecuting) {
       ctx.setLineDash([9, 5]);
       ctx.lineDashOffset = -this.animFrame * 0.55;
     }
@@ -1007,6 +1011,7 @@ export class SandtableRenderer {
       const unit = units.find((u) => u.id === order.unitId);
       if (!unit) continue;
       const color = unit.faction === 'french' ? '#0033cc' : '#cc1111';
+      const isDelivering = order.status === 'delivering';
 
       this.renderTotalWarArrow(
         ctx,
@@ -1015,10 +1020,11 @@ export class SandtableRenderer {
         order.waypoints,
         order.curveControl,
         color,
-        true,
+        order.status === 'executing',
         unit,
         order.finalHeading,
-        false
+        false,
+        isDelivering
       );
     }
   }

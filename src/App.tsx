@@ -55,7 +55,6 @@ export const App: React.FC = () => {
         onToggleSymbology={() => setSymbology((s) => (s === 'tactical' ? 'nato' : 'tactical'))}
         isCinematicMode={isCinematicMode}
         onToggleCinematic={() => setIsCinematicMode((c) => !c)}
-        onOpenBriefing={() => setIsBriefingOpen(true)}
         isOOBOpen={isOOBOpen}
         onToggleOOB={() => setIsOOBOpen((v) => !v)}
         isDispatchesOpen={isDispatchesOpen}

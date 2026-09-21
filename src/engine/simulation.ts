@@ -145,20 +145,35 @@ export class BattleEngine {
       waypoints = generated;
     }
 
+    // COMMAND FRICTION: Calculate dispatch arrival time
+    let delayMinutes = 2.0; // Base command processing delay
+    if (unit && unit.type !== 'headquarters') {
+      const hq = this.state.units.find((u) => u.faction === unit.faction && u.type === 'headquarters' && u.status !== 'shattered');
+      if (hq) {
+        const dist = Math.hypot(hq.position.x - unit.position.x, hq.position.y - unit.position.y);
+        // Courier gallops at ~15 map units per battle minute
+        delayMinutes += dist / 15;
+      } else {
+        // No functioning HQ
+        delayMinutes += 5.0;
+      }
+    }
+
     const newOrder: ManeuverOrder = {
       ...order,
       destination: targetDest,
       finalHeading,
       waypoints,
+      dispatchArrivalTime: this.state.timeMinutes + delayMinutes,
       id: `order_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-      status: 'executing',
+      status: 'delivering',
     };
 
     if (unit) {
       unit.currentOrder = newOrder;
-      unit.status = order.type === 'assault' ? 'charging' : 'marching';
-      if (order.targetFormation) {
-        unit.formation = order.targetFormation;
+      // Note: Unit does NOT transition to 'marching' until the order arrives.
+      if (unit.status === 'idle') {
+        // Just remain idle, but with a pending order
       }
     }
 
@@ -168,7 +183,7 @@ export class BattleEngine {
     this.state.isRunning = true;
 
     this.addLog(
-      `${unit?.name || 'Unit'} issued order: ${order.type.toUpperCase()} toward coordinates (${Math.round(order.destination.x)}, ${Math.round(order.destination.y)}).`,
+      `${unit?.name || 'Unit'} issued ${order.type.toUpperCase()} order. Courier en route (ETA: +${Math.ceil(delayMinutes)}m).`,
       unit?.faction || 'french',
       'normal'
     );
@@ -532,6 +547,20 @@ export class BattleEngine {
 
       const order = unit.currentOrder;
       
+      // COMMAND FRICTION: Wait for courier
+      if (order.status === 'delivering') {
+        if (this.state.timeMinutes >= (order.dispatchArrivalTime || 0)) {
+          order.status = 'executing';
+          unit.status = order.type === 'assault' ? 'charging' : 'marching';
+          if (order.targetFormation) {
+            unit.formation = order.targetFormation;
+          }
+          this.addLog(`${unit.name} received dispatch and is now executing orders.`, unit.faction, 'normal');
+        } else {
+          continue; // Wait for the order to arrive
+        }
+      }
+
       // Target the active waypoint along the curved route, or final destination
       const currentTarget = (order.waypoints && order.waypoints.length > 0)
         ? order.waypoints[0]
@@ -632,16 +661,26 @@ export class BattleEngine {
     }
   }
 
-  private getTerrainSpeedModifier(pos: { x: number; y: number }): number {
+  public getTerrainAt(pos: { x: number; y: number }) {
     for (const feature of this.state.terrain) {
       if (feature.radius && feature.center) {
         const d = Math.hypot(pos.x - feature.center.x, pos.y - feature.center.y);
         if (d <= feature.radius) {
-          return feature.moveSpeedMod ?? 1.0;
+          return feature;
         }
       }
     }
-    return 1.0;
+    return null;
+  }
+
+  private getTerrainSpeedModifier(pos: { x: number; y: number }): number {
+    const feat = this.getTerrainAt(pos);
+    return feat?.moveSpeedMod ?? 1.0;
+  }
+
+  public getTerrainCover(pos: { x: number; y: number }): number {
+    const feat = this.getTerrainAt(pos);
+    return feat?.cover ?? 0.0;
   }
 
   private resolveCombat(effectiveSpeed: number) {
@@ -786,12 +825,16 @@ export class BattleEngine {
         power *= 2.2;
       }
     }
-    // Cavalry charging an exposed line flank
     if (attacker.type === 'cavalry' && defender.formation === 'line' && (isFlanking || isRear)) {
       power *= 2.2;
     }
 
-    // Elevation bonus (+20% if on higher ground like Pratzen Heights)
+    // Advanced Terrain Cover
+    const cover = this.getTerrainCover(defender.position);
+    power *= (1 - cover);
+
+    // Apply strength and fatigue decay
+    power *= Math.max(0.1, defender.fatigue > 80 ? 0.7 : 1.0);
     if (elevDiff > 20) {
       power *= 1.25;
     } else if (elevDiff < -20) {
@@ -801,10 +844,6 @@ export class BattleEngine {
     // Experience bonus
     if (attacker.experience === 'Elite Guard') power *= 1.35;
     else if (attacker.experience === 'Veteran') power *= 1.15;
-
-    // Village cover
-    const cover = this.getCoverModifier(defender.position);
-    power *= 1 - cover;
 
     // Base damage per second
     const baseDamage = (power * (attacker.strength / 1000) * 0.08 * effectiveSpeed);
@@ -829,18 +868,6 @@ export class BattleEngine {
       }
     }
     return 20; // baseline valley elevation
-  }
-
-  private getCoverModifier(pos: { x: number; y: number }): number {
-    for (const feature of this.state.terrain) {
-      if (feature.cover && feature.radius && feature.center) {
-        const d = Math.hypot(pos.x - feature.center.x, pos.y - feature.center.y);
-        if (d <= feature.radius) {
-          return feature.cover;
-        }
-      }
-    }
-    return 0;
   }
 
   private updateMoraleStatus(unit: Unit) {

@@ -166,24 +166,49 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({ unit, engine, onClose 
           </div>
         </div>
 
-        {/* Status Tag */}
-        <div className="flex items-center justify-between text-[10px] pt-1.5 border-t border-[#d4d4d8] font-bold uppercase mt-2">
-          <span className="text-neutral-500">SYS STATUS:</span>
-          <span
-            className={`px-1.5 py-0.5 border shadow-sm ${
-              unit.status === 'holding'
-                ? 'bg-[#f0fdf4] border-[#16a34a] text-[#16a34a]'
-                : unit.status === 'engaging'
-                ? 'bg-[#fef2f2] border-[#dc2626] text-[#dc2626]'
-                : unit.status === 'marching' || unit.status === 'charging'
-                ? 'bg-[#eff6ff] border-[#2563eb] text-[#2563eb]'
-                : unit.status === 'routing'
-                ? 'bg-[#fffbeb] border-[#d97706] text-[#d97706]'
-                : 'bg-white border-[#a1a1aa] text-black'
-            }`}
-          >
-            {unit.status}
-          </span>
+        {/* Terrain & Status Tag */}
+        <div className="flex flex-col gap-1.5 pt-1.5 border-t border-[#d4d4d8] font-bold uppercase mt-2 text-[10px]">
+          <div className="flex items-center justify-between">
+            <span className="text-neutral-500">TERRAIN:</span>
+            <span className="text-black text-right">
+              {engine.getTerrainAt(unit.position)?.name || 'OPEN GROUND'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-neutral-500">COVER BONUS:</span>
+            <span className={`${engine.getTerrainCover(unit.position) > 0 ? 'text-[#16a34a]' : 'text-black'}`}>
+              {Math.round(engine.getTerrainCover(unit.position) * 100)}%
+            </span>
+          </div>
+          <div className="flex items-center justify-between mt-1">
+            <span className="text-neutral-500">SYS STATUS:</span>
+            <span
+              className={`px-1.5 py-0.5 border shadow-sm ${
+                unit.status === 'holding'
+                  ? 'bg-[#f0fdf4] border-[#16a34a] text-[#16a34a]'
+                  : unit.status === 'engaging'
+                  ? 'bg-[#fef2f2] border-[#dc2626] text-[#dc2626]'
+                  : unit.status === 'marching' || unit.status === 'charging'
+                  ? 'bg-[#eff6ff] border-[#2563eb] text-[#2563eb]'
+                  : unit.status === 'routing'
+                  ? 'bg-[#fffbeb] border-[#d97706] text-[#d97706]'
+                  : 'bg-white border-[#a1a1aa] text-black'
+              }`}
+            >
+              {unit.status}
+            </span>
+          </div>
+          
+          {unit.currentOrder?.status === 'delivering' && (
+            <div className="flex items-center justify-between mt-1 bg-[#fffbeb] border border-[#d97706] px-1.5 py-0.5">
+              <span className="text-[#d97706] flex items-center gap-1">
+                ORDER PENDING
+              </span>
+              <span className="text-[#d97706]">
+                ETA: {Math.max(0, Math.ceil((unit.currentOrder.dispatchArrivalTime || 0) - engine.getState().timeMinutes))}m
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
