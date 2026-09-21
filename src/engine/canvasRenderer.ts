@@ -101,7 +101,7 @@ export class SandtableRenderer {
     this.renderHistoricalManeuvers(ctx, state);
 
     // 10. Active Orders & User Maneuver Caliper
-    this.renderActiveOrders(ctx, state.activeOrders, state.units);
+    this.renderActiveOrders(ctx, state.activeOrders, state.units, state.playerFaction);
     if (drawingOrder) {
       this.renderDraftingArrow(ctx, drawingOrder);
     }
@@ -759,43 +759,47 @@ export class SandtableRenderer {
       },
     ];
 
-    for (const v of alliedVectors) {
-      this.renderTotalWarArrow(ctx, v.start, v.end, undefined, v.control, '#cc1111', true);
+    if (state.playerFaction !== 'french') {
+      for (const v of alliedVectors) {
+        this.renderTotalWarArrow(ctx, v.start, v.end, undefined, v.control, '#cc1111', true);
+      }
     }
 
     // 2. French Counter-Assault Vectors (Blue dashed arrows)
-    if (state.timeMinutes >= 110) {
-      // Soult climbing the Pratzen heights
+    if (state.playerFaction === 'french') {
+      if (state.timeMinutes >= 110) {
+        // Soult climbing the Pratzen heights
+        this.renderTotalWarArrow(
+          ctx,
+          { x: 460, y: 260 },
+          { x: 550, y: 290 },
+          undefined,
+          { x: 500, y: 270 },
+          '#0033cc',
+          true
+        );
+        this.renderTotalWarArrow(
+          ctx,
+          { x: 460, y: 280 },
+          { x: 580, y: 340 },
+          undefined,
+          { x: 510, y: 310 },
+          '#0033cc',
+          true
+        );
+      }
+
+      // Davout forced march north from Raigern
       this.renderTotalWarArrow(
         ctx,
-        { x: 460, y: 260 },
-        { x: 550, y: 290 },
+        { x: 45, y: 615 },
+        { x: 35, y: 550 },
         undefined,
-        { x: 500, y: 270 },
-        '#0033cc',
-        true
-      );
-      this.renderTotalWarArrow(
-        ctx,
-        { x: 460, y: 280 },
-        { x: 580, y: 340 },
-        undefined,
-        { x: 510, y: 310 },
+        { x: 40, y: 580 },
         '#0033cc',
         true
       );
     }
-
-    // Davout forced march north from Raigern
-    this.renderTotalWarArrow(
-      ctx,
-      { x: 45, y: 615 },
-      { x: 35, y: 550 },
-      undefined,
-      { x: 40, y: 580 },
-      '#0033cc',
-      true
-    );
 
     ctx.restore();
   }
@@ -1006,10 +1010,11 @@ export class SandtableRenderer {
   }
 
   // Active Orders Drawing
-  private renderActiveOrders(ctx: CanvasRenderingContext2D, orders: ManeuverOrder[], units: Unit[]) {
+  private renderActiveOrders(ctx: CanvasRenderingContext2D, orders: ManeuverOrder[], units: Unit[], playerFaction: string) {
     for (const order of orders) {
       const unit = units.find((u) => u.id === order.unitId);
-      if (!unit) continue;
+      if (!unit || unit.faction !== playerFaction) continue; // HIDE ENEMY INTENT!
+
       const color = unit.faction === 'french' ? '#0033cc' : '#cc1111';
       const isDelivering = order.status === 'delivering';
 

@@ -1,6 +1,7 @@
 import { Unit, ManeuverOrder, Scenario, TerrainFeature, CombatLogEntry, BattleStateSnapshot, HistoricalEvent, Vector2D } from '../types/game';
 
 export interface SimulationState {
+  playerFaction: 'french' | 'allies';
   timeMinutes: number;
   isRunning: boolean;
   speedMultiplier: number;
@@ -31,6 +32,7 @@ export class BattleEngine {
 
   private createInitialState(): SimulationState {
     return {
+      playerFaction: 'french',
       timeMinutes: this.scenario.initialTimeMinutes,
       isRunning: true,
       speedMultiplier: 1,
