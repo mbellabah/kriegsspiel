@@ -3,32 +3,49 @@
 @tailwind utilities;
 
 @layer base {
-  body {
+  html, body, #root {
     margin: 0;
     padding: 0;
-    background-color: #1c1815;
-    color: #e6d8be;
+    background-color: #f4f4f5;
+    color: #18181b;
     font-family: 'EB Garamond', Georgia, serif;
     user-select: none;
     overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  canvas {
+    image-rendering: auto;
+    image-rendering: -webkit-optimize-contrast;
   }
 }
 
 /* Custom Antique Parchment Scrollbar */
 .custom-scrollbar::-webkit-scrollbar {
   width: 5px;
+  height: 4px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: #231911;
-  border-radius: 4px;
+  background: transparent;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #6b553c;
+  background: #a1a1aa;
   border-radius: 4px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #947653;
+  background: #71717a;
+}
+
+/* Hide scrollbar while preserving scroll behavior */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }

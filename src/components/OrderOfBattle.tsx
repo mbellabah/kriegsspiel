@@ -1,13 +1,17 @@
 import React, { useState } from 'react';
-import { Unit, Faction } from '../types/game';
+import { Unit, Faction, Vector2D } from '../types/game';
 import { BattleEngine } from '../engine/simulation';
-import { ChevronDown, ChevronRight, X, Users } from 'lucide-react';
+import { ChevronDown, ChevronRight, X, Users, Send, Eye, ArrowRightLeft, Shield } from 'lucide-react';
 
 interface OrderOfBattleProps {
   units: Unit[];
   selectedUnitId: string | null;
   engine: BattleEngine;
   onClose: () => void;
+  onDispatchCorps?: (corpsName: string) => void;
+  onHoverCorps?: (corpsName: string | null) => void;
+  onFocusLocation?: (loc: Vector2D) => void;
+  embedded?: boolean;
 }
 
 export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
@@ -15,18 +19,28 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
   selectedUnitId,
   engine,
   onClose,
+  onDispatchCorps,
+  onHoverCorps,
+  onFocusLocation,
+  embedded = false,
 }) => {
   const [activeTab, setActiveTab] = useState<Faction>('french');
   const [collapsedCorps, setCollapsedCorps] = useState<Record<string, boolean>>({});
+  const [transferringUnitId, setTransferringUnitId] = useState<string | null>(null);
+  const [newCorpsNameInput, setNewCorpsNameInput] = useState('');
+  const [isCreatingNewCorps, setIsCreatingNewCorps] = useState(false);
 
-  const filteredUnits = units.filter((u) => u.faction === activeTab);
+  const filteredUnits = units.filter((u) => u.faction === activeTab && u.status !== 'shattered');
 
-  // Group by corps
+  // Group units by corps
   const corpsGroups = filteredUnits.reduce<Record<string, Unit[]>>((acc, unit) => {
-    if (!acc[unit.corps]) acc[unit.corps] = [];
-    acc[unit.corps].push(unit);
+    const c = unit.corps || 'Unassigned / Independent';
+    if (!acc[c]) acc[c] = [];
+    acc[c].push(unit);
     return acc;
   }, {});
+
+  const allAvailableCorps = Object.keys(corpsGroups);
 
   const toggleCorps = (corpsName: string) => {
     setCollapsedCorps((prev) => ({
@@ -35,104 +49,274 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
     }));
   };
 
+  const handleTransfer = (unitId: string, targetCorps: string) => {
+    if (!targetCorps.trim()) return;
+    engine.transferUnitCorps(unitId, targetCorps.trim());
+    setTransferringUnitId(null);
+    setIsCreatingNewCorps(false);
+    setNewCorpsNameInput('');
+  };
+
+  const handleCenterOnCorps = (corpsUnits: Unit[]) => {
+    if (corpsUnits.length === 0) return;
+    let sumX = 0;
+    let sumY = 0;
+    for (const u of corpsUnits) {
+      sumX += u.position.x;
+      sumY += u.position.y;
+    }
+    const center = { x: sumX / corpsUnits.length, y: sumY / corpsUnits.length };
+    onFocusLocation?.(center);
+  };
+
   const totalMen = filteredUnits.reduce((sum, u) => sum + (u.type === 'artillery' ? 0 : u.strength), 0);
   const totalGuns = filteredUnits.reduce((sum, u) => sum + (u.type === 'artillery' ? u.strength : 0), 0);
 
+  const containerClasses = embedded
+    ? "flex-1 min-h-0 flex flex-col overflow-hidden bg-[#fbfbfa] text-black font-sans select-none"
+    : "absolute top-12 right-3 z-40 w-88 bg-[#fbfbfa] border-2 border-[#71717a] shadow-2xl rounded text-black font-sans select-none flex flex-col max-h-[calc(100vh-64px)] animate-in slide-in-from-right-2 duration-150";
+
+  const ContainerTag = embedded ? 'div' : 'aside';
+
   return (
-    <aside className="absolute top-14 left-4 z-40 w-80 bg-zinc-950/90 border border-zinc-800/90 backdrop-blur-md rounded-lg shadow-2xl p-3.5 text-zinc-100 select-none flex flex-col max-h-[calc(100vh-80px)]">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-zinc-800 pb-2 mb-2.5">
+    <ContainerTag className={containerClasses}>
+      {/* Light Theme Header matching NATO sandtable / WarRoomHUD */}
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#a1a1aa] bg-[#e4e4e7]">
         <div>
-          <h2 className="font-semibold text-xs tracking-wider uppercase text-zinc-100 flex items-center gap-1.5">
-            <Users size={13} className="text-blue-400" />
-            <span>Order of Battle</span>
+          <h2 className="font-mono text-xs font-bold uppercase tracking-wider text-black flex items-center gap-1.5">
+            <Users size={14} className="text-[#1e3a8a]" />
+            <span>Order of Battle (ORBAT)</span>
           </h2>
-          <span className="text-[11px] text-zinc-400 font-mono">
-            {totalMen.toLocaleString()} Men • {totalGuns} Guns
+          <span className="text-[10px] text-neutral-600 font-mono">
+            {totalMen.toLocaleString()} Men • {totalGuns} Guns • {Object.keys(corpsGroups).length} Formations
           </span>
         </div>
-        <button
-          onClick={onClose}
-          className="text-zinc-400 hover:text-white p-1 rounded hover:bg-zinc-800 transition-colors"
-          title="Close Panel"
-        >
-          <X size={15} />
-        </button>
+        {!embedded && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-neutral-500 hover:text-black p-1 rounded hover:bg-[#d4d4d8] transition-colors cursor-pointer"
+            title="Close ORBAT Panel"
+          >
+            <X size={15} />
+          </button>
+        )}
       </div>
 
       {/* Faction Switcher */}
-      <div className="grid grid-cols-2 gap-1.5 mb-3">
+      <div className="grid grid-cols-2 gap-1.5 p-2 bg-[#f4f4f5] border-b border-[#d4d4d8]">
         <button
-          onClick={() => setActiveTab('french')}
-          className={`py-1.5 rounded text-xs font-medium border transition-all ${
+          type="button"
+          onClick={() => {
+            setActiveTab('french');
+            setTransferringUnitId(null);
+          }}
+          className={`py-1 rounded text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer ${
             activeTab === 'french'
-              ? 'bg-blue-600/90 border-blue-500 text-white font-bold shadow-xs'
-              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:text-white'
+              ? 'bg-[#1e3a8a] border-[#1e40af] text-white shadow-xs'
+              : 'bg-white border-[#d4d4d8] text-neutral-700 hover:bg-[#f4f4f5]'
           }`}
         >
-          Blue Forces
+          French Corps (Blue)
         </button>
         <button
-          onClick={() => setActiveTab('allies')}
-          className={`py-1.5 rounded text-xs font-medium border transition-all ${
+          type="button"
+          onClick={() => {
+            setActiveTab('allies');
+            setTransferringUnitId(null);
+          }}
+          className={`py-1 rounded text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer ${
             activeTab === 'allies'
-              ? 'bg-red-600/90 border-red-500 text-white font-bold shadow-xs'
-              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:text-white'
+              ? 'bg-[#991b1b] border-[#b91c1c] text-white shadow-xs'
+              : 'bg-white border-[#d4d4d8] text-neutral-700 hover:bg-[#f4f4f5]'
           }`}
         >
-          Red Forces
+          Allied Columns (Red)
         </button>
       </div>
 
       {/* Formations Tree */}
-      <div className="overflow-y-auto space-y-1.5 flex-1 pr-1 custom-scrollbar">
+      <div className="overflow-y-auto space-y-2 p-2 flex-1 custom-scrollbar bg-[#fbfbfa]">
         {Object.entries(corpsGroups).map(([corpsName, corpsUnits]) => {
           const isCollapsed = collapsedCorps[corpsName];
-          const corpsStrength = corpsUnits.reduce((sum, u) => sum + u.strength, 0);
+          const corpsMen = corpsUnits.reduce((sum, u) => sum + (u.type === 'artillery' ? 0 : u.strength), 0);
+          const corpsGuns = corpsUnits.reduce((sum, u) => sum + (u.type === 'artillery' ? u.strength : 0), 0);
 
           return (
-            <div key={corpsName} className="bg-zinc-900/80 border border-zinc-800/80 rounded-md overflow-hidden">
-              <button
-                onClick={() => toggleCorps(corpsName)}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 bg-zinc-850 hover:bg-zinc-800 text-left transition-colors"
-              >
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-200">
-                  {isCollapsed ? <ChevronRight size={13} className="text-zinc-400" /> : <ChevronDown size={13} className="text-zinc-400" />}
-                  <span className="truncate max-w-[160px]">{corpsName}</span>
-                </div>
-                <span className="font-mono text-[10px] text-zinc-400">
-                  {corpsStrength.toLocaleString()}
-                </span>
-              </button>
+            <div
+              key={corpsName}
+              onMouseEnter={() => onHoverCorps?.(corpsName)}
+              onMouseLeave={() => onHoverCorps?.(null)}
+              className="bg-white border border-[#d4d4d8] rounded overflow-hidden shadow-2xs transition-all hover:border-[#1e3a8a]/60"
+            >
+              {/* Corps Header */}
+              <div className="w-full flex items-center justify-between px-2.5 py-1.5 bg-[#f4f4f5] hover:bg-[#eaeaea] text-left border-b border-[#e5e5e5] transition-colors">
+                <button
+                  type="button"
+                  onClick={() => toggleCorps(corpsName)}
+                  className="flex items-center gap-1.5 text-xs font-bold text-neutral-900 cursor-pointer flex-1 text-left"
+                >
+                  {isCollapsed ? (
+                    <ChevronRight size={13} className="text-neutral-500" />
+                  ) : (
+                    <ChevronDown size={13} className="text-neutral-500" />
+                  )}
+                  <div className="flex flex-col">
+                    <span className="truncate max-w-[155px] font-sans">{corpsName}</span>
+                    <span className="text-[9px] text-neutral-500 font-mono font-normal">
+                      {corpsUnits.length} Regiments • {corpsMen.toLocaleString()} Men {corpsGuns > 0 ? `• ${corpsGuns} Guns` : ''}
+                    </span>
+                  </div>
+                </button>
 
+                {/* Tactical Actions for this Corps */}
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleCenterOnCorps(corpsUnits)}
+                    title="Center on Corps on Sandtable"
+                    className="p-1 text-neutral-600 hover:text-black hover:bg-neutral-200 rounded cursor-pointer"
+                  >
+                    <Eye size={12} />
+                  </button>
+
+                  {activeTab === 'french' && onDispatchCorps && (
+                    <button
+                      type="button"
+                      onClick={() => onDispatchCorps(corpsName)}
+                      title={`Dispatch Corps Orders to ${corpsName}`}
+                      className="flex items-center gap-0.5 px-1.5 py-0.5 bg-[#1e3a8a] hover:bg-[#1e40af] text-white rounded text-[9px] font-bold font-mono tracking-wide cursor-pointer shadow-2xs"
+                    >
+                      <Send size={9} />
+                      <span>ORDER</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Subordinate Regiments and Batteries */}
               {!isCollapsed && (
-                <div className="p-1 space-y-0.5 border-t border-zinc-800">
+                <div className="divide-y divide-[#f0f0f0] bg-white">
                   {corpsUnits.map((u) => {
                     const isSelected = u.id === selectedUnitId;
+                    const isTransferring = transferringUnitId === u.id;
+
                     return (
                       <div
                         key={u.id}
-                        onClick={() => engine.setSelectedUnit(u.id)}
-                        className={`flex items-center justify-between px-2 py-1 rounded cursor-pointer transition-all ${
+                        className={`flex flex-col px-2.5 py-1.5 transition-all ${
                           isSelected
-                            ? 'bg-blue-950/80 border border-blue-600 text-white font-semibold'
-                            : 'hover:bg-zinc-800/60 text-zinc-300'
+                            ? 'bg-[#dbeafe] border-l-4 border-l-[#1e3a8a] text-black font-semibold'
+                            : 'hover:bg-[#f8fafc] text-neutral-800'
                         }`}
                       >
-                        <div className="flex flex-col">
-                          <span className="text-xs">{u.name}</span>
-                          <span className="text-[10px] text-zinc-500 font-mono">
-                            {u.commander} • {u.formation.toUpperCase()}
-                          </span>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-mono text-xs text-zinc-200">
-                            {u.strength.toLocaleString()}
+                        <div
+                          className="flex items-center justify-between cursor-pointer"
+                          onClick={() => {
+                            engine.setSelectedUnit(u.id);
+                            onFocusLocation?.(u.position);
+                          }}
+                        >
+                          <div className="flex flex-col">
+                            <span className="text-xs font-medium text-neutral-900">{u.name}</span>
+                            <span className="text-[9.5px] text-neutral-500 font-mono">
+                              {u.commander} • {u.type.toUpperCase()} • {u.formation.toUpperCase()}
+                            </span>
                           </div>
-                          <div className="text-[10px] text-zinc-500 font-mono">
-                            {Math.round(u.morale)}% M
+
+                          <div className="flex items-center gap-2">
+                            <div className="text-right">
+                              <div className="font-mono text-xs font-bold text-neutral-900">
+                                {u.type === 'artillery' ? `${u.strength} Guns` : u.strength.toLocaleString()}
+                              </div>
+                              <div className="text-[9.5px] text-neutral-500 font-mono">
+                                {Math.round(u.morale)}% M
+                              </div>
+                            </div>
+
+                            {/* Reassign Button */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTransferringUnitId(isTransferring ? null : u.id);
+                                setIsCreatingNewCorps(false);
+                              }}
+                              title="Transfer regiment to another Corps"
+                              className={`p-1 rounded text-neutral-500 hover:text-black hover:bg-neutral-200 transition-colors cursor-pointer ${
+                                isTransferring ? 'bg-[#d4d4d8] text-black' : ''
+                              }`}
+                            >
+                              <ArrowRightLeft size={11} />
+                            </button>
                           </div>
                         </div>
+
+                        {/* Reassignment Dropdown Popover */}
+                        {isTransferring && (
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-1.5 p-2 bg-[#f4f4f5] border border-[#a1a1aa] rounded shadow-xs text-left animate-in fade-in duration-150"
+                          >
+                            <div className="text-[10px] font-bold text-neutral-700 uppercase mb-1 flex items-center gap-1">
+                              <Shield size={10} className="text-[#1e3a8a]" />
+                              <span>Reassign to Formation:</span>
+                            </div>
+
+                            {!isCreatingNewCorps ? (
+                              <div className="space-y-1">
+                                <select
+                                  defaultValue=""
+                                  onChange={(e) => {
+                                    if (e.target.value === '__new__') {
+                                      setIsCreatingNewCorps(true);
+                                    } else if (e.target.value) {
+                                      handleTransfer(u.id, e.target.value);
+                                    }
+                                  }}
+                                  className="w-full text-[10px] font-sans border border-[#a1a1aa] rounded px-1.5 py-1 bg-white text-black"
+                                >
+                                  <option value="" disabled>
+                                    Select Target Corps...
+                                  </option>
+                                  {allAvailableCorps
+                                    .filter((c) => c !== u.corps)
+                                    .map((c) => (
+                                      <option key={c} value={c}>
+                                        {c}
+                                      </option>
+                                    ))}
+                                  <option value="__new__">+ Create New Task Force / Corps...</option>
+                                </select>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="text"
+                                  placeholder="e.g. Reserve Task Force"
+                                  value={newCorpsNameInput}
+                                  onChange={(e) => setNewCorpsNameInput(e.target.value)}
+                                  className="flex-1 text-[10px] font-sans border border-[#a1a1aa] rounded px-1.5 py-1 bg-white text-black"
+                                  autoFocus
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleTransfer(u.id, newCorpsNameInput)}
+                                  className="px-2 py-1 bg-[#1e3a8a] text-white text-[10px] font-bold rounded cursor-pointer"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setIsCreatingNewCorps(false)}
+                                  className="px-1.5 py-1 text-neutral-600 hover:text-black text-[10px] cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -142,6 +326,6 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
           );
         })}
       </div>
-    </aside>
+    </ContainerTag>
   );
 };
