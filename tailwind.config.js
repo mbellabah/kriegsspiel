@@ -1,4 +1,6 @@
 /** @type {import('tailwindcss').Config} */
+import colors from 'tailwindcss/colors';
+
 export default {
   darkMode: 'class',
   content: [
@@ -8,6 +10,8 @@ export default {
   theme: {
     extend: {
       colors: {
+        // Warm 'stone' greys everywhere neutral is used, to sit on the paper-toned map
+        neutral: colors.stone,
         parchment: {
           50: '#fbf9f5',
           100: '#f6f2e9',
@@ -30,8 +34,10 @@ export default {
         }
       },
       fontFamily: {
-        serif: ['Georgia', 'Cambria', 'Baskerville', 'serif'],
-        cinzel: ['Cinzel', 'Georgia', 'serif'],
+        sans: ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
+        condensed: ['"IBM Plex Sans Condensed"', '"Arial Narrow"', 'sans-serif'],
+        mono: ['"IBM Plex Mono"', 'ui-monospace', 'Menlo', 'monospace'],
+        serif: ['"IBM Plex Serif"', 'Georgia', 'serif'],
       }
     },
   },

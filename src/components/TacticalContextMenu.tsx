@@ -60,41 +60,41 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
 
   return (
     <div
-      className="fixed z-50 bg-[#fbfbfa] border-2 border-[#1e3a8a] shadow-2xl rounded text-black font-sans select-none overflow-hidden animate-in fade-in zoom-in-95 duration-100 w-[245px]"
+      className="fixed z-50 bg-[#fcfbf8] border border-[#23324a] shadow-[0_4px_16px_rgba(28,25,23,0.16)] text-black font-sans select-none overflow-hidden animate-in fade-in zoom-in-95 duration-100 w-[245px]"
       style={{ left, top }}
       onMouseDown={(e) => e.stopPropagation()}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-2.5 py-1.5 bg-[#e4e4e7] border-b border-[#a1a1aa] text-[10px] font-mono">
-        <div className="flex items-center gap-1.5 font-bold text-[#1e3a8a] truncate pr-2">
+      <div className="flex items-center justify-between px-2.5 py-1.5 bg-[#e8e4db] border-b border-[#a8a29e] text-[10px] font-sans">
+        <div className="flex items-center gap-1.5 font-semibold text-[#23324a] truncate pr-2">
           {activeTrp ? <Target size={12} className="text-amber-700 shrink-0" /> : <MapPin size={12} className="shrink-0" />}
           <span className="truncate">{activeTrp ? `[${activeTrp.code}] ${activeTrp.name}` : `GRID ${coordStr}`}</span>
         </div>
         <button
           type="button"
           onClick={onClose}
-          className="p-0.5 hover:bg-[#d4d4d8] text-neutral-600 hover:text-black rounded cursor-pointer shrink-0"
+          className="p-0.5 hover:bg-[#d9d3c7] text-neutral-600 hover:text-black cursor-pointer shrink-0"
         >
           <X size={12} />
         </button>
       </div>
 
       {/* Telemetry info sub-bar */}
-      <div className="px-2.5 py-1 bg-blue-50/80 border-b border-blue-200 text-[9px] font-mono text-neutral-700 flex items-center justify-between">
+      <div className="px-2.5 py-1 bg-blue-50/80 border-b border-blue-200 text-[11px] font-sans text-neutral-700 flex items-center justify-between">
         <span>Elev: {elevation}m ASL</span>
         {activeTrp ? (
-          <span className="font-bold text-amber-800">PRE-SIGHTED TRP</span>
+          <span className="font-semibold text-amber-800">Pre-sighted TRP</span>
         ) : bearing !== null && cardinal ? (
-          <span className="font-bold text-[#1e3a8a]">
+          <span className="font-semibold text-[#23324a]">
             BRG: {String(bearing).padStart(3, '0')}° ({cardinal})
           </span>
         ) : (
-          <span className="text-neutral-500 font-bold">TACTICAL GRID</span>
+          <span className="text-neutral-500 font-semibold">Tactical grid</span>
         )}
       </div>
 
       {/* Action Options */}
-      <div className="p-1 space-y-0.5 text-xs font-mono">
+      <div className="p-1 space-y-0.5 text-xs font-sans">
         {/* If clicked on an existing TRP */}
         {activeTrp ? (
           <>
@@ -113,15 +113,15 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                 } catch {}
                 setTimeout(() => onClose(), 350);
               }}
-              className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-blue-50 text-left rounded cursor-pointer transition-colors text-neutral-900"
+              className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-blue-50 text-left cursor-pointer transition-colors text-neutral-900"
             >
               <div className="flex items-center gap-2">
-                <Send size={13} className="text-[#1e3a8a] shrink-0" />
-                <span className="text-[11px] font-semibold text-[#1e3a8a]">Insert TRP into Dispatch</span>
+                <Send size={13} className="text-[#23324a] shrink-0" />
+                <span className="text-[11px] font-semibold text-[#23324a]">Insert TRP into Dispatch</span>
               </div>
               {copiedLabel === 'trp_dispatch' && (
-                <span className="text-emerald-700 font-bold text-[9px] flex items-center gap-0.5">
-                  <Check size={11} /> INSERTED
+                <span className="text-emerald-700 font-semibold text-[11px] flex items-center gap-0.5">
+                  <Check size={11} /> Inserted
                 </span>
               )}
             </button>
@@ -130,23 +130,23 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
             <button
               type="button"
               onClick={() => copyToClipboard(`${activeTrp.code} (${Math.round(activeTrp.position.x)}, ${Math.round(activeTrp.position.y)})`, 'trp_tag')}
-              className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-neutral-100 text-left rounded cursor-pointer transition-colors text-neutral-900 group"
+              className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-neutral-100 text-left cursor-pointer transition-colors text-neutral-900 group"
             >
               <div className="flex items-center gap-2">
-                <Copy size={13} className="text-[#1e3a8a] shrink-0" />
+                <Copy size={13} className="text-[#23324a] shrink-0" />
                 <span className="text-[11px] font-semibold">Copy TRP Reference</span>
               </div>
               {copiedLabel === 'trp_tag' ? (
-                <span className="text-emerald-700 font-bold text-[9px] flex items-center gap-0.5">
+                <span className="text-emerald-700 font-semibold text-[11px] flex items-center gap-0.5">
                   <Check size={11} /> COPIED
                 </span>
               ) : (
-                <span className="text-neutral-600 font-normal text-[9px]">{activeTrp.code}</span>
+                <span className="text-neutral-600 font-normal text-[11px]">{activeTrp.code}</span>
               )}
             </button>
 
             {/* TRP Option 3: Drag & Drop Guidance */}
-            <div className="px-2 py-1.5 bg-amber-50/70 border border-amber-200/80 rounded text-[10px] text-amber-900 font-sans flex items-start gap-1.5 my-1">
+            <div className="px-2 py-1.5 bg-amber-50/70 border border-amber-200/80 text-[10px] text-amber-900 font-sans flex items-start gap-1.5 my-1">
               <Move size={12} className="text-amber-700 shrink-0 mt-0.5" />
               <span>Left-click and drag this marker across the map to relocate anytime.</span>
             </div>
@@ -165,13 +165,13 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                   } catch {}
                   onClose();
                 }}
-                className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-amber-50 text-left rounded cursor-pointer transition-colors text-neutral-900 group"
+                className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-amber-50 text-left cursor-pointer transition-colors text-neutral-900 group"
               >
                 <div className="flex items-center gap-2">
                   <PlusCircle size={13} className="text-amber-700 shrink-0" />
-                  <span className="text-[11px] font-bold text-amber-900">Register New TRP Here</span>
+                  <span className="text-[11px] font-semibold text-amber-900">Register New TRP Here</span>
                 </div>
-                <span className="text-neutral-500 font-normal text-[9px]">TRP {String(availableTrps.length + 1).padStart(2, '0')}</span>
+                <span className="text-neutral-500 font-normal text-[11px]">TRP {String(availableTrps.length + 1).padStart(2, '0')}</span>
               </button>
             )}
 
@@ -181,13 +181,13 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowRelocateList(!showRelocateList)}
-                  className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-neutral-100 text-left rounded cursor-pointer transition-colors text-neutral-900"
+                  className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-neutral-100 text-left cursor-pointer transition-colors text-neutral-900"
                 >
                   <div className="flex items-center gap-2">
-                    <Move size={13} className="text-[#1e3a8a] shrink-0" />
+                    <Move size={13} className="text-[#23324a] shrink-0" />
                     <span className="text-[11px] font-semibold">Relocate TRP Here...</span>
                   </div>
-                  <span className="text-neutral-500 text-[9px]">{showRelocateList ? '▲' : '▼'}</span>
+                  <span className="text-neutral-500 text-[11px]">{showRelocateList ? '▲' : '▼'}</span>
                 </button>
 
                 {showRelocateList && (
@@ -203,9 +203,9 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                           } catch {}
                           onClose();
                         }}
-                        className="w-full px-1.5 py-1 text-left text-[10px] hover:bg-blue-50 text-neutral-800 rounded flex items-center justify-between cursor-pointer"
+                        className="w-full px-1.5 py-1 text-left text-[10px] hover:bg-blue-50 text-neutral-800 flex items-center justify-between cursor-pointer"
                       >
-                        <span className="font-bold text-[#1e3a8a]">{trp.code}</span>
+                        <span className="font-semibold text-[#23324a]">{trp.code}</span>
                         <span className="text-neutral-500 truncate max-w-[130px]">{trp.name}</span>
                       </button>
                     ))}
@@ -218,18 +218,18 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
             <button
               type="button"
               onClick={() => copyToClipboard(coordStr, 'coords')}
-              className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-neutral-100 text-left rounded cursor-pointer transition-colors text-neutral-900 group"
+              className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-neutral-100 text-left cursor-pointer transition-colors text-neutral-900 group"
             >
               <div className="flex items-center gap-2">
-                <Copy size={13} className="text-[#1e3a8a] shrink-0" />
+                <Copy size={13} className="text-[#23324a] shrink-0" />
                 <span className="text-[11px] font-semibold">Copy Coordinates</span>
               </div>
               {copiedLabel === 'coords' ? (
-                <span className="text-emerald-700 font-bold text-[9px] flex items-center gap-0.5">
+                <span className="text-emerald-700 font-semibold text-[11px] flex items-center gap-0.5">
                   <Check size={11} /> COPIED
                 </span>
               ) : (
-                <span className="text-neutral-600 font-normal text-[9px]">{coordStr}</span>
+                <span className="text-neutral-600 font-normal text-[11px]">{coordStr}</span>
               )}
             </button>
 
@@ -243,18 +243,18 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                     'bearing'
                   )
                 }
-                className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-neutral-100 text-left rounded cursor-pointer transition-colors text-neutral-900 group"
+                className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-neutral-100 text-left cursor-pointer transition-colors text-neutral-900 group"
               >
                 <div className="flex items-center gap-2">
-                  <Compass size={13} className="text-[#1e3a8a] shrink-0" />
+                  <Compass size={13} className="text-[#23324a] shrink-0" />
                   <span className="text-[11px] font-semibold">Copy Bearing</span>
                 </div>
                 {copiedLabel === 'bearing' ? (
-                  <span className="text-emerald-700 font-bold text-[9px] flex items-center gap-0.5">
+                  <span className="text-emerald-700 font-semibold text-[11px] flex items-center gap-0.5">
                     <Check size={11} /> COPIED
                   </span>
                 ) : (
-                  <span className="text-neutral-600 font-normal text-[9px]">
+                  <span className="text-neutral-600 font-normal text-[11px]">
                     {String(bearing).padStart(3, '0')}° {cardinal}
                   </span>
                 )}
@@ -279,15 +279,15 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                 } catch {}
                 setTimeout(() => onClose(), 350);
               }}
-              className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-blue-50 text-left rounded cursor-pointer transition-colors text-neutral-900"
+              className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-blue-50 text-left cursor-pointer transition-colors text-neutral-900"
             >
               <div className="flex items-center gap-2">
-                <Send size={13} className="text-[#1e3a8a] shrink-0" />
-                <span className="text-[11px] font-semibold text-[#1e3a8a]">To Dispatch Desk</span>
+                <Send size={13} className="text-[#23324a] shrink-0" />
+                <span className="text-[11px] font-semibold text-[#23324a]">To Dispatch Desk</span>
               </div>
               {copiedLabel === 'dispatch' && (
-                <span className="text-emerald-700 font-bold text-[9px] flex items-center gap-0.5">
-                  <Check size={11} /> INSERTED
+                <span className="text-emerald-700 font-semibold text-[11px] flex items-center gap-0.5">
+                  <Check size={11} /> Inserted
                 </span>
               )}
             </button>
@@ -308,15 +308,15 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                     try { sounds.playDispatchStamp(); } catch {}
                     setTimeout(() => onClose(), 350);
                   }}
-                  className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-cyan-50 text-left rounded cursor-pointer transition-colors text-neutral-900 group"
+                  className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-cyan-50 text-left cursor-pointer transition-colors text-neutral-900 group"
                 >
                   <div className="flex items-center gap-2">
                     <Radio size={13} className="text-cyan-700 shrink-0" />
                     <span className="text-[11px] font-semibold text-cyan-900">Request Artillery CFF (FO)</span>
                   </div>
                   {copiedLabel === 'cff_fo' && (
-                    <span className="text-emerald-700 font-bold text-[9px] flex items-center gap-0.5">
-                      <Check size={11} /> INSERTED
+                    <span className="text-emerald-700 font-semibold text-[11px] flex items-center gap-0.5">
+                      <Check size={11} /> Inserted
                     </span>
                   )}
                 </button>
@@ -334,15 +334,15 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                     try { sounds.playDispatchStamp(); } catch {}
                     setTimeout(() => onClose(), 350);
                   }}
-                  className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-amber-50 text-left rounded cursor-pointer transition-colors text-neutral-900 group"
+                  className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-amber-50 text-left cursor-pointer transition-colors text-neutral-900 group"
                 >
                   <div className="flex items-center gap-2">
                     <ShieldAlert size={13} className="text-amber-700 shrink-0" />
                     <span className="text-[11px] font-semibold text-amber-900">Hold Fire for Mass Volley</span>
                   </div>
                   {copiedLabel === 'volley' && (
-                    <span className="text-emerald-700 font-bold text-[9px] flex items-center gap-0.5">
-                      <Check size={11} /> INSERTED
+                    <span className="text-emerald-700 font-semibold text-[11px] flex items-center gap-0.5">
+                      <Check size={11} /> Inserted
                     </span>
                   )}
                 </button>
@@ -360,15 +360,15 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                     try { sounds.playDispatchStamp(); } catch {}
                     setTimeout(() => onClose(), 350);
                   }}
-                  className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-orange-50 text-left rounded cursor-pointer transition-colors text-neutral-900 group"
+                  className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-orange-50 text-left cursor-pointer transition-colors text-neutral-900 group"
                 >
                   <div className="flex items-center gap-2">
                     <Crosshair size={13} className="text-orange-700 shrink-0" />
                     <span className="text-[11px] font-semibold text-orange-900">Lay Suppressive Fire</span>
                   </div>
                   {copiedLabel === 'suppress' && (
-                    <span className="text-emerald-700 font-bold text-[9px] flex items-center gap-0.5">
-                      <Check size={11} /> INSERTED
+                    <span className="text-emerald-700 font-semibold text-[11px] flex items-center gap-0.5">
+                      <Check size={11} /> Inserted
                     </span>
                   )}
                 </button>
@@ -383,7 +383,7 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                   onPinpointTarget(worldCoords);
                   onClose();
                 }}
-                className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-red-50 text-left rounded cursor-pointer transition-colors text-neutral-900"
+                className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-red-50 text-left cursor-pointer transition-colors text-neutral-900"
               >
                 <div className="flex items-center gap-2">
                   <Crosshair size={13} className="text-red-700 shrink-0" />
@@ -395,7 +395,7 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
         )}
       </div>
 
-      <div className="px-2.5 py-1 bg-neutral-100 border-t border-neutral-200 text-[8px] font-mono text-neutral-500 flex items-center justify-between">
+      <div className="px-2.5 py-1 bg-neutral-100 border-t border-neutral-200 text-[10px] font-sans text-neutral-500 flex items-center justify-between">
         <span>Drag TRP: Reposition</span>
         <span>X / Shift+Click: Copy</span>
       </div>

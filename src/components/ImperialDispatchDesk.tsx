@@ -9,13 +9,10 @@ import {
   MapPin,
   User,
   Shield,
-  Compass,
   Crosshair,
   Trash2,
   Edit3,
   Layers,
-  Play,
-  Pause,
   CheckCircle2,
   ScrollText,
 } from 'lucide-react';
@@ -845,8 +842,8 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
   if (!isOpen) return null;
 
   const containerClasses = embedded
-    ? "flex-1 min-h-0 flex flex-col overflow-hidden bg-[#f4f4f5] text-black font-sans select-none"
-    : "absolute bottom-12 left-4 z-40 w-[510px] h-[720px] max-h-[calc(100vh-60px)] bg-[#f4f4f5] border-2 border-[#a1a1aa] shadow-2xl rounded text-black font-sans select-none flex flex-col overflow-hidden animate-in slide-in-from-bottom-2 duration-150";
+    ? "flex-1 min-h-0 flex flex-col overflow-hidden bg-[#f5f3ee] text-black font-sans select-none"
+    : "absolute bottom-12 left-4 z-40 w-[510px] h-[720px] max-h-[calc(100vh-60px)] bg-[#f5f3ee] border border-[#a8a29e] shadow-[0_4px_16px_rgba(28,25,23,0.16)]  text-black font-sans select-none flex flex-col overflow-hidden animate-in slide-in-from-bottom-2 duration-150";
 
   const ContainerTag = (embedded ? 'div' : 'aside') as any;
 
@@ -855,56 +852,35 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
       ref={drawerRef}
       className={containerClasses}
     >
-      {/* Header matching WarRoomHUD and UnitDossier light theme */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#a1a1aa] bg-[#e4e4e7]">
-        <div className="flex items-center gap-2">
-          <Compass size={14} className="text-[#1e3a8a]" />
-          <h2 className="font-mono text-xs font-bold uppercase tracking-wider text-black">
-            Operational Dispatch Desk
-          </h2>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Simulation status pill */}
-          <span
-            className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border flex items-center gap-1 ${
-              state.isRunning
-                ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                : 'bg-amber-100 text-amber-900 border-amber-300'
-            }`}
+      {!embedded && (
+        <div className="flex items-center justify-between h-8 pl-2 pr-0.5 border-b border-[#b3ada2] bg-[#e6e3dc] text-[12px] font-semibold text-stone-900">
+          <span>Orders</span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-6 w-6 inline-flex items-center justify-center text-neutral-600 hover:text-black hover:bg-white cursor-pointer"
+            title="Close"
           >
-            {state.isRunning ? <Play size={9} /> : <Pause size={9} />}
-            <span>{state.isRunning ? 'LIVE RUNNING' : 'PAUSED (PLANNING)'}</span>
-          </span>
-
-          {!embedded && (
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-1 hover:bg-[#d4d4d8] text-neutral-600 hover:text-black border border-transparent hover:border-[#a1a1aa] transition-colors cursor-pointer"
-              title="Close Dispatch Desk"
-            >
-              <X size={14} />
-            </button>
-          )}
+            <X size={14} />
+          </button>
         </div>
-      </div>
+      )}
 
       {/* Tabs: Staged Orders Queue vs. Transmitted History vs. Auto-General */}
-      <div className="flex items-center bg-[#d4d4d8]/80 border-b border-[#a1a1aa] text-[10px] font-mono select-none">
+      <div className="flex items-center bg-[#eceae4] border-b border-[#b3ada2] font-sans select-none">
         <button
           type="button"
           onClick={() => setActiveTab('queue')}
-          className={`flex-1 py-1.5 px-2 font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
-            activeTab === 'queue'
-              ? 'bg-[#f4f4f5] text-[#1e3a8a] border-b-2 border-b-[#1e3a8a]'
-              : 'text-neutral-700 hover:bg-[#eaeaea]'
-          }`}
+          className={`flex-1 h-8 px-2 text-[12px] font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+ activeTab === 'queue'
+ ? 'bg-[#f5f3ee] text-[#23324a] border-b-2 border-b-[#23324a]'
+ : 'text-neutral-700 hover:bg-[#ebe7df]'
+ }`}
         >
           <Layers size={11} />
           <span>Queue</span>
           {queuedDispatches.length > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full bg-[#1e3a8a] text-white text-[8.5px] font-bold">
+            <span className="px-1.5 py-0.2 rounded-full bg-[#23324a] text-white text-[10px] font-semibold">
               {queuedDispatches.length}
             </span>
           )}
@@ -913,16 +889,16 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
         <button
           type="button"
           onClick={() => setActiveTab('history')}
-          className={`flex-1 py-1.5 px-2 font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
-            activeTab === 'history'
-              ? 'bg-[#f4f4f5] text-[#1e3a8a] border-b-2 border-b-[#1e3a8a]'
-              : 'text-neutral-700 hover:bg-[#eaeaea]'
-          }`}
+          className={`flex-1 h-8 px-2 text-[12px] font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+ activeTab === 'history'
+ ? 'bg-[#f5f3ee] text-[#23324a] border-b-2 border-b-[#23324a]'
+ : 'text-neutral-700 hover:bg-[#ebe7df]'
+ }`}
         >
           <Clock size={11} />
-          <span>Transmitted</span>
+          <span>Sent</span>
           {dispatches.length > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full bg-neutral-300 text-neutral-800 text-[8.5px] font-bold">
+            <span className="px-1.5 py-0.2 rounded-full bg-neutral-300 text-neutral-800 text-[10px] font-semibold">
               {dispatches.length}
             </span>
           )}
@@ -931,59 +907,48 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
         <button
           type="button"
           onClick={() => setActiveTab('auto_general')}
-          className={`flex-1 py-1.5 px-2 font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
-            activeTab === 'auto_general'
-              ? 'bg-[#f4f4f5] text-[#1e3a8a] border-b-2 border-b-[#1e3a8a]'
-              : 'text-neutral-700 hover:bg-[#eaeaea]'
-          }`}
+          className={`flex-1 h-8 px-2 text-[12px] font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+ activeTab === 'auto_general'
+ ? 'bg-[#f5f3ee] text-[#23324a] border-b-2 border-b-[#23324a]'
+ : 'text-neutral-700 hover:bg-[#ebe7df]'
+ }`}
         >
-          <ScrollText size={11} className="text-amber-700 shrink-0" />
-          <span>Napoleon</span>
-          {state.autoGeneralEnabled ? (
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse shrink-0" />
-          ) : (
-            <span className="px-1 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300 text-[7.5px] font-bold">
-              AUTO
-            </span>
-          )}
+          <ScrollText size={11} className="shrink-0" />
+          <span>Historical plan</span>
+          {state.autoGeneralEnabled && <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 shrink-0" />}
         </button>
       </div>
 
       {/* Content Area */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2.5 custom-scrollbar bg-[#f4f4f5]">
+      <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2.5 custom-scrollbar bg-[#f5f3ee]">
         {/* VIEW 1: STAGED QUEUE */}
         {activeTab === 'queue' && (
           <>
             {queuedDispatches.length === 0 ? (
               <div className="p-4 text-center text-neutral-500 text-xs">
-                <div className="w-8 h-8 mx-auto mb-2 rounded-full bg-neutral-200 border border-neutral-300 flex items-center justify-center text-neutral-600">
-                  <Layers size={14} />
-                </div>
-                <p className="font-mono text-[11px] font-bold text-neutral-800 mb-1 uppercase tracking-wide">
-                  Staging Queue Empty
-                </p>
-                <p className="text-[10.5px] leading-relaxed max-w-sm mx-auto text-neutral-600 mb-3">
-                  Draft operational orders below and press <strong>Enter</strong> to queue them. You can draft and review multiple dispatches while the battle is paused without calling the AI, then transmit the entire batch simultaneously.
+                <p className="text-[13px] font-semibold text-neutral-800 mb-1">No orders queued</p>
+                <p className="text-[12px] leading-relaxed max-w-sm mx-auto text-neutral-600 mb-3">
+                  Write an order below and press <strong>Enter</strong> to queue it. Queue several, then send them together.
                 </p>
 
                 {historicalDispatches.length > 0 && (
                   <button
                     type="button"
                     onClick={handleLoadHistoricalMasterplan}
-                    className="px-3 py-1.5 bg-white border border-[#1e3a8a] hover:bg-blue-50 text-[#1e3a8a] font-mono text-[10px] font-bold rounded shadow-2xs transition-colors inline-flex items-center gap-1.5 cursor-pointer active:scale-95"
+                    className="px-3 py-1.5 bg-white border border-[#23324a] hover:bg-blue-50 text-[#23324a] font-sans text-[10px] font-semibold transition-colors inline-flex items-center gap-1.5 cursor-pointer "
                   >
-                    <ScrollText size={12} className="text-amber-700" />
-                    <span>LOAD NAPOLEON'S MASTERPLAN ({historicalDispatches.length} DISPATCHES)</span>
+                    <ScrollText size={12} />
+                    <span>Load the historical plan ({historicalDispatches.length} orders)</span>
                   </button>
                 )}
               </div>
             ) : (
               <>
                 {/* Batch Action Bar */}
-                <div className="flex items-center justify-between p-2 bg-blue-50/80 border border-blue-200 rounded shadow-2xs">
-                  <div className="flex items-center gap-1.5 text-[10px] font-mono font-bold text-[#1e3a8a]">
+                <div className="flex items-center justify-between p-2 bg-blue-50/80 border border-blue-200 ">
+                  <div className="flex items-center gap-1.5 text-[10px] font-sans font-semibold text-[#23324a]">
                     <CheckCircle2 size={12} />
-                    <span>{queuedDispatches.length} ORDERS STAGED READY</span>
+                    <span>{queuedDispatches.length} orders queued</span>
                   </div>
 
                   <div className="flex items-center gap-1.5">
@@ -991,7 +956,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                       type="button"
                       onClick={() => setQueuedDispatches([])}
                       disabled={isProcessing}
-                      className="px-2 py-1 text-[9px] font-mono font-bold text-neutral-600 hover:text-red-700 hover:bg-neutral-200 rounded cursor-pointer"
+                      className="px-2 py-1 text-[11px] font-sans font-semibold text-neutral-600 hover:text-red-700 hover:bg-neutral-200 cursor-pointer"
                     >
                       Clear
                     </button>
@@ -1000,13 +965,13 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                       type="button"
                       onClick={handleTransmitAllQueued}
                       disabled={isProcessing}
-                      className="flex items-center gap-1 px-3 py-1 bg-[#15803d] hover:bg-[#16a34a] disabled:opacity-50 text-white rounded text-[10px] font-mono font-bold uppercase tracking-wider shadow-xs cursor-pointer active:scale-95"
+                      className="flex items-center gap-1 px-3 py-1 bg-[#15803d] hover:bg-[#16a34a] disabled:opacity-50 text-white text-[10px] font-sans font-semibold cursor-pointer "
                     >
                       <Send size={11} />
                       <span>
                         {isBatchTransmitting && batchProgress
-                          ? `TRANSMITTING ${batchProgress.current}/${batchProgress.total}...`
-                          : `TRANSMIT BATCH (${queuedDispatches.length})`}
+                          ? `Sending ${batchProgress.current}/${batchProgress.total}…`
+                          : `Send all (${queuedDispatches.length})`}
                       </span>
                     </button>
                   </div>
@@ -1017,33 +982,33 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                   {queuedDispatches.map((q, idx) => (
                     <div
                       key={q.id}
-                      className="bg-white border border-[#a1a1aa] rounded p-2.5 shadow-2xs hover:border-[#1e3a8a] transition-all"
+                      className="bg-white border border-[#a8a29e] p-2.5 hover:border-[#23324a] transition-all"
                     >
-                      <div className="flex items-center justify-between text-[10px] font-mono mb-1.5">
+                      <div className="flex items-center justify-between text-[10px] font-sans mb-1.5">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-neutral-500">#{idx + 1}</span>
-                          <span className={`text-[8px] font-mono font-bold px-1.5 py-0.2 border rounded ${q.badgeColor}`}>
+                          <span className="font-semibold text-neutral-500">#{idx + 1}</span>
+                          <span className={`text-[10px] font-sans font-semibold px-1.5 py-0.2 border ${q.badgeColor}`}>
                             {q.badge}
                           </span>
-                          <span className="font-bold text-[#1e3a8a] truncate max-w-[170px]">{q.recipientHint}</span>
+                          <span className="font-semibold text-[#23324a] truncate max-w-[170px]">{q.recipientHint}</span>
                         </div>
-                        <span className="text-neutral-500 text-[9px]">{q.formattedTime}</span>
+                        <span className="text-neutral-500 text-[11px]">{q.formattedTime}</span>
                       </div>
 
-                      <p className="text-neutral-900 font-mono text-[11px] bg-[#f8fafc] px-2 py-1 rounded border border-[#e2e8f0] mb-2 leading-relaxed">
+                      <p className="text-neutral-900 font-sans text-[11px] bg-[#f8fafc] px-2 py-1 border border-[#e2e8f0] mb-2 leading-relaxed">
                         "{q.rawText}"
                       </p>
 
                       {(q.timingHint || q.conditionHint) && (
                         <div className="flex flex-wrap gap-1 mb-2">
                           {q.timingHint && (
-                            <span className="text-[8.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-900 border border-amber-300 flex items-center gap-1 shadow-2xs">
+                            <span className="text-[10px] font-sans font-semibold px-1.5 py-0.5 bg-amber-50 text-amber-900 border border-amber-300 flex items-center gap-1 ">
                               <Clock size={9} className="text-amber-700" />
                               <span>{q.timingHint}</span>
                             </span>
                           )}
                           {q.conditionHint && (
-                            <span className="text-[8.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-900 border border-purple-300 flex items-center gap-1 shadow-2xs">
+                            <span className="text-[10px] font-sans font-semibold px-1.5 py-0.5 bg-purple-50 text-purple-900 border border-purple-300 flex items-center gap-1 ">
                               <Shield size={9} className="text-purple-700" />
                               <span>{q.conditionHint}</span>
                             </span>
@@ -1051,10 +1016,10 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                         </div>
                       )}
 
-                      <div className="flex items-center justify-between pt-1 border-t border-neutral-100 text-[9px] font-mono">
+                      <div className="flex items-center justify-between pt-1 border-t border-neutral-100 text-[11px] font-sans">
                         <span className="text-amber-800 font-semibold flex items-center gap-1">
                           <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                          <span>QUEUED (STAGED)</span>
+                          <span>Queued</span>
                         </span>
 
                         <div className="flex items-center gap-1">
@@ -1063,7 +1028,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                             onClick={() => handleEditQueued(q)}
                             disabled={isProcessing}
                             title="Edit this dispatch"
-                            className="p-1 text-neutral-600 hover:text-black hover:bg-neutral-100 rounded cursor-pointer"
+                            className="p-1 text-neutral-600 hover:text-black hover:bg-neutral-100 cursor-pointer"
                           >
                             <Edit3 size={11} />
                           </button>
@@ -1072,7 +1037,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                             onClick={() => handleDeleteQueued(q.id)}
                             disabled={isProcessing}
                             title="Discard from queue"
-                            className="p-1 text-neutral-600 hover:text-red-700 hover:bg-red-50 rounded cursor-pointer"
+                            className="p-1 text-neutral-600 hover:text-red-700 hover:bg-red-50 cursor-pointer"
                           >
                             <Trash2 size={11} />
                           </button>
@@ -1081,7 +1046,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                             onClick={() => handleTransmitSingleQueued(q.id)}
                             disabled={isProcessing}
                             title="Transmit this dispatch now"
-                            className="flex items-center gap-0.5 px-2 py-0.5 bg-[#1e3a8a] hover:bg-[#1e40af] text-white rounded font-bold cursor-pointer shadow-2xs"
+                            className="flex items-center gap-0.5 px-2 py-0.5 bg-[#23324a] hover:bg-[#2e4160] text-white font-semibold cursor-pointer "
                           >
                             <Send size={9} />
                             <span>SEND</span>
@@ -1101,7 +1066,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
           <>
             {dispatches.length === 0 ? (
               <div className="p-4 text-center text-neutral-500 text-xs">
-                <p className="font-mono text-[11px] font-bold text-neutral-800 mb-1">NO TRANSMITTED ORDERS</p>
+                <p className="font-sans text-[11px] font-semibold text-neutral-800 mb-1">No orders sent</p>
                 <p className="text-[10px] leading-relaxed">
                   Dispatches that have been sent out will be displayed here with their acknowledgments and courier arrival status.
                 </p>
@@ -1115,41 +1080,41 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                 return (
                   <div
                     key={d.id}
-                    className="bg-white border border-neutral-300 p-2.5 rounded text-xs space-y-1.5 shadow-2xs hover:border-neutral-400 transition-all"
+                    className="bg-white border border-neutral-300 p-2.5 text-xs space-y-1.5 hover:border-neutral-400 transition-all"
                   >
                     {/* Header: Recipient + Delivery Status + Battle Clock */}
-                    <div className="flex items-center justify-between text-[10px] font-mono">
+                    <div className="flex items-center justify-between text-[10px] font-sans">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-[#1e3a8a] font-bold">{d.recipientName}</span>
+                        <span className="text-[#23324a] font-semibold">{d.recipientName}</span>
                         {isDelivered ? (
-                          <span className="text-[8px] font-bold px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-800 border border-emerald-300 flex items-center gap-0.5">
+                          <span className="text-[10px] font-semibold px-1.5 py-0.2 bg-emerald-50 text-emerald-800 border border-emerald-300 flex items-center gap-0.5">
                             <CheckCircle2 size={8} />
-                            <span>DELIVERED</span>
+                            <span>Delivered</span>
                           </span>
                         ) : (
-                          <span className="text-[8px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-800 border border-amber-300 flex items-center gap-0.5">
+                          <span className="text-[10px] font-semibold px-1.5 py-0.2 bg-amber-50 text-amber-800 border border-amber-300 flex items-center gap-0.5">
                             <Clock size={8} />
                             <span>COURIER ETA ~{Math.max(0.5, d.delayMinutes - timeSince).toFixed(1)}m</span>
                           </span>
                         )}
                       </div>
-                      <span className="text-neutral-500 font-semibold text-[9px]">{d.formattedTime}</span>
+                      <span className="text-neutral-500 font-semibold text-[11px]">{d.formattedTime}</span>
                     </div>
 
                     {/* Order Quote */}
-                    <div className="text-neutral-800 font-mono text-[11px] pl-2 border-l-2 border-neutral-300 italic py-0.5 leading-snug">
+                    <div className="text-neutral-800 font-sans text-[11px] pl-2 border-l-2 border-neutral-300 italic py-0.5 leading-snug">
                       "{d.rawText}"
                     </div>
 
                     {/* Acknowledgment */}
-                    <div className="text-[10px] font-mono text-neutral-800 bg-neutral-50 px-2 py-1 rounded border border-neutral-200 leading-snug">
-                      <span className="text-emerald-700 font-bold mr-1">ACK:</span>
+                    <div className="text-[10px] font-sans text-neutral-800 bg-neutral-50 px-2 py-1 border border-neutral-200 leading-snug">
+                      <span className="text-emerald-700 font-semibold mr-1">ACK:</span>
                       <span>{cleanAck}</span>
                     </div>
 
                     {/* Contingency (if present) */}
                     {d.conditionDescription && (
-                      <div className="flex items-center gap-1 text-[8.5px] font-mono text-purple-900 bg-purple-50/70 border border-purple-200 rounded px-1.5 py-0.5">
+                      <div className="flex items-center gap-1 text-[10px] font-sans text-purple-900 bg-purple-50/70 border border-purple-200 px-1.5 py-0.5">
                         <Shield size={8.5} className="text-purple-700" />
                         <span>Contingency: {d.conditionDescription}</span>
                       </div>
@@ -1165,20 +1130,20 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
         {activeTab === 'auto_general' && (
           <div className="space-y-3">
             {/* Napoleon Staff Header Card */}
-            <div className="bg-gradient-to-r from-neutral-50 via-amber-50/40 to-neutral-50 border border-amber-400/60 rounded p-3 shadow-2xs">
+            <div className="bg-gradient-to-r from-neutral-50 via-amber-50/40 to-neutral-50 border border-amber-400/60 p-3 ">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded bg-amber-100 border border-amber-400 flex items-center justify-center text-amber-900 shadow-2xs">
+                  <div className="w-8 h-8 bg-amber-100 border border-amber-400 flex items-center justify-center text-amber-900 ">
                     <ScrollText size={16} />
                   </div>
                   <div>
-                    <div className="text-[11px] font-mono font-bold text-neutral-900 flex items-center gap-1.5 uppercase tracking-wide">
-                      <span>NAPOLEON BONAPARTE</span>
-                      <span className="text-[8px] px-1.5 py-0.2 rounded bg-amber-200/80 text-amber-950 font-bold border border-amber-300">
-                        SUPREME HQ
+                    <div className="text-[11px] font-sans font-semibold text-neutral-900 flex items-center gap-1.5 ">
+                      <span>Napoleon Bonaparte</span>
+                      <span className="text-[10px] px-1.5 py-0.2 bg-amber-200/80 text-amber-950 font-semibold border border-amber-300">
+                        Supreme HQ
                       </span>
                     </div>
-                    <div className="text-[9px] font-mono text-neutral-500">
+                    <div className="text-[11px] font-sans text-neutral-500">
                       Grande Armée Imperial Staff • Battle of Austerlitz (December 2, 1805)
                     </div>
                   </div>
@@ -1188,17 +1153,17 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                 <button
                   type="button"
                   onClick={() => engine.toggleAutoGeneral()}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 text-[9.5px] font-mono font-bold rounded border shadow-2xs transition-all cursor-pointer ${
-                    state.autoGeneralEnabled
-                      ? 'bg-emerald-600 border-emerald-700 text-white shadow-emerald-200'
-                      : 'bg-white border-neutral-300 hover:border-neutral-400 text-neutral-700'
-                  }`}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-sans font-semibold border transition-all cursor-pointer ${
+ state.autoGeneralEnabled
+ ? 'bg-emerald-600 border-emerald-700 text-white shadow-emerald-200'
+ : 'bg-white border-neutral-300 hover:border-neutral-400 text-neutral-700'
+ }`}
                   title="Toggle automated historical dispatch coordination"
                 >
                   <span
                     className={`w-2 h-2 rounded-full ${
-                      state.autoGeneralEnabled ? 'bg-white animate-pulse' : 'bg-neutral-400'
-                    }`}
+ state.autoGeneralEnabled ? 'bg-white ' : 'bg-neutral-400'
+ }`}
                   />
                   <span>
                     AUTO-COORDINATION: {state.autoGeneralEnabled ? 'ACTIVE' : 'STANDBY'}
@@ -1206,7 +1171,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                 </button>
               </div>
 
-              <p className="text-[10px] text-neutral-700 font-mono leading-relaxed mb-2.5">
+              <p className="text-[10px] text-neutral-700 font-sans leading-relaxed mb-2.5">
                 Authentic battle dispatches issued by Napoleon and Chief of Staff Berthier to coordinate the Grande Armée at Austerlitz. You can load Napoleon's complete masterplan into your staged queue, draft individual orders, or let the Auto-General coordinate autonomously as the battle clock advances.
               </p>
 
@@ -1216,7 +1181,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                   type="button"
                   onClick={handleLoadHistoricalMasterplan}
                   disabled={isProcessing}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 bg-[#1e3a8a] hover:bg-[#1e40af] disabled:opacity-50 text-white rounded text-[10px] font-mono font-bold uppercase tracking-wider shadow-xs cursor-pointer active:scale-95 transition-colors"
+                  className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 bg-[#23324a] hover:bg-[#2e4160] disabled:opacity-50 text-white text-[10px] font-sans font-semibold cursor-pointer transition-colors"
                 >
                   <Layers size={11} />
                   <span>LOAD FULL MASTERPLAN ({historicalDispatches.length} DISPATCHES)</span>
@@ -1226,8 +1191,8 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
 
             {/* Historical Dispatches List */}
             <div className="space-y-2">
-              <div className="flex items-center justify-between text-[9px] font-mono font-bold text-neutral-600 uppercase tracking-wider px-1">
-                <span>CHRONOLOGICAL BATTLE DIRECTIVES</span>
+              <div className="flex items-center justify-between text-[11px] font-sans font-semibold text-neutral-600 px-1">
+                <span>Chronological battle directives</span>
                 <span>{historicalDispatches.length} HISTORICAL ORDERS</span>
               </div>
 
@@ -1238,41 +1203,41 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                 return (
                   <div
                     key={d.id}
-                    className={`bg-white border rounded p-2.5 shadow-2xs transition-all ${
-                      isExecuted
-                        ? 'border-emerald-300 bg-emerald-50/20'
-                        : isDue
-                        ? 'border-amber-300 hover:border-amber-500'
-                        : 'border-[#a1a1aa] hover:border-[#1e3a8a]'
-                    }`}
+                    className={`bg-white border p-2.5 transition-all ${
+ isExecuted
+ ? 'border-emerald-300 bg-emerald-50/20'
+ : isDue
+ ? 'border-amber-300 hover:border-amber-500'
+ : 'border-[#a8a29e] hover:border-[#23324a]'
+ }`}
                   >
                     {/* Header */}
-                    <div className="flex items-center justify-between text-[10px] font-mono mb-1.5">
+                    <div className="flex items-center justify-between text-[10px] font-sans mb-1.5">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-neutral-400">#{idx + 1}</span>
-                        <span className={`text-[8.5px] font-mono font-bold px-1.5 py-0.2 border rounded ${d.badgeColor}`}>
+                        <span className="font-semibold text-neutral-400">#{idx + 1}</span>
+                        <span className={`text-[10px] font-sans font-semibold px-1.5 py-0.2 border ${d.badgeColor}`}>
                           {d.badge}
                         </span>
-                        <span className="font-bold text-[#1e3a8a]">{d.recipientName}</span>
+                        <span className="font-semibold text-[#23324a]">{d.recipientName}</span>
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <span className="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded bg-neutral-100 border border-neutral-300 text-neutral-700 flex items-center gap-1">
+                        <span className="text-[11px] font-sans font-semibold px-1.5 py-0.5 bg-neutral-100 border border-neutral-300 text-neutral-700 flex items-center gap-1">
                           <Clock size={9} />
                           <span>{d.timeFormatted}</span>
                         </span>
 
                         {isExecuted ? (
-                          <span className="text-[8px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center gap-0.5">
+                          <span className="text-[10px] font-sans font-semibold px-1.5 py-0.5 bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center gap-0.5">
                             <CheckCircle2 size={8} />
-                            <span>TRANSMITTED</span>
+                            <span>Sent</span>
                           </span>
                         ) : isDue ? (
-                          <span className="text-[8px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
-                            TIME DUE
+                          <span className="text-[10px] font-sans font-semibold px-1.5 py-0.5 bg-amber-100 text-amber-900 border border-amber-300">
+                            Time due
                           </span>
                         ) : (
-                          <span className="text-[8px] font-mono font-semibold text-neutral-500">
+                          <span className="text-[10px] font-sans font-semibold text-neutral-500">
                             T-{d.timeMinutes - state.timeMinutes}m
                           </span>
                         )}
@@ -1280,17 +1245,17 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                     </div>
 
                     {/* Dispatch Text */}
-                    <div className="text-neutral-900 font-mono text-[11px] bg-[#f8fafc] px-2 py-1.5 rounded border border-[#e2e8f0] mb-1.5 leading-relaxed font-semibold">
+                    <div className="text-neutral-900 font-sans text-[11px] bg-[#f8fafc] px-2 py-1.5 border border-[#e2e8f0] mb-1.5 leading-relaxed font-semibold">
                       "{d.rawText}"
                     </div>
 
                     {/* Historical Context / Quote */}
-                    <div className="text-[9.5px] font-serif italic text-neutral-600 bg-amber-50/40 border-l-2 border-amber-400 pl-2 py-1 mb-2 leading-snug">
+                    <div className="text-[11px] font-serif italic text-neutral-600 bg-amber-50/40 border-l-2 border-amber-400 pl-2 py-1 mb-2 leading-snug">
                       "{d.historicalQuote}"
                     </div>
 
                     {/* Action Footer */}
-                    <div className="flex items-center justify-between pt-1 border-t border-neutral-100 text-[9px] font-mono">
+                    <div className="flex items-center justify-between pt-1 border-t border-neutral-100 text-[11px] font-sans">
                       <span className="text-neutral-500 font-semibold">
                         {d.timingHint || 'Standard deployment'}
                       </span>
@@ -1300,7 +1265,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                           type="button"
                           onClick={() => handleDraftHistoricalDispatch(d)}
                           disabled={isProcessing}
-                          className="px-2 py-0.5 text-neutral-700 hover:text-black hover:bg-neutral-100 border border-neutral-300 rounded font-semibold cursor-pointer transition-colors"
+                          className="px-2 py-0.5 text-neutral-700 hover:text-black hover:bg-neutral-100 border border-neutral-300 font-semibold cursor-pointer transition-colors"
                           title="Load this dispatch into drafter console to edit or customize"
                         >
                           DRAFT
@@ -1310,7 +1275,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                           type="button"
                           onClick={() => handleQueueHistoricalDispatch(d)}
                           disabled={isProcessing}
-                          className="px-2 py-0.5 text-blue-900 hover:text-blue-950 hover:bg-blue-50 border border-blue-300 rounded font-semibold cursor-pointer transition-colors"
+                          className="px-2 py-0.5 text-blue-900 hover:text-blue-950 hover:bg-blue-50 border border-blue-300 font-semibold cursor-pointer transition-colors"
                           title="Stage this dispatch into the queue"
                         >
                           STAGE
@@ -1320,7 +1285,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                           type="button"
                           onClick={() => handleTransmitHistoricalDispatch(d)}
                           disabled={isProcessing}
-                          className="flex items-center gap-0.5 px-2 py-0.5 bg-[#1e3a8a] hover:bg-[#1e40af] text-white rounded font-bold cursor-pointer shadow-2xs active:scale-95 transition-colors"
+                          className="flex items-center gap-0.5 px-2 py-0.5 bg-[#23324a] hover:bg-[#2e4160] text-white font-semibold cursor-pointer transition-colors"
                           title="Immediately transmit this dispatch"
                         >
                           <Send size={9} />
@@ -1337,12 +1302,12 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
       </div>
 
       {/* Input Zone with Autocomplete Overlay */}
-      <div className="relative p-2.5 border-t border-[#a1a1aa] bg-[#e4e4e7]">
+      <div className="relative p-2.5 border-t border-[#a8a29e] bg-[#e8e4db]">
         {/* Autocomplete Dropdown Popover */}
         {isMentionOpen && filteredMentions.length > 0 && (
-          <div className="absolute bottom-full left-2 right-2 mb-1 z-50 bg-white border-2 border-[#a1a1aa] shadow-2xl rounded-t overflow-hidden flex flex-col">
-            <div className="px-2.5 py-1 bg-[#e4e4e7] border-b border-[#a1a1aa] flex items-center justify-between text-[9px] font-mono font-bold text-neutral-700">
-              <span className="uppercase tracking-wider text-[#1e3a8a]">Tactical Reference Catalog</span>
+          <div className="absolute bottom-full left-2 right-2 mb-1 z-50 bg-white border border-[#a8a29e] shadow-[0_4px_16px_rgba(28,25,23,0.16)] rounded-t overflow-hidden flex flex-col">
+            <div className="px-2.5 py-1 bg-[#e8e4db] border-b border-[#a8a29e] flex items-center justify-between text-[11px] font-sans font-semibold text-neutral-700">
+              <span className=" text-[#23324a]">Tactical Reference Catalog</span>
               <span>{filteredMentions.length} matches</span>
             </div>
 
@@ -1360,28 +1325,28 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                       handleSelectMention(item);
                     }}
                     className={`px-3 py-1.5 flex items-center justify-between cursor-pointer transition-colors ${
-                      isSelected
-                        ? 'bg-blue-50 border-l-4 border-[#1e3a8a] text-black'
-                        : 'hover:bg-neutral-100 text-neutral-800'
-                    }`}
+ isSelected
+ ? 'bg-blue-50 border-l-4 border-[#23324a] text-black'
+ : 'hover:bg-neutral-100 text-neutral-800'
+ }`}
                   >
                     <div className="flex items-center gap-2 overflow-hidden">
-                      <span className={`text-[8px] font-mono font-bold px-1.5 py-0.5 border rounded shrink-0 ${item.badgeColor}`}>
+                      <span className={`text-[10px] font-sans font-semibold px-1.5 py-0.5 border shrink-0 ${item.badgeColor}`}>
                         {item.badge}
                       </span>
                       <div className="flex flex-col truncate">
-                        <span className="font-mono text-[11px] font-bold text-black flex items-center gap-1.5">
+                        <span className="font-sans text-[11px] font-semibold text-black flex items-center gap-1.5">
                           {item.category === 'commander' ? (
                             <User size={11} className="text-amber-700 shrink-0" />
                           ) : item.category === 'location' ? (
                             <MapPin size={11} className="text-emerald-700 shrink-0" />
                           ) : (
-                            <Shield size={11} className="text-[#1e3a8a] shrink-0" />
+                            <Shield size={11} className="text-[#23324a] shrink-0" />
                           )}
                           <span className="text-neutral-900 font-semibold truncate">{item.name}</span>
-                          <span className="text-[#1e3a8a] text-[10px] font-mono font-normal shrink-0">({item.token})</span>
+                          <span className="text-[#23324a] text-[10px] font-sans font-normal shrink-0">({item.token})</span>
                         </span>
-                        <span className="text-[9px] font-mono text-neutral-500 truncate">{item.subtitle}</span>
+                        <span className="text-[11px] font-sans text-neutral-500 truncate">{item.subtitle}</span>
                       </div>
                     </div>
                   </div>
@@ -1389,7 +1354,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
               })}
             </div>
 
-            <div className="px-2.5 py-1 bg-[#f4f4f5] border-t border-[#d4d4d8] flex items-center justify-between text-[8px] font-mono text-neutral-500">
+            <div className="px-2.5 py-1 bg-[#f5f3ee] border-t border-[#d9d3c7] flex items-center justify-between text-[10px] font-sans text-neutral-500">
               <span>↑↓ Navigate</span>
               <span>Enter / Tab to Select</span>
               <span>Esc to Dismiss</span>
@@ -1399,10 +1364,10 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
 
         {/* Selected Unit Quick Addressee Bar (if a friendly unit is selected on map) */}
         {selectedUnit && (
-          <div className="flex items-center gap-1.5 mb-1.5 px-2 py-1 bg-blue-50/70 border border-blue-200 text-[9.5px] font-mono select-none rounded">
-            <span className="text-neutral-500 font-bold uppercase text-[8px] flex items-center gap-1 shrink-0">
-              <User size={10} className="text-[#1e3a8a]" />
-              <span>TARGET:</span>
+          <div className="flex items-center gap-1.5 mb-1.5 px-2 py-1 bg-blue-50/70 border border-blue-200 text-[11px] font-sans select-none ">
+            <span className="text-neutral-500 font-semibold text-[10px] flex items-center gap-1 shrink-0">
+              <User size={10} className="text-[#23324a]" />
+              <span>Target:</span>
             </span>
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar flex-1">
               <button
@@ -1417,12 +1382,12 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                   });
                   setTimeout(() => inputRef.current?.focus(), 30);
                 }}
-                className="px-2 py-0.5 bg-white border border-blue-400 hover:border-blue-600 hover:bg-blue-100 text-blue-950 font-bold cursor-pointer shrink-0 rounded transition-colors shadow-2xs active:scale-95 flex items-center gap-1"
+                className="px-2 py-0.5 bg-white border border-blue-400 hover:border-blue-600 hover:bg-blue-100 text-blue-950 font-semibold cursor-pointer shrink-0 transition-colors flex items-center gap-1"
                 title={`Target unit: ${selectedUnit.commander || selectedCleanName}`}
               >
-                <span className="text-[#1e3a8a]">@{selectedCommanderSurname || selectedCleanName}</span>
+                <span className="text-[#23324a]">@{selectedCommanderSurname || selectedCleanName}</span>
                 {selectedCommanderSurname && selectedCleanName && selectedCommanderSurname.toLowerCase() !== selectedCleanName.toLowerCase() && (
-                  <span className="text-neutral-500 font-normal text-[8.5px]">({selectedCleanName})</span>
+                  <span className="text-neutral-500 font-normal text-[10px]">({selectedCleanName})</span>
                 )}
               </button>
 
@@ -1439,7 +1404,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                     });
                     setTimeout(() => inputRef.current?.focus(), 30);
                   }}
-                  className="px-1.5 py-0.5 bg-white border border-indigo-300 hover:border-indigo-500 hover:bg-indigo-100 text-indigo-900 font-bold cursor-pointer shrink-0 rounded transition-colors shadow-2xs active:scale-95"
+                  className="px-1.5 py-0.5 bg-white border border-indigo-300 hover:border-indigo-500 hover:bg-indigo-100 text-indigo-900 font-semibold cursor-pointer shrink-0 transition-colors "
                   title={`Target entire army corps: ${selectedCorps}`}
                 >
                   @{selectedCorps}
@@ -1452,9 +1417,9 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
         {/* Sleek Command Helpers Ribbon (Single row with category tabs, zero ugly scrollbars) */}
         <div className="flex flex-col gap-1 mb-2 select-none">
           {/* Category Selector Tabs */}
-          <div className="flex items-center justify-between text-[9px] font-mono">
+          <div className="flex items-center justify-between text-[11px] font-sans">
             <div className="flex items-center gap-1">
-              <span className="text-neutral-500 font-bold uppercase text-[7.5px] mr-0.5">PRESETS:</span>
+              <span className="text-neutral-500 font-semibold text-[10px] mr-0.5">Insert</span>
               {[
                 { id: 'actions', label: 'Actions' },
                 { id: 'timing', label: 'Timing' },
@@ -1465,11 +1430,11 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                   key={cat.id}
                   type="button"
                   onClick={() => setActiveHelperCategory(activeHelperCategory === cat.id ? 'none' : (cat.id as typeof activeHelperCategory))}
-                  className={`px-1.5 py-0.5 rounded font-semibold cursor-pointer transition-colors ${
-                    activeHelperCategory === cat.id
-                      ? 'bg-neutral-800 text-white shadow-2xs'
-                      : 'bg-neutral-200/80 hover:bg-neutral-300 text-neutral-700'
-                  }`}
+                  className={`px-1.5 py-0.5 font-semibold cursor-pointer transition-colors ${
+ activeHelperCategory === cat.id
+ ? 'bg-neutral-800 text-white '
+ : 'bg-neutral-200/80 hover:bg-neutral-300 text-neutral-700'
+ }`}
                 >
                   {cat.label}
                 </button>
@@ -1479,7 +1444,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
             <button
               type="button"
               onClick={() => setActiveHelperCategory(activeHelperCategory === 'none' ? 'actions' : 'none')}
-              className="text-neutral-500 hover:text-neutral-800 text-[8px] cursor-pointer"
+              className="text-neutral-500 hover:text-neutral-800 text-[10px] cursor-pointer"
               title={activeHelperCategory === 'none' ? 'Show command helper chips' : 'Hide command helper chips'}
             >
               {activeHelperCategory === 'none' ? '+ Show' : 'Hide'}
@@ -1488,7 +1453,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
 
           {/* Active Category Chips */}
           {activeHelperCategory !== 'none' && (
-            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 text-[9px] font-mono">
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 text-[11px] font-sans">
               {activeHelperCategory === 'actions' && [
                 { label: 'Advance', text: 'advance to ' },
                 { label: 'Force March', text: 'force march to ' },
@@ -1506,7 +1471,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                   key={d.label}
                   type="button"
                   onClick={() => appendToInput(d.text)}
-                  className="px-2 py-0.5 bg-white border border-neutral-300 hover:border-[#1e3a8a] hover:bg-blue-50 text-neutral-800 font-semibold rounded cursor-pointer shrink-0 transition-colors shadow-2xs active:scale-95"
+                  className="px-2 py-0.5 bg-white border border-neutral-300 hover:border-[#23324a] hover:bg-blue-50 text-neutral-800 font-semibold cursor-pointer shrink-0 transition-colors "
                 >
                   {d.label}
                 </button>
@@ -1526,7 +1491,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                   key={t.label}
                   type="button"
                   onClick={() => appendToInput(t.text)}
-                  className="px-2 py-0.5 bg-amber-50/90 border border-amber-300 hover:border-amber-600 hover:bg-amber-100 text-amber-900 font-semibold rounded cursor-pointer shrink-0 transition-colors shadow-2xs active:scale-95"
+                  className="px-2 py-0.5 bg-amber-50/90 border border-amber-300 hover:border-amber-600 hover:bg-amber-100 text-amber-900 font-semibold cursor-pointer shrink-0 transition-colors "
                 >
                   {t.label}
                 </button>
@@ -1545,7 +1510,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                   key={c.label}
                   type="button"
                   onClick={() => appendToInput(c.text)}
-                  className="px-2 py-0.5 bg-purple-50/90 border border-purple-300 hover:border-purple-600 hover:bg-purple-100 text-purple-900 font-semibold rounded cursor-pointer shrink-0 transition-colors shadow-2xs active:scale-95"
+                  className="px-2 py-0.5 bg-purple-50/90 border border-purple-300 hover:border-purple-600 hover:bg-purple-100 text-purple-900 font-semibold cursor-pointer shrink-0 transition-colors "
                 >
                   {c.label}
                 </button>
@@ -1558,12 +1523,12 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                     key={trp.id}
                     type="button"
                     onClick={() => appendTrpToInput(trp.code, coordStr)}
-                    className="px-2 py-0.5 bg-white border border-neutral-300 hover:border-[#1e3a8a] hover:bg-blue-50 text-neutral-800 font-semibold rounded cursor-pointer shrink-0 transition-colors shadow-2xs active:scale-95 flex items-center gap-1"
+                    className="px-2 py-0.5 bg-white border border-neutral-300 hover:border-[#23324a] hover:bg-blue-50 text-neutral-800 font-semibold cursor-pointer shrink-0 transition-colors flex items-center gap-1"
                     title={`${trp.code}: ${trp.name} ${coordStr} - ${trp.description}`}
                   >
-                    <span className="font-bold text-[#1e3a8a]">{trp.code}</span>
+                    <span className="font-semibold text-[#23324a]">{trp.code}</span>
                     <span className="text-neutral-600">{trp.name.split(' ')[0]}</span>
-                    <span className="text-neutral-400 text-[8px] font-normal">{coordStr}</span>
+                    <span className="text-neutral-400 text-[10px] font-normal">{coordStr}</span>
                   </button>
                 );
               })}
@@ -1681,11 +1646,11 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                 placeholder={
                   isInputFocused
                     ? 'e.g. @IV Corps, advance to (1420, 760) or @Vandamme, assault Pratzen at 08:30...'
-                    : 'Draft dispatch... (e.g. @Vandamme, advance to Pratzen)'
+                    : 'Write an order, e.g. @Vandamme advance to Pratzen'
                 }
-                className={`w-full bg-white px-2.5 py-1.5 text-xs text-black placeholder-neutral-400 outline-none font-mono shadow-inner border rounded min-h-[54px] max-h-[120px] resize-y custom-scrollbar transition-all ${
-                  isInputFocused ? 'border-[#1e3a8a] ring-1 ring-[#1e3a8a]' : 'border-[#a1a1aa]'
-                }`}
+                className={`w-full bg-white px-2.5 py-1.5 text-xs text-black placeholder-neutral-400 outline-none font-sans border min-h-[54px] max-h-[120px] resize-y custom-scrollbar transition-all ${
+ isInputFocused ? 'border-[#23324a] ring-1 ring-[#23324a]' : 'border-[#a8a29e]'
+ }`}
               />
             </div>
 
@@ -1696,10 +1661,10 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                 onClick={handleQueueDispatch}
                 disabled={!inputText.trim() || isProcessing}
                 title="Queue dispatch to Staged Orders (Enter)"
-                className="px-2.5 py-1 bg-white hover:bg-neutral-100 disabled:opacity-40 text-[#1e3a8a] border border-[#1e3a8a] rounded text-[10.5px] font-bold font-mono uppercase flex items-center justify-center gap-1 transition-colors cursor-pointer shadow-2xs active:scale-95 h-[25px]"
+                className="px-2.5 py-1 bg-white hover:bg-neutral-100 disabled:opacity-40 text-[#23324a] border border-[#23324a] text-[11px] font-semibold font-sans flex items-center justify-center gap-1 transition-colors cursor-pointer h-[25px]"
               >
                 <Layers size={11} />
-                <span>QUEUE</span>
+                <span>Queue</span>
               </button>
 
               <button
@@ -1707,30 +1672,30 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                 onClick={() => handleSendImmediate()}
                 disabled={!inputText.trim() || isProcessing}
                 title="Transmit immediately (Shift+Enter)"
-                className="px-3 py-1 bg-[#1e3a8a] hover:bg-[#1e40af] disabled:opacity-40 text-white rounded text-[10.5px] font-bold font-mono uppercase flex items-center justify-center gap-1 transition-colors cursor-pointer shadow-2xs active:scale-95 h-[26px]"
+                className="px-3 py-1 bg-[#23324a] hover:bg-[#2e4160] disabled:opacity-40 text-white text-[11px] font-semibold font-sans flex items-center justify-center gap-1 transition-colors cursor-pointer h-[26px]"
               >
                 <Send size={11} />
-                <span>{isProcessing ? 'SENDING...' : 'TRANSMIT'}</span>
+                <span>{isProcessing ? 'Sending…' : 'Send'}</span>
               </button>
             </div>
           </div>
 
           {/* Compact Bottom Toolbar with Map Pinpoint & Keyboard Shortcuts */}
-          <div className="flex items-center justify-between text-[9px] font-mono text-neutral-500 px-0.5">
+          <div className="flex items-center justify-between text-[11px] font-sans text-neutral-500 px-0.5">
             <div className="flex items-center gap-2">
               {onTogglePickCoordinates && (
                 <button
                   type="button"
                   onClick={onTogglePickCoordinates}
                   title="Pinpoint target coordinates on map (Esc to cancel)"
-                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[8.5px] font-bold transition-all cursor-pointer ${
-                    isPickingCoordinates
-                      ? 'bg-red-600 text-white border-red-700 animate-pulse'
-                      : 'bg-white hover:bg-neutral-100 text-[#1e3a8a] border-neutral-300'
-                  }`}
+                  className={`flex items-center gap-1 px-1.5 py-0.5 border text-[10px] font-semibold transition-all cursor-pointer ${
+ isPickingCoordinates
+ ? 'bg-red-600 text-white border-red-700 '
+ : 'bg-white hover:bg-neutral-100 text-[#23324a] border-neutral-300'
+ }`}
                 >
                   <Crosshair size={10} className={isPickingCoordinates ? 'animate-spin' : ''} />
-                  <span>{isPickingCoordinates ? 'TARGETING...' : 'PINPOINT MAP'}</span>
+                  <span>{isPickingCoordinates ? 'Picking…' : 'Pick on map'}</span>
                 </button>
               )}
 
@@ -1738,7 +1703,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
               <span className="text-neutral-600">Type <strong className="text-neutral-800">@</strong> to add addressee</span>
             </div>
 
-            <div className="flex items-center gap-1 text-[8.5px] text-neutral-500">
+            <div className="flex items-center gap-1 text-[10px] text-neutral-500">
               <span>Enter: <strong>Queue</strong></span>
               <span>•</span>
               <span>Shift+Enter: <strong>Send</strong></span>

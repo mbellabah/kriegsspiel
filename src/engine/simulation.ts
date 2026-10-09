@@ -190,8 +190,8 @@ export class BattleEngine {
           importance: 'highlight',
         },
       ],
-      selectedUnitId: 'fr_sthilaire',
-      selectedUnitIds: ['fr_sthilaire'],
+      selectedUnitId: null,
+      selectedUnitIds: [],
       locatedUnitId: null,
       sitrepNotifications: [],
       fogOfWarEnabled: false,
@@ -4183,6 +4183,11 @@ export class BattleEngine {
   }
 
   public getElevation(pos: { x: number; y: number }): number {
+    return Math.round(this.getElevationRaw(pos));
+  }
+
+  // Continuous (unrounded) terrain height — used for cartography so slopes don't terrace
+  public getElevationRaw(pos: { x: number; y: number }): number {
     const bx = pos.x / 1.5;
     const by = pos.y / 1.5;
 
@@ -4326,7 +4331,7 @@ export class BattleEngine {
 
     elev += (drainage * peakMask) + upland + organicTerrain;
 
-    return Math.round(elev);
+    return elev;
   }
 
   public checkLineOfSight(from: Vector2D, to: Vector2D): { inDefilade: boolean; occludingElevation: number; occludingPoint?: Vector2D } {

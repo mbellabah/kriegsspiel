@@ -1,7 +1,7 @@
 // Lightweight Web Audio API synthesizer for authentic military sound effects
 class SoundEngine {
   private ctx: AudioContext | null = null;
-  public enabled: boolean = true;
+  public enabled: boolean = false;
 
   private init() {
     try {

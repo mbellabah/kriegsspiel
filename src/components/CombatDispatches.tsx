@@ -15,8 +15,8 @@ export const CombatDispatches: React.FC<CombatDispatchesProps> = ({ logs, isOpen
   const displayedLogs = logs.slice(0, 50);
 
   const containerClasses = embedded
-    ? "flex-1 min-h-0 flex flex-col overflow-hidden bg-[#f4f4f5] text-black font-sans select-none"
-    : "absolute bottom-12 left-4 z-40 w-96 max-h-80 bg-[#f4f4f5] border-2 border-[#a1a1aa] shadow-2xl rounded text-black font-sans select-none flex flex-col overflow-hidden animate-in slide-in-from-bottom-2 duration-150";
+    ? "flex-1 min-h-0 flex flex-col overflow-hidden bg-[#f5f3ee] text-black font-sans select-none"
+    : "absolute bottom-12 left-4 z-40 w-96 max-h-80 bg-[#f5f3ee] border border-[#a8a29e] shadow-[0_4px_16px_rgba(28,25,23,0.16)]  text-black font-sans select-none flex flex-col overflow-hidden animate-in slide-in-from-bottom-2 duration-150";
 
   const ContainerTag = embedded ? 'div' : 'aside';
 
@@ -24,18 +24,18 @@ export const CombatDispatches: React.FC<CombatDispatchesProps> = ({ logs, isOpen
     <ContainerTag className={containerClasses}>
       {/* Header */}
       {!embedded && (
-        <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#a1a1aa] bg-[#e4e4e7]">
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#a8a29e] bg-[#e8e4db]">
           <div className="flex items-center gap-1.5">
-            <MessageSquare size={13} className="text-[#1e3a8a]" />
-            <h2 className="font-mono text-xs font-bold uppercase tracking-wider text-black">
+            <MessageSquare size={13} className="text-[#23324a]" />
+            <h2 className="font-sans text-xs font-semibold text-black">
               Combat Log & Dispatches
             </h2>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-neutral-600 font-mono">{logs.length} events</span>
+            <span className="text-[10px] text-neutral-600 font-sans">{logs.length} events</span>
             <button
               onClick={onClose}
-              className="text-neutral-500 hover:text-black p-1 rounded hover:bg-[#d4d4d8] transition-colors"
+              className="text-neutral-500 hover:text-black p-1 hover:bg-[#d9d3c7] transition-colors"
               title="Close"
             >
               <X size={14} />
@@ -46,8 +46,8 @@ export const CombatDispatches: React.FC<CombatDispatchesProps> = ({ logs, isOpen
 
       {/* Subheader info if embedded */}
       {embedded && (
-        <div className="px-3 py-1 bg-[#e4e4e7] border-b border-[#a1a1aa] flex items-center justify-between text-[10px] font-mono text-neutral-600">
-          <span>HISTORICAL DISPATCH FEED</span>
+        <div className="px-3 py-1 bg-[#e8e4db] border-b border-[#a8a29e] flex items-center justify-between text-[10px] font-sans text-neutral-600">
+          <span>Historical dispatch feed</span>
           <span>{logs.length} EVENTS RECORDED</span>
         </div>
       )}
@@ -62,17 +62,17 @@ export const CombatDispatches: React.FC<CombatDispatchesProps> = ({ logs, isOpen
             return (
               <div
                 key={log.id}
-                className="bg-white border border-[#a1a1aa] p-2 rounded shadow-2xs text-xs leading-snug"
+                className="bg-white border border-[#a8a29e] p-2 text-xs leading-snug"
               >
                 <div className="flex items-center justify-between gap-2 mb-1">
                   <span
-                    className={`text-[10px] font-bold uppercase font-mono ${
-                      isFrench ? 'text-[#1d4ed8]' : 'text-[#b91c1c]'
-                    }`}
+                    className={`text-[10px] font-semibold font-sans ${
+ isFrench ? 'text-[#2e4160]' : 'text-[#b91c1c]'
+ }`}
                   >
                     {isFrench ? 'BLUFOR (FRA)' : 'REDFOR (ALL)'}
                   </span>
-                  <span className="text-[10px] font-mono text-neutral-500 font-semibold">{log.timeFormatted}</span>
+                  <span className="text-[10px] font-sans text-neutral-500 font-semibold">{log.timeFormatted}</span>
                 </div>
                 <p className="text-[11px] text-neutral-800 font-sans">{log.message}</p>
               </div>
@@ -82,7 +82,7 @@ export const CombatDispatches: React.FC<CombatDispatchesProps> = ({ logs, isOpen
       </div>
 
       {/* Footer */}
-      <div className="px-2 py-1 bg-[#e4e4e7] border-t border-[#a1a1aa] text-[9px] text-neutral-600 text-center font-semibold">
+      <div className="px-2 py-1 bg-[#e8e4db] border-t border-[#a8a29e] text-[11px] text-neutral-600 text-center font-semibold">
         Chronological Signal & Engagement Ledger
       </div>
     </ContainerTag>

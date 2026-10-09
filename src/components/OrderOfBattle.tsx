@@ -1,7 +1,9 @@
+import { ui, cx } from './ui';
+import { UnitSymbol } from './UnitSymbol';
 import React, { useState } from 'react';
 import { Unit, Faction, Vector2D } from '../types/game';
 import { BattleEngine } from '../engine/simulation';
-import { ChevronDown, ChevronRight, X, Users, Send, Eye, ArrowRightLeft, Shield } from 'lucide-react';
+import { ChevronDown, ChevronRight, X, Send, Eye, ArrowRightLeft, Shield } from 'lucide-react';
 
 interface OrderOfBattleProps {
   units: Unit[];
@@ -73,70 +75,45 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
   const totalGuns = filteredUnits.reduce((sum, u) => sum + (u.type === 'artillery' ? u.strength : 0), 0);
 
   const containerClasses = embedded
-    ? "flex-1 min-h-0 flex flex-col overflow-hidden bg-[#fbfbfa] text-black font-sans select-none"
-    : "absolute top-12 right-3 z-40 w-88 bg-[#fbfbfa] border-2 border-[#71717a] shadow-2xl rounded text-black font-sans select-none flex flex-col max-h-[calc(100vh-64px)] animate-in slide-in-from-right-2 duration-150";
+    ? "flex-1 min-h-0 flex flex-col overflow-hidden bg-[#fcfbf8] text-black font-sans select-none"
+    : "absolute top-12 right-3 z-40 w-88 bg-[#fcfbf8] border border-[#78716c] shadow-[0_4px_16px_rgba(28,25,23,0.16)]  text-black font-sans select-none flex flex-col max-h-[calc(100vh-64px)] animate-in slide-in-from-right-2 duration-150";
 
   const ContainerTag = embedded ? 'div' : 'aside';
 
   return (
     <ContainerTag className={containerClasses}>
-      {/* Light Theme Header matching NATO sandtable / WarRoomHUD */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#a1a1aa] bg-[#e4e4e7]">
-        <div>
-          <h2 className="font-mono text-xs font-bold uppercase tracking-wider text-black flex items-center gap-1.5">
-            <Users size={14} className="text-[#1e3a8a]" />
-            <span>Order of Battle (ORBAT)</span>
-          </h2>
-          <span className="text-[10px] text-neutral-600 font-mono">
-            {totalMen.toLocaleString()} Men • {totalGuns} Guns • {Object.keys(corpsGroups).length} Formations
-          </span>
-        </div>
-        {!embedded && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-neutral-500 hover:text-black p-1 rounded hover:bg-[#d4d4d8] transition-colors cursor-pointer"
-            title="Close ORBAT Panel"
-          >
-            <X size={15} />
+      {!embedded && (
+        <div className="flex items-center justify-between h-8 pl-2 pr-0.5 border-b border-[#b3ada2] bg-[#e6e3dc] text-[12px] font-semibold text-stone-900">
+          <span>Order of battle</span>
+          <button type="button" onClick={onClose} className="h-6 w-6 inline-flex items-center justify-center text-neutral-600 hover:text-black hover:bg-white cursor-pointer" title="Close">
+            <X size={14} />
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Faction Switcher */}
-      <div className="grid grid-cols-2 gap-1.5 p-2 bg-[#f4f4f5] border-b border-[#d4d4d8]">
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab('french');
-            setTransferringUnitId(null);
-          }}
-          className={`py-1 rounded text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer ${
-            activeTab === 'french'
-              ? 'bg-[#1e3a8a] border-[#1e40af] text-white shadow-xs'
-              : 'bg-white border-[#d4d4d8] text-neutral-700 hover:bg-[#f4f4f5]'
-          }`}
-        >
-          French Corps (Blue)
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab('allies');
-            setTransferringUnitId(null);
-          }}
-          className={`py-1 rounded text-xs font-bold uppercase tracking-wide border transition-all cursor-pointer ${
-            activeTab === 'allies'
-              ? 'bg-[#991b1b] border-[#b91c1c] text-white shadow-xs'
-              : 'bg-white border-[#d4d4d8] text-neutral-700 hover:bg-[#f4f4f5]'
-          }`}
-        >
-          Allied Columns (Red)
-        </button>
+      <div className="flex items-center justify-between gap-2 px-2 py-2 border-b border-[#dedad1] bg-[#f4f2ed]">
+        <div className={cx(ui.group, 'w-44')}>
+          {(['french', 'allies'] as const).map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => {
+                setActiveTab(f);
+                setTransferringUnitId(null);
+              }}
+              className={cx(ui.groupItem, 'flex-1 text-[12px] font-medium', activeTab === f && ui.groupItemActive)}
+            >
+              {f === 'french' ? 'French' : 'Allied'}
+            </button>
+          ))}
+        </div>
+        <span className={cx(ui.mono, 'text-[11px] text-stone-500')}>
+          {totalMen.toLocaleString()} men · {totalGuns} guns
+        </span>
       </div>
 
       {/* Formations Tree */}
-      <div className="overflow-y-auto space-y-2 p-2 flex-1 custom-scrollbar bg-[#fbfbfa]">
+      <div className="overflow-y-auto flex-1 custom-scrollbar bg-[#fbfaf7]">
         {Object.entries(corpsGroups).map(([corpsName, corpsUnits]) => {
           const isCollapsed = collapsedCorps[corpsName];
           const corpsMen = corpsUnits.reduce((sum, u) => sum + (u.type === 'artillery' ? 0 : u.strength), 0);
@@ -147,10 +124,10 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
               key={corpsName}
               onMouseEnter={() => onHoverCorps?.(corpsName)}
               onMouseLeave={() => onHoverCorps?.(null)}
-              className="bg-white border border-[#d4d4d8] rounded overflow-hidden shadow-2xs transition-all hover:border-[#1e3a8a]/60"
+              className="border-b border-[#dedad1]"
             >
               {/* Corps Header */}
-              <div className="w-full flex items-center justify-between px-2.5 py-1.5 bg-[#f4f4f5] hover:bg-[#eaeaea] text-left border-b border-[#e5e5e5] transition-colors">
+              <div className="w-full flex items-center justify-between pl-1.5 pr-2 h-10 bg-[#f4f2ed] hover:bg-[#eceae4] text-left transition-colors">
                 <button
                   type="button"
                   onClick={() => toggleCorps(corpsName)}
@@ -162,9 +139,9 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                     <ChevronDown size={13} className="text-neutral-500" />
                   )}
                   <div className="flex flex-col">
-                    <span className="truncate max-w-[155px] font-sans">{corpsName}</span>
-                    <span className="text-[9px] text-neutral-500 font-mono font-normal">
-                      {corpsUnits.length} Regiments • {corpsMen.toLocaleString()} Men {corpsGuns > 0 ? `• ${corpsGuns} Guns` : ''}
+                    <span className="truncate max-w-[200px] text-[12px] font-semibold">{corpsName}</span>
+                    <span className="text-[11px] text-neutral-500 font-normal">
+                      {corpsUnits.length} units · {corpsMen.toLocaleString()} men{corpsGuns > 0 ? ` · ${corpsGuns} guns` : ''}
                     </span>
                   </div>
                 </button>
@@ -174,8 +151,8 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                   <button
                     type="button"
                     onClick={() => handleCenterOnCorps(corpsUnits)}
-                    title="Center on Corps on Sandtable"
-                    className="p-1 text-neutral-600 hover:text-black hover:bg-neutral-200 rounded cursor-pointer"
+                    title="Show on map"
+                    className={ui.btnIcon}
                   >
                     <Eye size={12} />
                   </button>
@@ -185,10 +162,10 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                       type="button"
                       onClick={() => onDispatchCorps(corpsName)}
                       title={`Dispatch Corps Orders to ${corpsName}`}
-                      className="flex items-center gap-0.5 px-1.5 py-0.5 bg-[#1e3a8a] hover:bg-[#1e40af] text-white rounded text-[9px] font-bold font-mono tracking-wide cursor-pointer shadow-2xs"
+                      className={cx(ui.btn, 'h-6 px-2 border-[#b3ada2] bg-[#fbfaf7]')}
                     >
-                      <Send size={9} />
-                      <span>ORDER</span>
+                      <Send size={11} />
+                      <span>Order</span>
                     </button>
                   )}
                 </div>
@@ -196,7 +173,7 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
 
               {/* Subordinate Regiments and Batteries */}
               {!isCollapsed && (
-                <div className="divide-y divide-[#f0f0f0] bg-white">
+                <div className="divide-y divide-[#ebe8e1] bg-[#fbfaf7]">
                   {corpsUnits.map((u) => {
                     const isSelected = u.id === selectedUnitId;
                     const isTransferring = transferringUnitId === u.id;
@@ -204,11 +181,9 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                     return (
                       <div
                         key={u.id}
-                        className={`flex flex-col px-2.5 py-1.5 transition-all ${
-                          isSelected
-                            ? 'bg-[#dbeafe] border-l-4 border-l-[#1e3a8a] text-black font-semibold'
-                            : 'hover:bg-[#f8fafc] text-neutral-800'
-                        }`}
+                        className={`flex flex-col pl-6 pr-2 py-1.5 border-l-2 transition-colors ${
+ isSelected ? 'bg-[#e4e9f1] border-l-[#23324a]' : 'border-l-transparent hover:bg-white'
+ }`}
                       >
                         <div
                           className="flex items-center justify-between cursor-pointer"
@@ -217,20 +192,26 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                             onFocusLocation?.(u.position);
                           }}
                         >
-                          <div className="flex flex-col">
-                            <span className="text-xs font-medium text-neutral-900">{u.name}</span>
-                            <span className="text-[9.5px] text-neutral-500 font-mono">
-                              {u.commander} • {u.type.toUpperCase()} • {u.formation.toUpperCase()}
-                            </span>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <UnitSymbol unit={u} hostile={u.faction !== 'french'} size={26} />
+                            <div className="flex flex-col min-w-0">
+                              <span className="text-[12px] font-medium text-neutral-900 truncate">{u.name}</span>
+                              <span className="text-[11px] text-neutral-500 truncate capitalize">
+                                {u.formation} · {u.status === 'idle' ? 'ready' : u.status}
+                              </span>
+                            </div>
                           </div>
 
                           <div className="flex items-center gap-2">
                             <div className="text-right">
-                              <div className="font-mono text-xs font-bold text-neutral-900">
-                                {u.type === 'artillery' ? `${u.strength} Guns` : u.strength.toLocaleString()}
+                              <div className="font-mono text-[12px] text-neutral-900">
+                                {u.type === 'artillery' ? `${u.strength} guns` : u.strength.toLocaleString()}
                               </div>
-                              <div className="text-[9.5px] text-neutral-500 font-mono">
-                                {Math.round(u.morale)}% M
+                              <div className="mt-0.5 ml-auto h-1 w-14 bg-[#e3dfd6]">
+                                <div
+                                  className={`h-full ${u.strength / Math.max(1, u.initialStrength) < 0.4 ? 'bg-[#c2272d]' : u.strength / Math.max(1, u.initialStrength) < 0.65 ? 'bg-[#d97706]' : 'bg-[#3d4f6b]'}`}
+                                  style={{ width: `${Math.min(100, (u.strength / Math.max(1, u.initialStrength)) * 100)}%` }}
+                                />
                               </div>
                             </div>
 
@@ -242,10 +223,10 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                                 setTransferringUnitId(isTransferring ? null : u.id);
                                 setIsCreatingNewCorps(false);
                               }}
-                              title="Transfer regiment to another Corps"
-                              className={`p-1 rounded text-neutral-500 hover:text-black hover:bg-neutral-200 transition-colors cursor-pointer ${
-                                isTransferring ? 'bg-[#d4d4d8] text-black' : ''
-                              }`}
+                              title="Reassign to another formation"
+                              className={`p-1 text-neutral-500 hover:text-black hover:bg-neutral-200 transition-colors cursor-pointer ${
+ isTransferring ? 'bg-[#d9d3c7] text-black' : ''
+ }`}
                             >
                               <ArrowRightLeft size={11} />
                             </button>
@@ -256,10 +237,10 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                         {isTransferring && (
                           <div
                             onClick={(e) => e.stopPropagation()}
-                            className="mt-1.5 p-2 bg-[#f4f4f5] border border-[#a1a1aa] rounded shadow-xs text-left animate-in fade-in duration-150"
+                            className="mt-1.5 p-2 bg-[#f5f3ee] border border-[#a8a29e] text-left animate-in fade-in duration-150"
                           >
                             <div className="text-[10px] font-bold text-neutral-700 uppercase mb-1 flex items-center gap-1">
-                              <Shield size={10} className="text-[#1e3a8a]" />
+                              <Shield size={10} className="text-[#23324a]" />
                               <span>Reassign to Formation:</span>
                             </div>
 
@@ -274,7 +255,7 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                                       handleTransfer(u.id, e.target.value);
                                     }
                                   }}
-                                  className="w-full text-[10px] font-sans border border-[#a1a1aa] rounded px-1.5 py-1 bg-white text-black"
+                                  className="w-full text-[10px] font-sans border border-[#a8a29e] px-1.5 py-1 bg-white text-black"
                                 >
                                   <option value="" disabled>
                                     Select Target Corps...
@@ -296,13 +277,13 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                                   placeholder="e.g. Reserve Task Force"
                                   value={newCorpsNameInput}
                                   onChange={(e) => setNewCorpsNameInput(e.target.value)}
-                                  className="flex-1 text-[10px] font-sans border border-[#a1a1aa] rounded px-1.5 py-1 bg-white text-black"
+                                  className="flex-1 text-[10px] font-sans border border-[#a8a29e] px-1.5 py-1 bg-white text-black"
                                   autoFocus
                                 />
                                 <button
                                   type="button"
                                   onClick={() => handleTransfer(u.id, newCorpsNameInput)}
-                                  className="px-2 py-1 bg-[#1e3a8a] text-white text-[10px] font-bold rounded cursor-pointer"
+                                  className="px-2 py-1 bg-[#23324a] text-white text-[10px] font-bold cursor-pointer"
                                 >
                                   Save
                                 </button>

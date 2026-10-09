@@ -1,16 +1,16 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import { ui, cx } from './ui';
 import { BattleEngine, SimulationState } from '../engine/simulation';
 import { SandtableRenderer, Camera, DraftingManeuver } from '../engine/canvasRenderer';
 import { Unit, Vector2D, TroopFilterType, TargetReferencePoint } from '../types/game';
 import { sounds } from '../engine/soundEffects';
-import { ZoomIn, ZoomOut, Crosshair, Volume2, VolumeX, Copy, X, Navigation } from 'lucide-react';
+import { ZoomIn, ZoomOut, Crosshair, Copy, X, Navigation, Play } from 'lucide-react';
 import { TacticalContextMenu } from './TacticalContextMenu';
 import { headingToBearing, getCardinalDirection } from '../engine/tacticalNavigation';
 
 interface SandtableCanvasProps {
   engine: BattleEngine;
   state: SimulationState;
-  showHexGrid: boolean;
   showRangeRings?: boolean;
   onToggleRangeRings?: () => void;
   showCorpsOverlay?: boolean;
@@ -32,7 +32,6 @@ interface SandtableCanvasProps {
 export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
   engine,
   state,
-  showHexGrid,
   showRangeRings = true,
   onToggleRangeRings,
   showCorpsOverlay = false,
@@ -56,7 +55,8 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
   const initialCam = useMemo(() => {
     const w = typeof window !== 'undefined' ? window.innerWidth : 2400;
     const h = typeof window !== 'undefined' ? window.innerHeight : 1500;
-    const fitZoom = Math.min(Math.max(w / 2400, h / 1500), 1.8);
+    // Clamp to the wheel-zoom range; a zero-sized window at mount (background tab, embed) must not yield zoom 0
+    const fitZoom = Math.min(Math.max(w / 2400, h / 1500, 0.6), 1.8);
     return {
       x: 1200,
       y: 750,
@@ -85,7 +85,6 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [hoveredUnitId, setHoveredUnitId] = useState<string | null>(null);
   const [drawingOrder, setDrawingOrder] = useState<DraftingManeuver | null>(null);
-  const [soundEnabled, setSoundEnabled] = useState(true);
 
 
   // Quick cursor coordinate copy toast feedback
@@ -97,7 +96,6 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
   // Live mouse hover coordinates & screen position
   const [hoverCoords, setHoverCoords] = useState<Vector2D | null>(null);
   const [hoverScreenPos, setHoverScreenPos] = useState<{ x: number; y: number } | null>(null);
-  const [copiedCoord, setCopiedCoord] = useState(false);
 
   // Rubber-band box selection
   const [isBoxSelecting, setIsBoxSelecting] = useState(false);
@@ -171,8 +169,6 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
   const hoveredUnitIdRef = useRef(hoveredUnitId);
   hoveredUnitIdRef.current = hoveredUnitId;
 
-  const showHexGridRef = useRef(showHexGrid);
-  showHexGridRef.current = showHexGrid;
 
   const showRangeRingsRef = useRef(showRangeRings);
   showRangeRingsRef.current = showRangeRings;
@@ -535,7 +531,6 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
         // 3. Render main tactical sandtable
         if (rendererRef.current && canvasRef.current) {
           const liveState = engine.getState();
-          rendererRef.current.showHexGrid = showHexGridRef.current;
           rendererRef.current.activeFilter = activeFilterRef.current || 'all';
           rendererRef.current.showRangeRings = !!showRangeRingsRef.current;
           rendererRef.current.showArtilleryKillzones = liveState.showArtilleryKillzones !== false;
@@ -600,9 +595,6 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
       if (onInsertCompassText && isDispatchDeskOpen) {
         onInsertCompassText(fullText);
       }
-
-      setCopiedCoord(true);
-      setTimeout(() => setCopiedCoord(false), 1500);
 
       if (screenPos) {
         setCursorToast({
@@ -1180,15 +1172,10 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
   const resetCamera = () => {
     const w = typeof window !== 'undefined' ? window.innerWidth : 2400;
     const h = typeof window !== 'undefined' ? window.innerHeight : 1500;
-    const fitZoom = Math.min(Math.max(w / 2400, h / 1500), 1.8);
+    // Clamp to the wheel-zoom range; a zero-sized window at mount (background tab, embed) must not yield zoom 0
+    const fitZoom = Math.min(Math.max(w / 2400, h / 1500, 0.6), 1.8);
     targetZoomRef.current = fitZoom;
     targetFocusRef.current = { x: 1200, y: 750 };
-  };
-
-  const toggleSound = () => {
-    const next = !soundEnabled;
-    setSoundEnabled(next);
-    sounds.enabled = next;
   };
 
   const selectedUnit = state.selectedUnitId
@@ -1209,34 +1196,27 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
           : 'cursor-default'
       }`}
     >
-      {/* Call For Fire (Bombardment) Targeting Mode HUD Banner */}
-      {isBombardTargeting && (
-        <div className="absolute top-12 left-1/2 -translate-x-1/2 z-40 bg-[#fef2f2] border-2 border-[#dc2626] text-neutral-900 px-4 py-2 shadow-2xl flex items-center gap-3 font-sans text-xs">
-          <div className="w-2.5 h-2.5 rounded-full bg-[#dc2626] animate-ping" />
-          <span className="font-bold text-[#b91c1c] tracking-wider uppercase">CALL FOR FIRE (CFF):</span>
-          <span className="font-semibold text-neutral-800">LEFT-CLICK TARGET TO FIRE • RETICLE DISPLAYS DYNAMIC KILLZONE, BURST RADIUS & SHELL DISPERSION</span>
-          <span className="text-neutral-500 text-[10px] font-mono">• (HOTKEY: ESC OR RIGHT-CLICK TO CANCEL)</span>
-          <button
-            onClick={onCancelBombardTargeting}
-            className="ml-2 px-2 py-0.5 bg-[#dc2626] hover:bg-[#b91c1c] text-white text-[10px] font-bold border border-red-500 uppercase cursor-pointer"
+      {/* Mode banners (call for fire / pick coordinates) */}
+      {(isBombardTargeting || isPickingCoordinates) && (
+        <div className={cx(ui.panel, 'absolute top-[44px] left-1/2 -translate-x-1/2 z-40 flex items-stretch font-sans text-[12px]')}>
+          <span
+            className={`flex items-center px-2.5 text-[10px] font-bold uppercase tracking-[0.1em] text-white ${
+              isBombardTargeting ? 'bg-[#c2272d]' : 'bg-[#23324a]'
+            }`}
           >
-            CANCEL
-          </button>
-        </div>
-      )}
-
-      {/* Pinpoint Target Mode HUD Banner */}
-      {isPickingCoordinates && (
-        <div className="absolute top-12 left-1/2 -translate-x-1/2 z-40 bg-blue-50 border-2 border-[#1e3a8a] text-blue-950 px-4 py-2 shadow-2xl flex items-center gap-3 font-sans text-xs">
-          <div className="w-2.5 h-2.5 rounded-full bg-[#1e3a8a] animate-ping" />
-          <span className="font-bold text-[#1e3a8a] tracking-wider uppercase">PINPOINT TARGET:</span>
-          <span className="font-semibold text-blue-900">LEFT-CLICK TARGET LOCATION ON MAP TO INSERT COORDINATES INTO DISPATCH</span>
-          <span className="text-blue-600 text-[10px] font-mono">• (HOTKEY: ESC OR RIGHT-CLICK TO CANCEL)</span>
+            {isBombardTargeting ? 'Call for fire' : 'Pick grid'}
+          </span>
+          <span className="px-3 py-1.5 text-stone-800">
+            {isBombardTargeting
+              ? 'Left-click a target. The reticle shows burst radius and dispersion.'
+              : 'Left-click a location to insert its grid into the order.'}
+            <span className="ml-2 text-stone-500">Esc or right-click to cancel</span>
+          </span>
           <button
-            onClick={onCancelPickCoordinates}
-            className="ml-2 px-2 py-0.5 bg-[#dc2626] hover:bg-[#ef4444] text-white text-[10px] font-bold border border-red-300 uppercase cursor-pointer"
+            onClick={isBombardTargeting ? onCancelBombardTargeting : onCancelPickCoordinates}
+            className="px-3 border-l border-[#b3ada2] text-[10px] font-bold uppercase tracking-[0.06em] hover:bg-white cursor-pointer"
           >
-            CANCEL
+            Cancel
           </button>
         </div>
       )}
@@ -1244,71 +1224,76 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
       {/* Floating Quick Copy Toast Confirmation */}
       {cursorToast && (
         <div
-          className="fixed z-50 pointer-events-none bg-[#1e3a8a] text-white px-2.5 py-1 text-xs font-mono font-bold shadow-2xl rounded flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-100"
+          className="fixed z-50 pointer-events-none bg-[#23324a] text-white px-2 py-1 text-[11px] font-mono shadow-lg flex items-center gap-1.5"
           style={{
             left: Math.min(cursorToast.screenPos.x + 16, window.innerWidth - 240),
             top: Math.max(16, cursorToast.screenPos.y - 28),
           }}
         >
-          <Copy size={12} className="text-[#93c5fd]" />
-          <span>COPIED: {cursorToast.text}</span>
+          <Copy size={12} className="text-stone-300" />
+          <span>Copied {cursorToast.text}</span>
         </div>
       )}
 
-      {/* Floating On-Hover Tactical Entity Pill (Shown when inspecting units, TRPs, or landmarks) */}
+      {/* Hover tooltip for units, TRPs and landmarks */}
       {hoverCoords && hoverScreenPos && !isBoxSelecting && !isPanning && (nearbyTRP || hoveredUnit || nearbyLandmark) && (
         <div
-          className="fixed pointer-events-none z-30 bg-[#fbfbfa] border-2 border-[#1e3a8a] text-neutral-900 shadow-xl px-2.5 py-1 font-mono text-[10px] flex items-center gap-2 rounded select-none animate-in fade-in duration-75"
+          className="fixed pointer-events-none z-30 bg-[#f7f5f0] border border-[#8f897e] shadow-[0_2px_8px_rgba(28,25,23,0.15)] text-stone-900 text-[11px] font-sans select-none"
           style={{
-            left: Math.min(hoverScreenPos.x + 14, window.innerWidth - 260),
-            top: Math.min(hoverScreenPos.y + 14, window.innerHeight - 50),
+            left: Math.min(hoverScreenPos.x + 16, window.innerWidth - 280),
+            top: Math.min(hoverScreenPos.y + 16, window.innerHeight - 60),
           }}
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-[#1e3a8a] shrink-0 animate-pulse" />
           {nearbyTRP ? (
-            <span className="text-amber-800 font-bold">
-              [{nearbyTRP.code}] {nearbyTRP.name} {draggingTrpId ? '(DRAGGING)' : '(DRAG / RMB OPTIONS)'}
-            </span>
+            <div className="px-2 py-1">
+              <span className="font-mono font-semibold">{nearbyTRP.code}</span>
+              <span className="ml-1.5">{nearbyTRP.name}</span>
+              <div className="text-[10px] text-stone-500">{draggingTrpId ? 'Release to set' : 'Drag to move · right-click for options'}</div>
+            </div>
           ) : hoveredUnit ? (
-            <div className="flex items-center gap-1.5">
-              <span className={hoveredUnit.faction === state.playerFaction ? 'text-[#1e3a8a] font-bold' : 'text-[#dc2626] font-bold'}>
-                {hoveredUnit.name}
-              </span>
-              <span className="text-[9px] text-neutral-500 font-normal">
-                ({hoveredUnit.strength.toLocaleString()} {hoveredUnit.type.toUpperCase()})
-              </span>
+            <div className="flex items-stretch">
+              <span className={`w-1 ${hoveredUnit.faction === state.playerFaction ? 'bg-[#0b5ea8]' : 'bg-[#c2272d]'}`} />
+              <div className="px-2 py-1">
+                <div className="font-semibold">{hoveredUnit.name}</div>
+                <div className="text-[10px] text-stone-500 font-mono uppercase">
+                  {hoveredUnit.type} · {hoveredUnit.strength.toLocaleString()} · {hoveredUnit.status}
+                </div>
+              </div>
             </div>
           ) : nearbyLandmark ? (
-            <span className="text-neutral-800 font-semibold">
-              {nearbyLandmark.name.replace(/\s*\([^)]*\)/g, '').trim()} • {Math.round(engine.getElevation(hoverCoords))}m
-            </span>
+            <div className="px-2 py-1">
+              <span className="font-semibold">{nearbyLandmark.name.replace(/\s*\([^)]*\)/g, '').trim()}</span>
+              <span className="ml-1.5 font-mono text-stone-500">{Math.round(engine.getElevation(hoverCoords))} m</span>
+            </div>
           ) : null}
         </div>
       )}
 
-      {/* 07:00 AM Initial Array - Prominent Battle Start Directive */}
+      {/* Start card */}
       {!state.isRunning && state.timeMinutes === 0 && !isBombardTargeting && !isPickingCoordinates && (
-        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-2 bg-[#f4f4f5] border-2 border-[#1e3a8a] px-5 py-3 shadow-2xl text-black font-sans select-none animate-in fade-in zoom-in-95 duration-200">
-          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#1e3a8a]">
-            <span className="w-2 h-2 rounded-full bg-[#1e3a8a] animate-ping" />
-            <span>AUSTERLITZ • 07:00 AM — ARMIES IN POSITION</span>
+        <div className={cx(ui.panel, 'absolute top-[46px] left-1/2 -translate-x-1/2 z-30 w-[380px] font-sans select-none')}>
+          <div className="px-3 pt-2.5 pb-1 text-[13px] font-semibold text-stone-900">2 December 1805, 07:00</div>
+          <div className="px-3 pb-2.5 text-[12px] leading-relaxed text-stone-600">
+            French forces hold the Goldbach line. Allied columns occupy the Pratzen Heights. Select units to give orders.
           </div>
-          <p className="text-[11px] text-neutral-700 text-center max-w-sm font-medium">
-            Both forces stand arrayed on the field. Click below or press <b>SPACEBAR</b> to commence tactical maneuvers.
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              console.log('[TOTAL WAR] Starting battle via banner');
-              engine.setRunning(true);
-              try {
-                sounds.playDrum();
-              } catch {}
-            }}
-            className="mt-1 flex items-center gap-2 px-5 py-2 bg-[#15803d] hover:bg-[#16a34a] text-white text-xs font-bold uppercase tracking-wider border border-[#166534] shadow-md transition-all hover:scale-105 active:scale-95 cursor-pointer"
-          >
-            <span>▶ COMMENCE BATTLE (SPACEBAR)</span>
-          </button>
+          <div className="flex items-center justify-between px-3 pb-3">
+            <span className="text-[11px] text-stone-500">
+              <kbd className="px-1 border border-[#b3ada2] bg-white font-mono text-[10px]">Space</kbd> start / pause
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                engine.setRunning(true);
+                try {
+                  sounds.playDrum();
+                } catch {}
+              }}
+              className="inline-flex items-center gap-2 h-8 px-4 bg-[#23324a] hover:bg-[#2e4160] text-white text-[12px] font-semibold cursor-pointer"
+            >
+              <Play size={12} fill="currentColor" />
+              Start
+            </button>
+          </div>
         </div>
       )}
 
@@ -1399,7 +1384,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
             {/* Tactical Bearing & Range Badge */}
             {screenLen > 15 && (
               <div
-                className="absolute pointer-events-auto transform -translate-x-1/2 -translate-y-full mb-2 bg-[#fbfbfa] text-neutral-900 border-2 border-[#1e3a8a] px-2.5 py-1.5 shadow-xl text-[10px] font-mono select-none flex flex-col items-center gap-1 rounded"
+                className="absolute pointer-events-auto transform -translate-x-1/2 -translate-y-full mb-2 bg-[#fcfbf8] text-neutral-900 border-2 border-[#1e3a8a] px-2.5 py-1.5 shadow-xl text-[10px] font-mono select-none flex flex-col items-center gap-1 rounded"
                 style={{
                   left: p2.x,
                   top: p2.y - 12,
@@ -1421,8 +1406,6 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
                     onClick={(e) => {
                       e.stopPropagation();
                       navigator.clipboard?.writeText(formattedText);
-                      setCopiedCoord(true);
-                      setTimeout(() => setCopiedCoord(false), 1200);
                     }}
                     className="flex-1 px-1.5 py-0.5 bg-neutral-100 hover:bg-neutral-200 border border-neutral-300 text-[9px] font-bold uppercase transition-colors text-neutral-800 cursor-pointer text-center rounded"
                     title="Copy bearing text to clipboard"
@@ -1462,41 +1445,39 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
       })()}
 
       {/* Consolidated Bottom Tactical Status Bar (Full Width Docked Strip) */}
-      <footer className="fixed bottom-0 left-0 right-0 z-30 h-7 bg-[#fbfbfa] border-t-2 border-[#71717a] px-3 flex items-center justify-between text-black font-mono text-[10px] select-none shadow-sm pointer-events-auto">
-        {/* Left: Tactical Control Prompt */}
-        <div className="flex items-center gap-2 truncate pr-2">
-          <span className="w-1.5 h-1.5 bg-[#2563eb] rounded-full shrink-0 animate-pulse" />
-          <span className="font-bold uppercase tracking-tight text-neutral-800 truncate">
+      <footer className="fixed bottom-0 left-0 right-0 z-30 h-6 bg-[#e6e3dc] border-t border-[#9c968b] pl-2 pr-1 flex items-center justify-between gap-2 text-stone-800 font-sans text-[11px] select-none pointer-events-auto">
+        {/* Left: context hint */}
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className={`shrink-0 px-1.5 h-[18px] leading-[18px] text-[9px] font-bold uppercase tracking-[0.1em] ${
+              isDrawingBearing || isPickingCoordinates ? 'bg-[#d97706] text-white' : selectedUnit || state.selectedUnitIds?.length > 1 ? 'bg-[#23324a] text-white' : 'bg-[#cfcac0] text-stone-700'
+            }`}
+          >
+            {isDrawingBearing ? 'Bearing' : isPickingCoordinates ? 'Pick' : selectedUnit || state.selectedUnitIds?.length > 1 ? 'Selected' : 'Ready'}
+          </span>
+          <span className="truncate text-stone-700">
             {isDrawingBearing
-              ? 'BEARING TOOL: CLICK ORIGIN THEN TARGET • B / ESC TO CANCEL'
+              ? 'Click origin, then target · B or Esc to cancel'
               : isPickingCoordinates
-              ? 'PINPOINT TARGET MODE: LEFT-CLICK MAP TO INSERT COORDS • ESC TO CANCEL'
+              ? 'Left-click the map to insert coordinates into the order · Esc to cancel'
               : state.selectedUnitIds?.length > 1
-              ? `SELECTED: ${state.selectedUnitIds.length} UNITS • RMB: MARCH / ARRAY • X: COPY`
+              ? `${state.selectedUnitIds.length} units · right-drag to march and set frontage · X copy grid`
               : selectedUnit
-              ? `${selectedUnit.name.toUpperCase()} • RMB: MOVE / FACING • X: COPY`
-              : 'LMB: SELECT • RMB: ORDERS • SPACE / WASD: PAN • B: BEARING • X: COPY COORDS'}
+              ? `${selectedUnit.name} · right-click to move, right-drag to set facing · F assault`
+              : 'Left-click select · right-click order · WASD pan · scroll zoom · B bearing · X copy grid'}
           </span>
         </div>
 
-        {/* Center: Live Sector & Topography Telemetry */}
-        {hoverCoords && (
-          <div className="hidden lg:flex items-center gap-1.5 text-[9px] font-mono text-neutral-600 bg-white border border-[#a1a1aa] px-2 py-0.5 rounded shadow-2xs shrink-0">
-            <span className="font-bold text-neutral-800">
-              {nearbyLandmark ? nearbyLandmark.name.replace(/\s*\([^)]*\)/g, '').trim().toUpperCase() : nearbyTRP ? nearbyTRP.name.toUpperCase() : 'AUSTERLITZ SECTOR'}
-            </span>
-            <span>• ELEV {Math.round(engine.getElevation(hoverCoords))}m</span>
-          </div>
-        )}
-
-        {/* Right: Coordinates, Bearing Tool & Map Navigation */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          {/* Drawn Bearing Pill */}
+        {/* Right: telemetry & map tools */}
+        <div className="flex items-center gap-1 shrink-0">
           {drawnBearingInfo && (
-            <div className="flex items-center gap-1 bg-white border border-[#a1a1aa] px-1.5 py-0.5 font-mono text-[9.5px] rounded">
-              <Navigation size={10} className="text-[#1e3a8a] rotate-45 shrink-0" />
-              <span className="font-bold text-[#1e3a8a]">
-                BRG {String(drawnBearingInfo.bearing).padStart(3, '0')}° ({drawnBearingInfo.cardinal.code} • {drawnBearingInfo.cardinal.mils}m) {Math.round(drawnBearingInfo.distance)}m
+            <div className={ui.field}>
+              <span className={ui.fieldLabel}>
+                <Navigation size={10} className="rotate-45 mr-1" />
+                Brg
+              </span>
+              <span className={ui.fieldValue}>
+                {String(drawnBearingInfo.bearing).padStart(3, '0')}° · {drawnBearingInfo.cardinal.mils} mil · {Math.round(drawnBearingInfo.distance)} m
               </span>
               <button
                 type="button"
@@ -1504,13 +1485,11 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
                   const brgStr = String(drawnBearingInfo.bearing).padStart(3, '0');
                   const text = `on bearing ${brgStr}° (${drawnBearingInfo.cardinal.code}, ${drawnBearingInfo.cardinal.mils} mils) for ${Math.round(drawnBearingInfo.distance)}m`;
                   navigator.clipboard?.writeText(text);
-                  setCopiedCoord(true);
-                  setTimeout(() => setCopiedCoord(false), 1200);
                 }}
-                title="Copy bearing details to clipboard"
-                className="px-1 py-0.2 bg-neutral-100 hover:bg-neutral-200 border border-neutral-300 text-[8.5px] font-bold uppercase transition-colors cursor-pointer text-neutral-800 rounded"
+                title="Copy bearing"
+                className="h-full px-1.5 border-l border-[#b3ada2] text-[9px] font-bold uppercase hover:bg-white cursor-pointer"
               >
-                COPY
+                Copy
               </button>
               {onInsertCompassText && (
                 <button
@@ -1520,10 +1499,10 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
                     const text = `on bearing ${brgStr}° (${drawnBearingInfo.cardinal.code}, ${drawnBearingInfo.cardinal.mils} mils) for ${Math.round(drawnBearingInfo.distance)}m`;
                     onInsertCompassText(text);
                   }}
-                  title="Send bearing directly to Imperial Dispatch Desk"
-                  className="px-1 py-0.2 bg-[#1e3a8a] text-white hover:bg-[#1d4ed8] border border-[#1e40af] text-[8.5px] font-bold uppercase transition-colors cursor-pointer rounded"
+                  title="Insert bearing into the current order"
+                  className="h-full px-1.5 border-l border-[#b3ada2] text-[9px] font-bold uppercase bg-[#23324a] text-white hover:bg-[#2e4160] cursor-pointer"
                 >
-                  + DISPATCH
+                  To order
                 </button>
               )}
               <button
@@ -1532,48 +1511,28 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
                   setBearingArrow(null);
                   setIsDrawingBearing(false);
                 }}
-                title="Clear drawn bearing line"
-                className="p-0.5 text-neutral-400 hover:text-black transition-colors cursor-pointer"
+                title="Clear bearing"
+                className="h-full px-1 border-l border-[#b3ada2] text-stone-500 hover:text-stone-900 hover:bg-white cursor-pointer"
               >
-                <X size={10} />
+                <X size={11} />
               </button>
             </div>
           )}
 
-          {/* Grid Coordinates & Quick Actions */}
-          <div className="flex items-center gap-1 bg-white border border-[#a1a1aa] px-1.5 py-0.5 rounded">
-            <Crosshair size={11} className="text-[#1e3a8a]" />
-            <span className="font-bold text-[9.5px] tracking-tight">
+          {hoverCoords && (
+            <div className={cx(ui.field, 'hidden lg:flex h-5')}>
+              <span className={ui.fieldLabel}>Elev</span>
+              <span className={cx(ui.fieldValue, 'text-[11px]')}>{Math.round(engine.getElevation(hoverCoords))} m</span>
+            </div>
+          )}
+
+          <div className={cx(ui.field, 'h-5')}>
+            <span className={ui.fieldLabel}>Grid</span>
+            <span className={cx(ui.fieldValue, 'text-[11px] min-w-[86px]')}>
               {hoverCoords
-                ? `GRID (${Math.round(hoverCoords.x)}, ${Math.round(hoverCoords.y)})`
-                : 'GRID: (----, ----)'}
+                ? `${String(Math.round(hoverCoords.x)).padStart(4, '0')} ${String(Math.round(hoverCoords.y)).padStart(4, '0')}`
+                : '---- ----'}
             </span>
-            {hoverCoords && (
-              <>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleQuickCopy(hoverCoords, hoverScreenPos, false);
-                  }}
-                  title="Copy grid coordinates to clipboard (Hotkey: X, or Shift+Click map)"
-                  className="px-1 py-0.2 bg-neutral-100 hover:bg-neutral-200 border border-neutral-300 text-[8.5px] font-bold uppercase transition-colors cursor-pointer text-[#1e3a8a] rounded"
-                >
-                  {copiedCoord ? 'COPIED' : 'COPY'}
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleQuickCopy(hoverCoords, hoverScreenPos, true);
-                  }}
-                  title="Copy coordinates and compass heading to clipboard (Hotkey: Shift+X)"
-                  className="px-1 py-0.2 bg-neutral-100 hover:bg-neutral-200 border border-neutral-300 text-[8.5px] font-bold uppercase transition-colors cursor-pointer text-neutral-800 rounded"
-                >
-                  +BRG
-                </button>
-              </>
-            )}
             {hoverCoords && onPickCoordinates && isDispatchDeskOpen && (
               <button
                 type="button"
@@ -1590,63 +1549,33 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
                     sounds.playDispatchStamp();
                   } catch {}
                 }}
-                title="Pass current coordinates into Dispatch Desk"
-                className="px-1.5 py-0.2 bg-[#1e3a8a] text-white hover:bg-[#1d4ed8] border border-[#1e40af] text-[8.5px] font-bold uppercase transition-colors cursor-pointer rounded"
+                title="Insert grid into the current order"
+                className="h-full px-1.5 border-l border-[#b3ada2] text-[9px] font-bold uppercase bg-[#23324a] text-white hover:bg-[#2e4160] cursor-pointer"
               >
-                TO DISPATCH
+                To order
               </button>
             )}
           </div>
 
-          {/* Toggle Bearing Tool Button */}
+          <span className={cx(ui.divider, 'h-4 mx-0.5')} />
+
           <button
             type="button"
             onClick={toggleBearingTool}
-            title={isDrawingBearing ? 'Cancel Bearing Tool (Hotkey: B or Esc)' : 'Draw Bearing & Distance Azimuth on Map (Hotkey: B)'}
-            className={`px-1.5 py-0.5 border text-[9px] font-bold uppercase transition-colors cursor-pointer flex items-center gap-1 rounded ${
-              isDrawingBearing
-                ? 'bg-amber-600 hover:bg-amber-700 text-white border-amber-700 animate-pulse'
-                : 'bg-white hover:bg-neutral-200 border-neutral-300 text-neutral-800'
-            }`}
+            title={isDrawingBearing ? 'Cancel bearing tool (B / Esc)' : 'Measure bearing and distance (B)'}
+            className={cx(ui.btn, 'h-5', isDrawingBearing && '!bg-[#d97706] !border-[#b45309] !text-white')}
           >
-            <Navigation size={9} className={isDrawingBearing ? 'rotate-45' : ''} />
-            <span>{isDrawingBearing ? 'DRAWING (B)' : 'BRG (B)'}</span>
+            <Navigation size={11} />
+            <span>Bearing</span>
           </button>
-
-          <div className="w-px h-3.5 bg-[#a1a1aa] mx-0.5" />
-
-          {/* Zoom & Recenter Controls */}
-          <button
-            onClick={zoomIn}
-            title="Zoom In (Scroll Up)"
-            className="p-1 hover:bg-white hover:text-black rounded transition-colors cursor-pointer"
-          >
+          <button onClick={zoomIn} title="Zoom in" className={cx(ui.btnIcon, 'h-5 w-5')}>
             <ZoomIn size={13} />
           </button>
-          <button
-            onClick={zoomOut}
-            title="Zoom Out (Scroll Down)"
-            className="p-1 hover:bg-white hover:text-black rounded transition-colors cursor-pointer"
-          >
+          <button onClick={zoomOut} title="Zoom out" className={cx(ui.btnIcon, 'h-5 w-5')}>
             <ZoomOut size={13} />
           </button>
-          <button
-            onClick={resetCamera}
-            title="Recenter Battlefield"
-            className="p-1 hover:bg-white hover:text-black rounded transition-colors cursor-pointer"
-          >
+          <button onClick={resetCamera} title="Fit battlefield" className={cx(ui.btnIcon, 'h-5 w-5')}>
             <Crosshair size={13} />
-          </button>
-
-          <div className="w-px h-3.5 bg-[#a1a1aa] mx-0.5" />
-
-          {/* Audio Toggle */}
-          <button
-            onClick={toggleSound}
-            title={soundEnabled ? 'Mute Military Audio' : 'Enable Military Audio'}
-            className="p-1 hover:bg-white text-[#1e3a8a] rounded transition-colors cursor-pointer"
-          >
-            {soundEnabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
           </button>
         </div>
       </footer>

@@ -6,9 +6,9 @@
   html, body, #root {
     margin: 0;
     padding: 0;
-    background-color: #f4f4f5;
-    color: #18181b;
-    font-family: 'EB Garamond', Georgia, serif;
+    background-color: #e9e6df;
+    color: #1c1917;
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
     user-select: none;
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
@@ -33,12 +33,12 @@
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #a1a1aa;
+  background: #a8a29e;
   border-radius: 4px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #71717a;
+  background: #78716c;
 }
 
 /* Hide scrollbar while preserving scroll behavior */

@@ -1,5 +1,20 @@
 import { Unit, ManeuverOrder, Vector2D, OperationalGraphic, TroopFilterType, TargetReferencePoint, Faction, ERA_WEAPON_PROFILES } from '../types/game';
 import { SimulationState, BattleEngine } from './simulation';
+import {
+  MAP,
+  FONT,
+  font,
+  haloText,
+  drawUnitSymbol,
+  tracePathFrame,
+  frameExtents,
+  healthColor,
+  designationFor,
+  higherFormationFor,
+  DIAMOND_R,
+  FRAME_W,
+  SymbolIdentity,
+} from './natoSymbols';
 
 export interface SmokeParticle {
   x: number;
@@ -51,7 +66,7 @@ export class SandtableRenderer {
 
   private smokeParticles: SmokeParticle[] = [];
   private animFrame: number = 0;
-  public showHexGrid: boolean = false;
+  private zoom: number = 1;
   public showRangeRings: boolean = false;
   public showCorpsOverlay: boolean = false;
   public hoveredCorps: string | null = null;
@@ -77,7 +92,7 @@ export class SandtableRenderer {
   private cachedTopoCanvas: HTMLCanvasElement | null = null;
   private cachedIntermediateContours: Path2D | null = null;
   private cachedIndexContours: Path2D | null = null;
-  private cachedHachures: Path2D | null = null;
+  private cachedContourLabels: { x: number; y: number; angle: number; level: number }[] = [];
   private cachedBaseMapCanvas: HTMLCanvasElement | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -85,6 +100,13 @@ export class SandtableRenderer {
     const context = canvas.getContext('2d');
     if (!context) throw new Error('Could not get 2D canvas context');
     this.ctx = context;
+
+    // Canvas text is rasterised into the cached base map once; redraw it when web fonts arrive
+    if (typeof document !== 'undefined' && document.fonts) {
+      document.fonts.ready.then(() => {
+        this.cachedBaseMapCanvas = null;
+      });
+    }
   }
 
   public render(
@@ -96,6 +118,7 @@ export class SandtableRenderer {
     const { ctx, canvas } = this;
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     this.animFrame++;
+    this.zoom = camera.zoom > 0 ? camera.zoom : 1;
 
     // Ensure physical canvas backing store matches CSS dimensions * DPR (avoids getBoundingClientRect layout thrashing)
     const cssW = canvas.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 2400);
@@ -129,13 +152,13 @@ export class SandtableRenderer {
     // =========================================================================
 
     // 1. Base Map Paper Background (Clean outer void fill beyond 2400x1500)
-    ctx.fillStyle = '#f8fafc';
+    ctx.fillStyle = '#dedbd2';
     ctx.fillRect(-2000, -2000, 6400, 5500);
 
     // 2. Pre-rendered Master Cartography (Instant GPU texture blit)
     this.initBaseMapCache();
     if (this.cachedBaseMapCanvas) {
-      ctx.drawImage(this.cachedBaseMapCanvas, 0, 0);
+      ctx.drawImage(this.cachedBaseMapCanvas, 0, 0, 2400, 1500);
     }
 
     // 2.5 Dynamic Shattered Ice Cracks (Artillery impacts on Satschan Pond)
@@ -149,13 +172,7 @@ export class SandtableRenderer {
     // 6.5 Dynamic Terrain (Trenches/Fieldworks)
     this.renderDynamicTerrain(ctx, state);
 
-    // 6.8 The Morning Mist of Austerlitz ("Le Brouillard d'Austerlitz" in Goldbach Depression)
-    this.renderMorningMist(ctx, state);
 
-    // 8. Hex Grid (Optional Wargame Mode)
-    if (this.showHexGrid) {
-      this.renderHexGrid(ctx);
-    }
 
     // 8.5 NATO Operational Graphics & Control Measures (Phase Lines, OBJs, FSCL, TRPs)
     if (state.showOperationalGraphics) {
@@ -167,8 +184,6 @@ export class SandtableRenderer {
       }
     }
 
-    // 9. Historical Tactical Maneuver Arrows (Dashed sweep lines)
-    this.renderHistoricalManeuvers(ctx, state);
 
     // 10. Active Orders & User Maneuver Caliper
     this.renderActiveOrders(ctx, state.activeOrders, state.units, state.playerFaction);
@@ -196,12 +211,11 @@ export class SandtableRenderer {
     // 13. Gunpowder Smoke Drifting with Cold Winter Winds
     this.updateAndRenderEffects(ctx, state);
 
-    // 14. Authentic Lower-Right Cartouche & Map Legend
-    this.renderAtlasCartouche(ctx, state);
+    ctx.restore();
 
-    // 15. North Compass Needle in Bottom-Left
-    this.renderNorthArrow(ctx);
-
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    this.renderMapFurniture(ctx, screenH);
     ctx.restore();
   }
 
@@ -827,94 +841,6 @@ export class SandtableRenderer {
   // =========================================================================
   // 1. BASE TERRAIN (MILITARY TOPO AESTHETIC)
   // =========================================================================
-  private renderBaseParchment(ctx: CanvasRenderingContext2D) {
-    // Standard NATO Military Topographic Paper Base
-    ctx.fillStyle = '#f8fafc';
-    ctx.fillRect(-4000, -4000, 10000, 10000);
-
-    // Operational Sector Boundary Neatline (STANAG 3677 Topographic Map Border)
-    ctx.strokeStyle = '#334155';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(0, 0, 2400, 1500);
-
-    // MGRS 1km Coordinate Grid & Neatline References (200px = 1km scale)
-    ctx.save();
-    const gridSpacing = 200; // 1km military grid interval
-
-    // Grid lines across entire theater
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.28)';
-    ctx.lineWidth = 0.6;
-    for (let x = gridSpacing; x < 2400; x += gridSpacing) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, 1500);
-      ctx.stroke();
-    }
-    for (let y = gridSpacing; y < 1500; y += gridSpacing) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(2400, y);
-      ctx.stroke();
-    }
-
-    // Grid Intersection Crosses (+)
-    ctx.strokeStyle = 'rgba(100, 116, 139, 0.45)';
-    ctx.lineWidth = 0.8;
-    for (let x = gridSpacing; x < 2400; x += gridSpacing) {
-      for (let y = gridSpacing; y < 1500; y += gridSpacing) {
-        ctx.beginPath();
-        ctx.moveTo(x - 4, y);
-        ctx.lineTo(x + 4, y);
-        ctx.moveTo(x, y - 4);
-        ctx.lineTo(x, y + 4);
-        ctx.stroke();
-      }
-    }
-
-    // Neatline Coordinate Tick Marks & 4-Digit MGRS Grid Labels
-    ctx.fillStyle = '#475569';
-    ctx.font = 'bold 8.5px "Courier New", monospace';
-
-    // Easting coordinates (X-axis)
-    for (let x = gridSpacing; x < 2400; x += gridSpacing) {
-      const label = String(x).padStart(4, '0');
-      // Top tick
-      ctx.beginPath();
-      ctx.moveTo(x, -5); ctx.lineTo(x, 5); ctx.stroke();
-      ctx.textAlign = 'center';
-      ctx.fillText(label, x, -8);
-
-      // Bottom tick
-      ctx.beginPath();
-      ctx.moveTo(x, 1495); ctx.lineTo(x, 1505); ctx.stroke();
-      ctx.fillText(label, x, 1516);
-    }
-
-    // Northing coordinates (Y-axis)
-    for (let y = gridSpacing; y < 1500; y += gridSpacing) {
-      const label = String(y).padStart(4, '0');
-      // Left tick
-      ctx.beginPath();
-      ctx.moveTo(-5, y); ctx.lineTo(5, y); ctx.stroke();
-      ctx.textAlign = 'right';
-      ctx.fillText(label, -8, y + 3);
-
-      // Right tick
-      ctx.beginPath();
-      ctx.moveTo(2395, y); ctx.lineTo(2405, y); ctx.stroke();
-      ctx.textAlign = 'left';
-      ctx.fillText(label, 2408, y + 3);
-    }
-
-    // Cartographic Specification Note
-    ctx.font = 'bold 8px Arial, sans-serif';
-    ctx.fillStyle = '#64748b';
-    ctx.textAlign = 'left';
-    ctx.fillText('NATO STANAG 3677 TLM • 1km MGRS GRID • CONTOUR INTERVAL 40m • SERIES 1:50,000', 8, -8);
-
-    ctx.restore();
-  }
-
   // =========================================================================
   // DYNAMIC ARTILLERY SHATTERED ICE CRACKS
   // =========================================================================
@@ -956,417 +882,317 @@ export class SandtableRenderer {
     ctx.restore();
   }
 
+  private renderBaseParchment(ctx: CanvasRenderingContext2D) {
+    ctx.fillStyle = MAP.paper;
+    ctx.fillRect(0, 0, 2400, 1500);
+  }
+
+  // 1 km reference grid (200px = 1km), drawn above terrain like a printed military sheet
+  private renderMgrsGrid(ctx: CanvasRenderingContext2D) {
+    const step = 200;
+    ctx.save();
+    ctx.strokeStyle = MAP.grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = step; x < 2400; x += step) {
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, 1500);
+    }
+    for (let y = step; y < 1500; y += step) {
+      ctx.moveTo(0, y);
+      ctx.lineTo(2400, y);
+    }
+    ctx.stroke();
+
+    // Grid numbers just inside the neatline
+    ctx.font = font(500, 10, FONT.mono);
+    ctx.fillStyle = MAP.gridLabel;
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    for (let x = step; x < 2400; x += step) {
+      const label = String(x).padStart(4, '0');
+      haloText(ctx, label, x + 4, 6, MAP.gridLabel, 3);
+      ctx.textBaseline = 'bottom';
+      haloText(ctx, label, x + 4, 1494, MAP.gridLabel, 3);
+      ctx.textBaseline = 'top';
+    }
+    for (let y = step; y < 1500; y += step) {
+      const label = String(y).padStart(4, '0');
+      ctx.textAlign = 'left';
+      haloText(ctx, label, 6, y + 4, MAP.gridLabel, 3);
+      ctx.textAlign = 'right';
+      haloText(ctx, label, 2394, y + 4, MAP.gridLabel, 3);
+    }
+
+    // Neatline
+    ctx.strokeStyle = MAP.ink;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, 2398, 1498);
+    ctx.restore();
+  }
+
   // =========================================================================
-  // MASTER BASE MAP CARTOGRAPHY CACHING (ULTRA-HIGH PERFORMANCE RENDER PIPELINE)
-  // Pre-renders static relief, contours, woodlands, hydrology, roads, villages
-  // into a single GPU texture canvas (2400x1500) for silky 60/120 FPS camera panning.
+  // MASTER BASE MAP CACHE
+  // Static cartography is rasterised once at 2x into an offscreen canvas so it stays crisp
+  // when zoomed and costs a single drawImage per frame.
   // =========================================================================
+  private static readonly BASE_SCALE = 2;
+
   private initBaseMapCache() {
     if (this.cachedBaseMapCanvas || typeof document === 'undefined') return;
 
+    const K = SandtableRenderer.BASE_SCALE;
     const baseCanvas = document.createElement('canvas');
-    baseCanvas.width = 2400;
-    baseCanvas.height = 1500;
+    baseCanvas.width = 2400 * K;
+    baseCanvas.height = 1500 * K;
     const bCtx = baseCanvas.getContext('2d');
     if (!bCtx) return;
 
     bCtx.imageSmoothingEnabled = true;
     bCtx.imageSmoothingQuality = 'high';
+    bCtx.scale(K, K);
 
-    // 1. Base Map Paper Background & 1km Coordinate Grid
     this.renderBaseParchment(bCtx);
 
-    // 2. Scaled Cartographic Master Base Map (1600x1000 * 1.5 = 2400x1500)
+    // Legacy cartography is authored in 1600x1000 space
     bCtx.save();
     bCtx.scale(1.5, 1.5);
-
-    // Topographic Contours & Elevation Bands
-    this.renderTopographicContours(bCtx);
-
-    // Woodlands & Forest Parcels
+    this.renderReliefAndContours(bCtx);
     this.renderWoodlands(bCtx);
-
-    // Hydrology: Rivers, Tributaries, Mill Ponds, Frozen Lakes & Marshes
+    this.renderHistoricalTerrainFeatures(bCtx);
     this.renderHydrology(bCtx);
-
-    // Road Network: Imperial Highway & Secondary Country Routes
     this.renderRoads(bCtx);
-
-    // Towns, Villages & Settlements (Stippled Footprints & Typography)
     this.renderSettlements(bCtx);
-
-    // Tactical Landmark Badges: Ⓢ Santon, Ⓥ Staré Vinohrady, Ⓩ Žuráň
-    this.renderLandmarkBadges(bCtx);
-
+    this.renderSpotHeights(bCtx);
     bCtx.restore();
+
+    this.renderMgrsGrid(bCtx);
 
     this.cachedBaseMapCanvas = baseCanvas;
   }
 
   // =========================================================================
-  // 2. TOPOGRAPHIC CONTOUR ELEVATION BANDS & MILITARY RELIEF CARTOGRAPHY
-  // Continuous 3D analytic shaded relief (hillshade), Marching Squares 10m/20m
-  // contour lines, downslope cliff hachures, and NATO spot height benchmarks.
+  // RELIEF: analytic hillshade + hypsometric tint + 10m contours (index every 50m)
   // =========================================================================
   private initTopographyCache() {
-    if (this.cachedTopoCanvas || typeof document === 'undefined') return;
+    if (this.cachedTopoCanvas || typeof document === 'undefined' || !this.engine) return;
+    const engine = this.engine;
 
-    const topoCanvas = document.createElement('canvas');
-    topoCanvas.width = 1600;
-    topoCanvas.height = 1000;
-    const tCtx = topoCanvas.getContext('2d');
-    if (!tCtx) return;
+    // Sample grid over the 1600x1000 cartography space (2px per sample)
+    const W = 800;
+    const H = 500;
+    const dx = 1600 / (W - 1);
+    const dy = 1000 / (H - 1);
 
-    // 1. Grid sample resolution (600x375 cells in 1600x1000 master cartography space)
-    const W = 600;
-    const H = 375;
-    const scaleX = 1600;
-    const scaleY = 1000;
-    const dx = scaleX / (W - 1);
-    const dy = scaleY / (H - 1);
-
-    const elevGrid = new Float32Array(W * H);
+    const raw = new Float32Array(W * H);
     for (let j = 0; j < H; j++) {
-      const y = j * dy;
       for (let i = 0; i < W; i++) {
-        const x = i * dx;
-        elevGrid[j * W + i] = this.engine ? this.engine.getElevation({ x: x * 1.5, y: y * 1.5 }) : 200;
+        raw[j * W + i] = engine.getElevationRaw({ x: i * dx * 1.5, y: j * dy * 1.5 });
       }
     }
 
-    // 2. Generate Continuous Shaded Relief (Analytic 315° NW Hillshade) & Subtle Continuous Hypsometry
-    const imgData = tCtx.createImageData(W, H);
-    const rgba = imgData.data;
-    const lightX = -0.5;
-    const lightY = -0.5; // From NW (top-left)
-    const lightZ = 0.707; // 45° sun altitude
-
-    for (let j = 0; j < H; j++) {
-      for (let i = 0; i < W; i++) {
-        const idx = (j * W + i) * 4;
-        const z = elevGrid[j * W + i];
-
-        const zL = i > 0 ? elevGrid[j * W + (i - 1)] : z;
-        const zR = i < W - 1 ? elevGrid[j * W + (i + 1)] : z;
-        const zU = j > 0 ? elevGrid[(j - 1) * W + i] : z;
-        const zD = j < H - 1 ? elevGrid[(j + 1) * W + i] : z;
-
-        const dzdx = (zR - zL) / (2 * dx);
-        const dzdy = (zD - zU) / (2 * dy);
-
-        // Vertical exaggeration factor for distinct tactile cartography
-        const vertExag = 2.4;
-        const nx = -dzdx * vertExag;
-        const ny = -dzdy * vertExag;
-        const nz = 1.0;
-        const nLen = Math.hypot(nx, ny, nz);
-
-        const dot = (nx * lightX + ny * lightY + nz * lightZ) / nLen;
-        const relLight = dot - lightZ; // > 0 is sunlit highlight, < 0 is drop shadow
-
-        // Authentic aged military survey paper base tone: #f6f3ea (246, 243, 234)
-        let r = 246;
-        let g = 243;
-        let b = 234;
-
-        // Subtle continuous hypsometric watercolor wash (no harsh bands)
-        if (z < 184) {
-          // Lowland pond basin / valley cool moist wash
-          const k = Math.min(1.0, (184 - z) / 12);
-          r -= Math.round(10 * k);
-          b += Math.round(4 * k);
-        } else if (z > 220) {
-          // Highland warm bistre/buff tint
-          const k = Math.min(1.0, (z - 220) / 80);
-          r -= Math.round(18 * k);
-          g -= Math.round(26 * k);
-          b -= Math.round(38 * k);
+    // Separable box blur (two passes ≈ gaussian, ~8px) softens the seams where analytic landforms blend
+    const z = raw.slice();
+    const tmp = new Float32Array(W * H);
+    const R = 4;
+    for (let pass = 0; pass < 2; pass++) {
+      for (let j = 0; j < H; j++) {
+        for (let i = 0; i < W; i++) {
+          let sum = 0, n = 0;
+          for (let u = -R; u <= R; u++) {
+            const ii = i + u;
+            if (ii < 0 || ii >= W) continue;
+            sum += z[j * W + ii];
+            n++;
+          }
+          tmp[j * W + i] = sum / n;
         }
-
-        // Apply diffuse hillshade
-        if (relLight > 0) {
-          // Sunlight highlight
-          const hi = Math.min(1.0, relLight * 2.6);
-          r += (255 - r) * hi * 0.45;
-          g += (255 - g) * hi * 0.45;
-          b += (250 - b) * hi * 0.35;
-        } else {
-          // Drop shadow
-          const sh = Math.min(1.0, -relLight * 3.0);
-          r -= Math.round(62 * sh);
-          g -= Math.round(58 * sh);
-          b -= Math.round(48 * sh);
+      }
+      for (let j = 0; j < H; j++) {
+        for (let i = 0; i < W; i++) {
+          let sum = 0, n = 0;
+          for (let v = -R; v <= R; v++) {
+            const jj = j + v;
+            if (jj < 0 || jj >= H) continue;
+            sum += tmp[jj * W + i];
+            n++;
+          }
+          z[j * W + i] = sum / n;
         }
-
-        rgba[idx] = Math.max(0, Math.min(255, Math.round(r)));
-        rgba[idx + 1] = Math.max(0, Math.min(255, Math.round(g)));
-        rgba[idx + 2] = Math.max(0, Math.min(255, Math.round(b)));
-        rgba[idx + 3] = 255;
       }
     }
 
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = W;
-    tempCanvas.height = H;
-    const tempCtx = tempCanvas.getContext('2d');
-    if (tempCtx) {
-      tempCtx.putImageData(imgData, 0, 0);
-      tCtx.imageSmoothingEnabled = true;
-      tCtx.imageSmoothingQuality = 'high';
-      tCtx.drawImage(tempCanvas, 0, 0, 1600, 1000);
+    // Hypsometric tint: pale green-grey lowlands to warm buff uplands. Relief is carried by contours.
+    const img = new ImageData(W, H);
+    const px = img.data;
+    for (let j = 0; j < H; j++) {
+      for (let i = 0; i < W; i++) {
+        const k = j * W + i;
+        const e = z[k];
+        const t = Math.min(1, Math.max(0, (e - 182) / 120));
+        const low = e < 184 ? 1 : 0;
+        const r = 242 - 8 * t - 6 * low;
+        const g = 242 - 20 * t - 1 * low;
+        const b = 232 - 34 * t + 3 * low;
+        const o = k * 4;
+        px[o] = r;
+        px[o + 1] = g;
+        px[o + 2] = b;
+        px[o + 3] = 255;
+      }
     }
+    const relief = document.createElement('canvas');
+    relief.width = W;
+    relief.height = H;
+    relief.getContext('2d')?.putImageData(img, 0, 0);
+    this.cachedTopoCanvas = relief;
 
-    this.cachedTopoCanvas = topoCanvas;
-
-    // 3. Generate True Marching Squares Contour Paths
-    const intermediateLevels = [190, 210, 230, 250, 270, 290, 310];
-    const indexLevels = [180, 200, 220, 240, 260, 280, 300, 320];
-
+    // Marching squares contours
     const interPath = new Path2D();
     const indexPath = new Path2D();
+    const labelCandidates: { x: number; y: number; angle: number; level: number }[] = [];
+    const levels: number[] = [];
+    for (let v = 180; v <= 320; v += 10) levels.push(v);
 
     for (let j = 0; j < H - 1; j++) {
       const y0 = j * dy;
-      const y1 = (j + 1) * dy;
+      const y1 = y0 + dy;
       for (let i = 0; i < W - 1; i++) {
         const x0 = i * dx;
-        const x1 = (i + 1) * dx;
+        const x1 = x0 + dx;
+        const z00 = z[j * W + i];
+        const z10 = z[j * W + i + 1];
+        const z11 = z[(j + 1) * W + i + 1];
+        const z01 = z[(j + 1) * W + i];
+        const lo = Math.min(z00, z10, z11, z01);
+        const hi = Math.max(z00, z10, z11, z01);
 
-        const z00 = elevGrid[j * W + i];
-        const z10 = elevGrid[j * W + (i + 1)];
-        const z11 = elevGrid[(j + 1) * W + (i + 1)];
-        const z01 = elevGrid[(j + 1) * W + i];
-
-        const allLevels = [
-          ...intermediateLevels.map(v => ({ v, isIndex: false })),
-          ...indexLevels.map(v => ({ v, isIndex: true })),
-        ];
-
-        for (const { v, isIndex } of allLevels) {
-          const b0 = z00 >= v ? 1 : 0;
-          const b1 = z10 >= v ? 2 : 0;
-          const b2 = z11 >= v ? 4 : 0;
-          const b3 = z01 >= v ? 8 : 0;
-          const mask = b0 | b1 | b2 | b3;
-
+        for (const v of levels) {
+          if (v < lo || v > hi) continue;
+          const mask = (z00 >= v ? 1 : 0) | (z10 >= v ? 2 : 0) | (z11 >= v ? 4 : 0) | (z01 >= v ? 8 : 0);
           if (mask === 0 || mask === 15) continue;
-
+          const isIndex = v % 50 === 0;
           const p = isIndex ? indexPath : interPath;
 
-          const tTop = (v - z00) / (z10 - z00 || 1e-6);
-          const xTop = x0 + tTop * (x1 - x0);
+          const xTop = x0 + ((v - z00) / (z10 - z00 || 1e-6)) * dx;
+          const yRight = y0 + ((v - z10) / (z11 - z10 || 1e-6)) * dy;
+          const xBottom = x0 + ((v - z01) / (z11 - z01 || 1e-6)) * dx;
+          const yLeft = y0 + ((v - z00) / (z01 - z00 || 1e-6)) * dy;
 
-          const tRight = (v - z10) / (z11 - z10 || 1e-6);
-          const yRight = y0 + tRight * (y1 - y0);
-
-          const tBottom = (v - z01) / (z11 - z01 || 1e-6);
-          const xBottom = x0 + tBottom * (x1 - x0);
-
-          const tLeft = (v - z00) / (z01 - z00 || 1e-6);
-          const yLeft = y0 + tLeft * (y1 - y0);
-
+          let ax = 0, ay = 0, bx = 0, by = 0;
           switch (mask) {
-            case 1:
-            case 14:
-              p.moveTo(x0, yLeft); p.lineTo(xTop, y0);
-              break;
-            case 2:
-            case 13:
-              p.moveTo(xTop, y0); p.lineTo(x1, yRight);
-              break;
-            case 4:
-            case 11:
-              p.moveTo(x1, yRight); p.lineTo(xBottom, y1);
-              break;
-            case 8:
-            case 7:
-              p.moveTo(xBottom, y1); p.lineTo(x0, yLeft);
-              break;
-            case 3:
-            case 12:
-              p.moveTo(x0, yLeft); p.lineTo(x1, yRight);
-              break;
-            case 6:
-            case 9:
-              p.moveTo(xTop, y0); p.lineTo(xBottom, y1);
-              break;
+            case 1: case 14: ax = x0; ay = yLeft; bx = xTop; by = y0; break;
+            case 2: case 13: ax = xTop; ay = y0; bx = x1; by = yRight; break;
+            case 4: case 11: ax = x1; ay = yRight; bx = xBottom; by = y1; break;
+            case 8: case 7: ax = xBottom; ay = y1; bx = x0; by = yLeft; break;
+            case 3: case 12: ax = x0; ay = yLeft; bx = x1; by = yRight; break;
+            case 6: case 9: ax = xTop; ay = y0; bx = xBottom; by = y1; break;
             case 5:
               p.moveTo(x0, yLeft); p.lineTo(xTop, y0);
-              p.moveTo(xBottom, y1); p.lineTo(x1, yRight);
-              break;
+              ax = xBottom; ay = y1; bx = x1; by = yRight; break;
             case 10:
               p.moveTo(xTop, y0); p.lineTo(x1, yRight);
-              p.moveTo(x0, yLeft); p.lineTo(xBottom, y1);
-              break;
+              ax = x0; ay = yLeft; bx = xBottom; by = y1; break;
+          }
+          p.moveTo(ax, ay);
+          p.lineTo(bx, by);
+
+          if (isIndex && (i + j) % 7 === 0) {
+            labelCandidates.push({ x: (ax + bx) / 2, y: (ay + by) / 2, angle: Math.atan2(by - ay, bx - ax), level: v });
           }
         }
       }
     }
 
+    // Greedy label placement: spread index-contour labels, away from edges and each other
+    const chosen: { x: number; y: number; angle: number; level: number }[] = [];
+    for (const c of labelCandidates) {
+      if (c.x < 60 || c.x > 1540 || c.y < 50 || c.y > 950) continue;
+      let ok = true;
+      for (const o of chosen) {
+        const d = Math.hypot(o.x - c.x, o.y - c.y);
+        if (d < 70 || (o.level === c.level && d < 230)) { ok = false; break; }
+      }
+      if (ok) chosen.push(c);
+      if (chosen.length >= 28) break;
+    }
+
     this.cachedIntermediateContours = interPath;
     this.cachedIndexContours = indexPath;
-
-    // 4. Slope Hachures on Steepest Declivities
-    const hachPath = new Path2D();
-    // Santon Western Rocky Cliff
-    for (let a = Math.PI * 0.75; a <= Math.PI * 1.35; a += 0.08) {
-      const r1 = 28, r2 = 38;
-      hachPath.moveTo(890 + Math.cos(a) * r1, 155 + Math.sin(a) * r1);
-      hachPath.lineTo(890 + Math.cos(a) * r2, 155 + Math.sin(a) * r2);
-    }
-    // Pratzen Western Escarpment into Puntowitz
-    const scarpPts = [
-      { x: 830, y: 440, nx: -8, ny: 2 },
-      { x: 825, y: 470, nx: -9, ny: 1 },
-      { x: 820, y: 500, nx: -10, ny: 0 },
-      { x: 818, y: 530, nx: -10, ny: -1 },
-      { x: 812, y: 560, nx: -11, ny: -2 },
-      { x: 805, y: 590, nx: -10, ny: -3 },
-      { x: 795, y: 620, nx: -9, ny: -4 },
-      { x: 785, y: 650, nx: -8, ny: -5 },
-    ];
-    for (const pt of scarpPts) {
-      hachPath.moveTo(pt.x, pt.y);
-      hachPath.lineTo(pt.x + pt.nx, pt.y + pt.ny);
-    }
-    this.cachedHachures = hachPath;
+    this.cachedContourLabels = chosen;
   }
-  private renderTopographicContours(ctx: CanvasRenderingContext2D) {
-    if (!this.showTopography) {
-      // Subtle baseline shading when topography layer is toggled off
-      ctx.save();
-      ctx.fillStyle = '#f4f1ea';
-      ctx.fillRect(0, 0, 1600, 1000);
-      ctx.restore();
-      return;
-    }
 
-    ctx.save();
-
+  private renderReliefAndContours(ctx: CanvasRenderingContext2D) {
+    if (!this.showTopography) return;
     this.initTopographyCache();
 
-    // 1. Draw Continuous Shaded Relief & Subtle Hypsometric Paper Base
+    ctx.save();
     if (this.cachedTopoCanvas) {
-      ctx.drawImage(this.cachedTopoCanvas, 0, 0);
-    } else {
-      ctx.fillStyle = '#f6f3eb';
-      ctx.fillRect(0, 0, 1600, 1000);
+      ctx.drawImage(this.cachedTopoCanvas, 0, 0, 1600, 1000);
     }
 
-    // 2. Draw Intermediate Contour Lines (10m interval: 190, 210, 230, 250, 270, 290, 310m)
-    // Fine, authentic military bistre lines
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     if (this.cachedIntermediateContours) {
-      ctx.strokeStyle = 'rgba(105, 68, 30, 0.55)';
-      ctx.lineWidth = 1.05;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
+      ctx.strokeStyle = MAP.contour;
+      ctx.lineWidth = 0.7;
       ctx.stroke(this.cachedIntermediateContours);
     }
-
-    // 3. Draw Index Contour Lines (20m interval: 180, 200, 220, 240, 260, 280, 300, 320m)
-    // Crisp, bold dark bistre contours matching NATO STANAG 3677
     if (this.cachedIndexContours) {
-      ctx.strokeStyle = '#4a2c0f';
-      ctx.lineWidth = 1.85;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
+      ctx.strokeStyle = MAP.contourIndex;
+      ctx.lineWidth = 1.25;
       ctx.stroke(this.cachedIndexContours);
     }
 
-    // 4. Cartographic Slope Hachures on Steep Cliffs
-    if (this.cachedHachures) {
-      ctx.strokeStyle = '#4a2c0f';
-      ctx.lineWidth = 0.85;
-      ctx.stroke(this.cachedHachures);
-    }
-
-    // -----------------------------------------------------------------------
-    // E. INDEX CONTOUR ELEVATION CALLOUTS (Crisp Stamped Numerals with Knockouts)
-    // -----------------------------------------------------------------------
-    ctx.font = 'bold 8.5px Arial, sans-serif';
+    // Index contour values, set along the line and kept upright
+    ctx.font = font(500, 6.5);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-
-    const indexContourLabels = [
-      { text: '180', x: 740, y: 920 },
-      { text: '200', x: 230, y: 190 },
-      { text: '200', x: 380, y: 760 },
-      { text: '200', x: 740, y: 220 },
-      { text: '200', x: 700, y: 780 },
-      { text: '200', x: 330, y: 160 },
-      { text: '200', x: 420, y: 360 },
-      { text: '200', x: 800, y: 190 },
-      { text: '200', x: 800, y: 540 },
-      { text: '240', x: 400, y: 140 },
-      { text: '240', x: 350, y: 600 },
-      { text: '240', x: 850, y: 180 },
-      { text: '240', x: 845, y: 440 },
-      { text: '240', x: 1040, y: 835 },
-      { text: '260', x: 900, y: 370 },
-      { text: '260', x: 1250, y: 400 },
-      { text: '260', x: 1010, y: 735 },
-      { text: '260', x: 980, y: 664 },
-      { text: '280', x: 1060, y: 358 },
-      { text: '280', x: 1000, y: 459 },
-      { text: '280', x: 720, y: 241 },
-      { text: '280', x: 890, y: 138 },
-      { text: '300', x: 1060, y: 376 },
-      { text: '300', x: 890, y: 146 },
-      { text: '320', x: 890, y: 151 },
-    ];
-
-    for (const cl of indexContourLabels) {
-      const tw = ctx.measureText(cl.text).width;
-      // Clean paper knockout background
-      ctx.fillStyle = '#f6f3eb';
-      ctx.strokeStyle = 'rgba(92, 53, 16, 0.45)';
-      ctx.lineWidth = 0.5;
-      ctx.fillRect(cl.x - tw / 2 - 2, cl.y - 4.5, tw + 4, 9);
-      ctx.strokeRect(cl.x - tw / 2 - 2, cl.y - 4.5, tw + 4, 9);
-
-      // Stamped military numeral
-      ctx.fillStyle = '#5c3510';
-      ctx.fillText(cl.text, cl.x, cl.y);
-    }
-
-    // -----------------------------------------------------------------------
-    // F. NATO SPOT ELEVATION BENCHMARKS (STANAG 3677 Standard ▲ Point Elevations)
-    // -----------------------------------------------------------------------
-    const spotElevations = [
-      { name: 'SANTON HILL', elev: '▲ 320.0', x: 890, y: 155, labelY: -13 },
-      { name: 'ŽURÁŇ (HQ)', elev: '▲ 280.0', x: 720, y: 250, labelY: -13 },
-      { name: 'STARÉ VINOHRADY', elev: '▲ 300.0', x: 1060, y: 390, labelY: -13 },
-      { name: 'PRATZEN CREST', elev: '▲ 285.0', x: 1000, y: 490, labelY: -13 },
-      { name: 'HOSTIERADEK', elev: '▲ 275.0', x: 980, y: 700, labelY: -13 },
-      { name: 'TURAS HEIGHTS', elev: '▲ 235.0', x: 380, y: 420, labelY: -12 },
-      { name: 'GOLDBACH VALLEY', elev: '180m', x: 670, y: 650, labelY: 0 },
-      { name: 'SATSCHAN BASIN', elev: '180m', x: 670, y: 950, labelY: 0 },
-    ];
-
-    for (const se of spotElevations) {
+    for (const l of this.cachedContourLabels) {
+      let a = l.angle;
+      if (a > Math.PI / 2) a -= Math.PI;
+      if (a < -Math.PI / 2) a += Math.PI;
       ctx.save();
-      ctx.font = 'bold 7.5px "Courier New", monospace';
-      const text = `${se.elev} ${se.name}`;
-      const tw = ctx.measureText(text).width;
-
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
-      ctx.strokeStyle = '#475569';
-      ctx.lineWidth = 0.6;
-      ctx.fillRect(se.x - tw / 2 - 3, se.y + se.labelY - 5, tw + 6, 11);
-      ctx.strokeRect(se.x - tw / 2 - 3, se.y + se.labelY - 5, tw + 6, 11);
-
-      ctx.fillStyle = '#0f172a';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, se.x, se.y + se.labelY);
+      ctx.translate(l.x, l.y);
+      ctx.rotate(a);
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(240, 234, 220, 0.95)';
+      ctx.lineWidth = 3;
+      ctx.strokeText(String(l.level), 0, 0);
+      ctx.fillStyle = MAP.contourLabel;
+      ctx.fillText(String(l.level), 0, 0);
       ctx.restore();
     }
+    ctx.restore();
+  }
 
-    // -----------------------------------------------------------------------
-    // H. HISTORICAL TERRAIN & TACTICAL REDOUBTS (Santon Redoubt, Pheasantry, Vineyards)
-    // -----------------------------------------------------------------------
-    this.renderHistoricalTerrainFeatures(ctx);
+  // Named spot heights (triangulation points)
+  private renderSpotHeights(ctx: CanvasRenderingContext2D) {
+    const spots = [
+      { name: 'Santon', elev: 320, x: 890, y: 155 },
+      { name: 'Žuráň', elev: 280, x: 720, y: 250 },
+      { name: 'Staré Vinohrady', elev: 300, x: 1060, y: 390 },
+      { name: 'Pratzeberg', elev: 285, x: 1000, y: 490 },
+      { name: 'Hostieradek', elev: 275, x: 980, y: 700 },
+      { name: 'Turas', elev: 235, x: 380, y: 420 },
+    ];
+    ctx.save();
+    for (const sp of spots) {
+      ctx.fillStyle = MAP.ink;
+      ctx.beginPath();
+      ctx.moveTo(sp.x, sp.y - 3.2);
+      ctx.lineTo(sp.x + 3, sp.y + 2);
+      ctx.lineTo(sp.x - 3, sp.y + 2);
+      ctx.closePath();
+      ctx.fill();
 
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.font = font(500, 7.5, FONT.carto, true);
+      haloText(ctx, sp.name, sp.x + 5, sp.y - 1, '#44403c', 2.4);
+      ctx.font = font(500, 6.5);
+      haloText(ctx, String(sp.elev), sp.x + 5, sp.y + 7, MAP.contourLabel, 2.2);
+    }
     ctx.restore();
   }
 
@@ -1421,10 +1247,9 @@ export class SandtableRenderer {
     ctx.arc(0, 0, 3, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.font = 'bold 7px "Courier New", monospace';
-    ctx.fillStyle = '#1e3a8a';
+    ctx.font = font(500, 6.5, FONT.carto, true);
     ctx.textAlign = 'center';
-    ctx.fillText('[REDOUBT] SANTON (18 GUNS)', 0, -30);
+    haloText(ctx, 'Santon redoubt', 0, -31, '#44403c', 2.2);
     ctx.restore();
 
     // 2. SOKOLNITZ PHEASANTRY ("FAISANDERIE") STONE WALL ENCLOSURE (645, 645)
@@ -1658,10 +1483,10 @@ export class SandtableRenderer {
 
     for (const f of forestParcels) {
       const isWalled = f.type === 'walled_preserve';
-      drawScallopedForest(f.points, isWalled ? 'rgba(128, 165, 118, 0.42)' : 'rgba(142, 178, 134, 0.38)', isWalled ? '#334155' : '#2d5a27', isWalled);
+      drawScallopedForest(f.points, MAP.woods, isWalled ? '#57534e' : MAP.woodsEdge, isWalled);
 
-      // Subtle NATO canopy stipples inside parcel
-      ctx.fillStyle = '#1e3a1e';
+      // Canopy stipple
+      ctx.fillStyle = 'rgba(54, 83, 20, 0.5)';
       const minX = Math.min(...f.points.map(p => p.x));
       const maxX = Math.max(...f.points.map(p => p.x));
       const minY = Math.min(...f.points.map(p => p.y));
@@ -1693,13 +1518,7 @@ export class SandtableRenderer {
         }
       }
 
-      ctx.font = 'bold 7px Arial, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
-      ctx.lineWidth = 2.0;
-      ctx.strokeText(f.label, f.labelPos.x, f.labelPos.y);
-      ctx.fillStyle = isWalled ? '#0f172a' : '#1e3a1e';
-      ctx.fillText(f.label, f.labelPos.x, f.labelPos.y);
+
     }
 
     ctx.restore();
@@ -1713,9 +1532,9 @@ export class SandtableRenderer {
   // =========================================================================
   private renderHydrology(ctx: CanvasRenderingContext2D, state?: SimulationState) {
     ctx.save();
-    const riverNavy = '#1e40af';
-    const riverCasing = '#1e3a8a';
-    const hydrographicFill = 'rgba(186, 215, 240, 0.45)';
+    const riverNavy = MAP.water;
+    const riverCasing = MAP.water;
+    const hydrographicFill = MAP.waterFill;
 
     // 1. Frozen Ponds: Satschan & Menitz Basin (174 - 176m)
     // Satschan Pond Frosted Ice Sheet (Soft hydrographic vignette & fine military casing)
@@ -1844,27 +1663,28 @@ export class SandtableRenderer {
       ctx.stroke();
     }
 
-    ctx.font = 'bold 6.5px "Courier New", monospace';
-    ctx.fillStyle = '#0f172a';
+    ctx.font = font(500, 5.5, FONT.carto, true);
     ctx.textAlign = 'center';
-    ctx.fillText('[DEFILE] MÖNITZ CAUSEWAY', 755, 960);
+    ctx.save();
+    ctx.translate(755, 975);
+    ctx.rotate(-Math.PI / 2);
+    haloText(ctx, 'Mönitz causeway', 0, 2, '#44403c', 2);
+    ctx.restore();
     ctx.restore();
 
     // Lake ice labels
-    ctx.font = 'bold italic 9.5px Arial, sans-serif';
-    ctx.fillStyle = '#1e3a8a';
+    ctx.font = font(500, 9, FONT.carto, true);
     ctx.textAlign = 'center';
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-    ctx.lineWidth = 2.0;
-    ctx.strokeText('SATSCHAN POND (FROZEN)', 655, 925);
-    ctx.fillText('SATSCHAN POND (FROZEN)', 655, 925);
-    ctx.strokeText('MENITZ POND', 815, 965);
-    ctx.fillText('MENITZ POND', 815, 965);
+    haloText(ctx, 'Satschan Pond', 650, 930, '#1d4f86', 2.4);
+    ctx.font = font(500, 6.5, FONT.carto, true);
+    haloText(ctx, '(frozen)', 650, 940, '#1d4f86', 2.2);
+    ctx.font = font(500, 8, FONT.carto, true);
+    haloText(ctx, 'Menitz Pond', 812, 970, '#1d4f86', 2.4);
 
     // 2. Mill Ponds (Puntowitz, Kobelnitz, Sokolnitz Mill Ponds)
     ctx.fillStyle = hydrographicFill;
     ctx.strokeStyle = riverNavy;
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = 0.7;
 
     const millPonds = [
       { x: 700, y: 500, rx: 11, ry: 7, rot: 0.3, name: 'Puntowitz Mill' },
@@ -1877,13 +1697,6 @@ export class SandtableRenderer {
       ctx.beginPath();
       ctx.ellipse(p.x, p.y, p.rx, p.ry, p.rot, 0, Math.PI * 2);
       ctx.fill();
-      ctx.stroke();
-
-      ctx.strokeStyle = '#334155';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(p.x - p.rx * 0.6, p.y);
-      ctx.lineTo(p.x + p.rx * 0.6, p.y);
       ctx.stroke();
     }
 
@@ -1902,8 +1715,8 @@ export class SandtableRenderer {
     ctx.stroke();
 
     ctx.beginPath();
-    ctx.lineWidth = 1.2;
-    ctx.strokeStyle = '#93c5fd';
+    ctx.lineWidth = 1.1;
+    ctx.strokeStyle = '#bcd7ef';
     ctx.moveTo(235, 0);
     ctx.bezierCurveTo(220, 145, 185, 370, 170, 565);
     ctx.bezierCurveTo(155, 725, 130, 855, 105, 1000);
@@ -1939,8 +1752,8 @@ export class SandtableRenderer {
       [{ x: 1150, y: 510 }, { x: 1230, y: 550 }, { x: 1340, y: 580 }, { x: 1485, y: 555 }],
     ];
 
-    ctx.lineWidth = 1.0;
-    ctx.strokeStyle = '#2563eb';
+    ctx.lineWidth = 0.75;
+    ctx.strokeStyle = MAP.water;
     for (const trib of tributaries) {
       ctx.beginPath();
       ctx.moveTo(trib[0].x, trib[0].y);
@@ -1962,8 +1775,8 @@ export class SandtableRenderer {
       ctx.translate(b.x, b.y);
       ctx.rotate(b.angle);
 
-      ctx.strokeStyle = '#0f172a';
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = MAP.ink;
+      ctx.lineWidth = 1;
 
       // West bank bracket [
       ctx.beginPath();
@@ -1980,17 +1793,9 @@ export class SandtableRenderer {
       ctx.stroke();
 
       // Stone abutment fill
-      ctx.fillStyle = '#64748b';
-      ctx.fillRect(-7, -4, 14, 8);
+      ctx.fillStyle = '#a8a29e';
+      ctx.fillRect(-7, -3, 14, 6);
 
-      // Standard NATO Bridge Classification Tag
-      ctx.font = 'bold 7px "Courier New", monospace';
-      ctx.fillStyle = '#0f172a';
-      ctx.textAlign = 'center';
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-      ctx.lineWidth = 1.8;
-      ctx.strokeText('[' + b.id + '] ' + b.name, 0, -8);
-      ctx.fillText('[' + b.id + '] ' + b.name, 0, -8);
 
       ctx.restore();
     }
@@ -2010,13 +1815,9 @@ export class SandtableRenderer {
     ctx.stroke();
 
     ctx.setLineDash([]);
-    ctx.font = 'bold 7px "Courier New", monospace';
-    ctx.fillStyle = '#0284c7';
+    ctx.font = font(500, 6, FONT.carto, true);
     ctx.textAlign = 'center';
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-    ctx.lineWidth = 1.8;
-    ctx.strokeText('[FORD] TELNITZ (0.4m)', 0, -8);
-    ctx.fillText('[FORD] TELNITZ (0.4m)', 0, -8);
+    haloText(ctx, 'Ford 0.4m', 0, -7, '#1d4f86', 2);
     ctx.restore();
 
     // 6. Authentic NATO Wetland Marsh Symbols (_\\|/_ )
@@ -2038,8 +1839,8 @@ export class SandtableRenderer {
     }
 
     // River Names
-    ctx.fillStyle = '#1e3a8a';
-    ctx.font = 'bold italic 11px Arial, sans-serif';
+    ctx.fillStyle = '#1d4f86';
+    ctx.font = font(500, 10, FONT.carto, true);
 
     ctx.save();
     ctx.translate(180, 720);
@@ -2073,24 +1874,21 @@ export class SandtableRenderer {
     ctx.bezierCurveTo(290, 160, 580, 185, 870, 190);
     ctx.bezierCurveTo(1130, 185, 1340, 130, 1550, 50);
 
-    // Dark casing
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 3.2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#57534e';
+    ctx.lineWidth = 3;
     ctx.stroke();
 
-    // Red core fill (STANAG 3677 primary highway)
-    ctx.strokeStyle = '#dc2626';
-    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = '#e05a47';
+    ctx.lineWidth = 1.8;
     ctx.stroke();
 
     // Route shield and milestones
     ctx.save();
-    ctx.font = 'bold 7.5px "Courier New", monospace';
-    ctx.fillStyle = '#0f172a';
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-    ctx.lineWidth = 2.0;
-    ctx.strokeText('[MSR-1] OLMÜTZ HIGHWAY >', 1360, 36);
-    ctx.fillText('[MSR-1] OLMÜTZ HIGHWAY >', 1360, 36);
+    ctx.font = font(600, 7);
+    ctx.textAlign = 'left';
+    haloText(ctx, 'MSR 1 · TO OLMÜTZ →', 1380, 50, '#44403c', 2.4);
     ctx.restore();
 
     // 2. Secondary All-Weather Highway (Vienna Highway)
@@ -2099,11 +1897,11 @@ export class SandtableRenderer {
     ctx.bezierCurveTo(80, 900, 100, 775, 100, 580);
     ctx.bezierCurveTo(100, 385, 160, 225, 225, 145);
 
-    ctx.strokeStyle = '#1e293b';
+    ctx.strokeStyle = '#57534e';
     ctx.lineWidth = 2.6;
     ctx.stroke();
-    ctx.strokeStyle = '#f8fafc';
-    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = '#f3c969';
+    ctx.lineWidth = 1.4;
     ctx.stroke();
 
     // 3. Secondary All-Weather Improved Roads (STANAG 3677 Double-Line Cased)
@@ -2128,9 +1926,10 @@ export class SandtableRenderer {
       ],
     ];
 
-    // Outer dark casing
-    ctx.strokeStyle = '#334155';
-    ctx.lineWidth = 2.0;
+    // Outer casing
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#78716c';
+    ctx.lineWidth = 1.9;
     for (const r of secondaryRoads) {
       ctx.beginPath();
       ctx.moveTo(r[0].x, r[0].y);
@@ -2139,8 +1938,8 @@ export class SandtableRenderer {
     }
 
     // Inner white core
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.0;
+    ctx.strokeStyle = '#fbfaf6';
+    ctx.lineWidth = 0.9;
     for (const r of secondaryRoads) {
       ctx.beginPath();
       ctx.moveTo(r[0].x, r[0].y);
@@ -2157,9 +1956,9 @@ export class SandtableRenderer {
       [{ x: 870, y: 745 }, { x: 810, y: 840 }, { x: 755, y: 935 }],
     ];
 
-    ctx.strokeStyle = '#78350f';
-    ctx.lineWidth = 0.9;
-    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = 'rgba(87, 83, 78, 0.8)';
+    ctx.lineWidth = 0.7;
+    ctx.setLineDash([4, 2.5]);
     for (const t of farmTracks) {
       ctx.beginPath();
       ctx.moveTo(t[0].x, t[0].y);
@@ -2219,7 +2018,7 @@ export class SandtableRenderer {
         const bh = 38;
 
         // 1. NATO Urban Built-up Tint Wash (STANAG 3677 Salmon)
-        ctx.fillStyle = 'rgba(235, 175, 140, 0.48)';
+        ctx.fillStyle = MAP.builtUp;
         ctx.fillRect(-bw / 2, -bh / 2, bw, bh);
 
         // 2. City Wall / Bastioned Enclosure (Spilberk / Town Wall)
@@ -2252,14 +2051,10 @@ export class SandtableRenderer {
         ctx.fillRect(-4, -4, 8, 8); // Central citadel
 
         // 5. Crisp Military Label with Drop-Halo
-        ctx.font = 'bold 10px Arial, sans-serif';
+        ctx.font = font(700, 11);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-        ctx.lineWidth = 2.5;
-        ctx.strokeText(s.name, 0, -bh / 2 - 3);
-        ctx.fillStyle = '#0f172a';
-        ctx.fillText(s.name, 0, -bh / 2 - 3);
+        haloText(ctx, s.name, 0, -bh / 2 - 3, MAP.ink, 3);
 
       } else {
         // Rural Settlement / Tactical Strongpoint (Moravian Strassendorf)
@@ -2268,11 +2063,11 @@ export class SandtableRenderer {
         const vh = isTacticalGarrison ? 20 : 16;
 
         // 1. NATO Urban Built-up Tint
-        ctx.fillStyle = 'rgba(235, 175, 140, 0.44)';
+        ctx.fillStyle = MAP.builtUp;
         ctx.fillRect(-vw / 2, -vh / 2, vw, vh);
 
         // 2. Built-up Boundary
-        ctx.strokeStyle = isTacticalGarrison ? '#475569' : '#9a3412';
+        ctx.strokeStyle = isTacticalGarrison ? '#57534e' : 'rgba(120, 72, 52, 0.7)';
         ctx.lineWidth = isTacticalGarrison ? 1.2 : 0.75;
         if (isTacticalGarrison) {
           ctx.strokeRect(-vw / 2, -vh / 2, vw, vh);
@@ -2283,7 +2078,7 @@ export class SandtableRenderer {
         }
 
         // 3. Authentic Individual Building Footprints (STANAG 3677 black structures)
-        ctx.fillStyle = '#0f172a';
+        ctx.fillStyle = MAP.building;
         ctx.fillRect(-vw / 2 + 2, -vh / 2 + 2, 5, 4);
         ctx.fillRect(vw / 2 - 7, -vh / 2 + 2, 5, 4);
         ctx.fillRect(-vw / 2 + 2, vh / 2 - 6, 4, 4);
@@ -2311,15 +2106,10 @@ export class SandtableRenderer {
         }
 
         // 5. Village Name Label with White Halo
-        ctx.font = 'bold 8.5px Arial, sans-serif';
+        ctx.font = font(600, isTacticalGarrison ? 8 : 7.5);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
-        const labelText = s.name.toUpperCase();
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-        ctx.lineWidth = 2.4;
-        ctx.strokeText(labelText, 0, -vh / 2 - 2);
-        ctx.fillStyle = isTacticalGarrison ? '#0f172a' : '#334155';
-        ctx.fillText(labelText, 0, -vh / 2 - 2);
+        haloText(ctx, s.name.toUpperCase(), 0, -vh / 2 - 2, isTacticalGarrison ? MAP.ink : '#44403c', 2.6);
       }
       ctx.restore();
     }
@@ -2330,150 +2120,11 @@ export class SandtableRenderer {
   
 
   // =========================================================================
-  // 7. KEY TACTICAL LANDMARK BADGES (Ⓢ, Ⓥ, Ⓩ)
-  // Exact green circular symbols from West Point map
-  // =========================================================================
-  private renderLandmarkBadges(ctx: CanvasRenderingContext2D) {
-    ctx.save();
-    const badges = [
-      { sym: 'S', x: 890, y: 155, label: 'SANTON' },
-      { sym: 'Z', x: 720, y: 250, label: 'ŽURÁŇ / HQ' },
-      { sym: 'V', x: 1060, y: 390, label: 'VINOHRADY' },
-    ];
-
-    for (const b of badges) {
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 6.5, 0, Math.PI * 2);
-      ctx.fillStyle = '#0f172a';
-      ctx.fill();
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
-
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 8px Arial, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(b.sym, b.x, b.y);
-    }
-    ctx.restore();
-  }
-
-  // =========================================================================
   // 8. HEX GRID (OPTIONAL WARGAME MODE)
-  // =========================================================================
-  private renderHexGrid(ctx: CanvasRenderingContext2D) {
-    ctx.save();
-    ctx.strokeStyle = 'rgba(80, 80, 80, 0.15)';
-    ctx.lineWidth = 0.5;
-
-    const hexRadius = 24;
-    const hexHeight = Math.sqrt(3) * hexRadius;
-    const side = (3 / 2) * hexRadius;
-
-    for (let x = 0; x < 2400; x += side) {
-      for (let y = 0; y < 1500; y += hexHeight) {
-        const cx = x;
-        const cy = y + ((x / side) % 2 === 0 ? 0 : hexHeight / 2);
-
-        ctx.beginPath();
-        for (let i = 0; i < 6; i++) {
-          const angle = (Math.PI / 3) * i;
-          const px = cx + hexRadius * Math.cos(angle);
-          const py = cy + hexRadius * Math.sin(angle);
-          if (i === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        }
-        ctx.closePath();
-        ctx.stroke();
-      }
-    }
-    ctx.restore();
-  }
 
   // =========================================================================
   // 9. HISTORICAL TACTICAL MANEUVER ARROWS
   // Dashed red Allied flank attack & blue French counter-attack vectors
-  // =========================================================================
-  private renderHistoricalManeuvers(ctx: CanvasRenderingContext2D, state: SimulationState) {
-    // Only render historical maneuver arrows during initial deployment briefing (time === 0)
-    // and only if operational graphics overlay is enabled. During live battle, live dynamic orders dictate trajectories.
-    if (!state.showOperationalGraphics || state.timeMinutes > 0) return;
-
-    ctx.save();
-
-    // 1. Allied Columns Flanking March (Red dashed arrows from Pratzen to Telnitz/Sokolnitz)
-    const alliedVectors = [
-      // Dokhturov (Column I) sweeping southwest into Aujest & Tellnitz
-      {
-        start: { x: 1080, y: 610 },
-        control: { x: 950, y: 710 },
-        end: { x: 790, y: 790 },
-      },
-      // Langeron (Column II) wheeling towards Sokolnitz
-      {
-        start: { x: 1050, y: 560 },
-        control: { x: 870, y: 630 },
-        end: { x: 710, y: 690 },
-      },
-      // Prschibilschewski (Column III) towards Sokolnitz Castle
-      {
-        start: { x: 1060, y: 420 },
-        control: { x: 890, y: 500 },
-        end: { x: 740, y: 610 },
-      },
-      // Kollowrat (Column IV) descending into Puntowitz
-      {
-        start: { x: 1190, y: 450 },
-        control: { x: 1050, y: 450 },
-        end: { x: 900, y: 470 },
-      },
-    ];
-
-    if (state.playerFaction !== 'french') {
-      for (const v of alliedVectors) {
-        this.renderTotalWarArrow(ctx, v.start, v.end, undefined, v.control, '#cc1111', true);
-      }
-    }
-
-    // 2. French Counter-Assault Vectors (Blue dashed arrows)
-    if (state.playerFaction === 'french') {
-      if (state.timeMinutes >= 110) {
-        // Soult climbing the Pratzen heights
-        this.renderTotalWarArrow(
-          ctx,
-          { x: 740, y: 420 },
-          { x: 890, y: 470 },
-          undefined,
-          { x: 810, y: 435 },
-          '#0033cc',
-          true
-        );
-        this.renderTotalWarArrow(
-          ctx,
-          { x: 740, y: 450 },
-          { x: 935, y: 550 },
-          undefined,
-          { x: 825, y: 500 },
-          '#0033cc',
-          true
-        );
-      }
-
-      // Davout forced march north from Raigern
-      this.renderTotalWarArrow(
-        ctx,
-        { x: 70, y: 990 },
-        { x: 55, y: 885 },
-        undefined,
-        { x: 65, y: 935 },
-        '#0033cc',
-        true
-      );
-    }
-
-    ctx.restore();
-  }
 
   // =========================================================================
   // TOTAL WAR CURVED MANEUVER ARROW RENDERING ENGINE
@@ -2882,77 +2533,37 @@ export class SandtableRenderer {
     unit: Unit,
     _color: string
   ) {
-    const isFrench = unit.faction === 'french';
-    const natoW = unit.type === 'headquarters' ? 28 : 24;
-    const natoH = 14;
+    const s = this.symbolScale();
+    const { lw, lh } = this.footprintSize(unit);
 
+    // Planned footprint & facing at the destination
     ctx.save();
     ctx.translate(pos.x, pos.y);
     ctx.rotate(heading);
-
-    // Ghost chip background
-    ctx.fillStyle = isFrench ? 'rgba(0, 51, 204, 0.45)' : 'rgba(204, 17, 17, 0.45)';
-    ctx.fillRect(-natoW / 2, -natoH / 2, natoW, natoH);
-
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.2;
-    ctx.setLineDash([3, 2]);
-    ctx.strokeRect(-natoW / 2, -natoH / 2, natoW, natoH);
-
-    // NATO Symbol inside ghost chit
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.1;
+    ctx.strokeStyle = 'rgba(11, 94, 168, 0.8)';
+    ctx.lineWidth = 1 / this.zoom;
+    ctx.setLineDash([3 / this.zoom, 2 / this.zoom]);
+    ctx.strokeRect(-lw / 2, -lh / 2, lw, lh);
     ctx.setLineDash([]);
-    if (unit.type === 'infantry' || unit.type === 'guard') {
-      ctx.beginPath();
-      ctx.moveTo(-natoW / 2 + 4, -natoH / 2 + 2.5);
-      ctx.lineTo(natoW / 2 - 4, natoH / 2 - 2.5);
-      ctx.moveTo(natoW / 2 - 4, -natoH / 2 + 2.5);
-      ctx.lineTo(-natoW / 2 + 4, natoH / 2 - 2.5);
-      ctx.stroke();
-      if (unit.type === 'guard') {
-        ctx.fillStyle = '#fde047';
-        ctx.beginPath();
-        ctx.arc(0, 0, 2, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    } else if (unit.type === 'cavalry') {
-      ctx.beginPath();
-      ctx.moveTo(-natoW / 2 + 4, natoH / 2 - 2.5);
-      ctx.lineTo(natoW / 2 - 4, -natoH / 2 + 2.5);
-      ctx.stroke();
-    } else if (unit.type === 'artillery') {
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      ctx.beginPath();
-      ctx.moveTo(-natoW / 2 + 5, -natoH / 2 + 3);
-      ctx.lineTo(-natoW / 2 + 5, natoH / 2 - 3);
-      ctx.stroke();
-    }
-
-    // Forward Direction Arrow Pip
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = 'rgba(11, 94, 168, 0.8)';
     ctx.beginPath();
-    ctx.moveTo(natoW / 2 + 4, 0);
-    ctx.lineTo(natoW / 2, -2.5);
-    ctx.lineTo(natoW / 2, 2.5);
+    ctx.moveTo(lw / 2 + 4, 0);
+    ctx.lineTo(lw / 2, -2.6);
+    ctx.lineTo(lw / 2, 2.6);
     ctx.closePath();
     ctx.fill();
-
     ctx.restore();
 
-    // Upright unit label
+    // Planned position: APP-6 dashed (anticipated) frame
     ctx.save();
-    ctx.font = 'bold 7px Arial, sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.shadowColor = 'rgba(0,0,0,0.85)';
-    ctx.shadowBlur = 3;
-    const shortName = unit.name.split(' ')[0];
-    ctx.fillText(shortName, pos.x, pos.y + 16);
+    ctx.translate(pos.x, pos.y);
+    ctx.scale(s, s);
+    ctx.globalAlpha = 0.75;
+    drawUnitSymbol(ctx, unit, 'friend', { dashed: true, fill: 'rgba(128, 224, 255, 0.55)', showEchelon: false });
+    ctx.font = font(600, 7.5);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    haloText(ctx, designationFor(unit), FRAME_W / 2 + 3, 0, MAP.ink);
     ctx.restore();
   }
 
@@ -3241,95 +2852,78 @@ export class SandtableRenderer {
       return selectedIds.includes(u.id) || u.id === hoveredUnitId;
     });
 
+    const hair = 1 / this.zoom;
+    const labelSize = 7.5 * this.symbolScale();
+    const eraProfile = ERA_WEAPON_PROFILES[state.era || 'napoleonic'] || ERA_WEAPON_PROFILES.napoleonic;
+
     for (const unit of unitsToDisplay) {
       if (unit.firepower <= 0) continue;
-      const isFrench = unit.faction === 'french';
-      const isArtillery = unit.type === 'artillery';
-      const primaryColor = isFrench ? '#2563eb' : '#dc2626';
+      const isFriendly = unit.faction === state.playerFaction;
+      const emphasized = selectedIds.includes(unit.id) || unit.id === hoveredUnitId;
+      const rgb = isFriendly ? '11, 94, 168' : '194, 39, 45';
+      const a = emphasized ? 0.75 : 0.28;
 
       ctx.save();
       ctx.translate(unit.position.x, unit.position.y);
+      ctx.lineWidth = emphasized ? 1.4 * hair : hair;
 
-      if (isArtillery) {
-        // 1. CANISTER DEFENSE ZONE (Close Range: 120px)
+      if (unit.type === 'artillery') {
         const canisterRadius = 120;
-        ctx.strokeStyle = 'rgba(245, 158, 11, 0.75)'; // Amber
-        ctx.lineWidth = 1.0;
-        ctx.setLineDash([3, 3]);
-        ctx.beginPath();
-        ctx.arc(0, 0, canisterRadius, 0, Math.PI * 2);
-        ctx.stroke();
-
-        ctx.fillStyle = 'rgba(245, 158, 11, 0.04)';
-        ctx.fill();
-
-        // 2. MAXIMUM INDIRECT CALL-FOR-FIRE (CFF) BOMBARDMENT RANGE (320-360px)
         const maxRange = unit.range || 350;
-        ctx.strokeStyle = isFrench ? 'rgba(37, 99, 235, 0.65)' : 'rgba(220, 38, 38, 0.65)';
-        ctx.lineWidth = 1.2;
-        ctx.setLineDash([6, 4]);
+
+        ctx.strokeStyle = `rgba(${rgb}, ${a})`;
+        ctx.setLineDash([7 * hair, 5 * hair]);
         ctx.beginPath();
         ctx.arc(0, 0, maxRange, 0, Math.PI * 2);
         ctx.stroke();
 
-        ctx.fillStyle = isFrench ? 'rgba(37, 99, 235, 0.03)' : 'rgba(220, 38, 38, 0.03)';
-        ctx.fill();
+        if (emphasized) {
+          ctx.fillStyle = `rgba(${rgb}, 0.035)`;
+          ctx.fill();
 
-        // Cardinal tick crosshairs on max range
-        ctx.setLineDash([]);
-        ctx.lineWidth = 1.0;
-        ctx.strokeStyle = isFrench ? 'rgba(37, 99, 235, 0.7)' : 'rgba(220, 38, 38, 0.7)';
-        const tickLen = 6;
-        // North
-        ctx.beginPath(); ctx.moveTo(0, -maxRange - tickLen); ctx.lineTo(0, -maxRange + tickLen); ctx.stroke();
-        // South
-        ctx.beginPath(); ctx.moveTo(0, maxRange - tickLen); ctx.lineTo(0, maxRange + tickLen); ctx.stroke();
-        // East
-        ctx.beginPath(); ctx.moveTo(maxRange - tickLen, 0); ctx.lineTo(maxRange + tickLen, 0); ctx.stroke();
-        // West
-        ctx.beginPath(); ctx.moveTo(-maxRange - tickLen, 0); ctx.lineTo(-maxRange + tickLen, 0); ctx.stroke();
+          ctx.strokeStyle = 'rgba(217, 119, 6, 0.8)';
+          ctx.setLineDash([3 * hair, 3 * hair]);
+          ctx.beginPath();
+          ctx.arc(0, 0, canisterRadius, 0, Math.PI * 2);
+          ctx.stroke();
 
-        const eraProfile = ERA_WEAPON_PROFILES[state.era || 'napoleonic'] || ERA_WEAPON_PROFILES.napoleonic;
-
-        // Range Labels
-        ctx.font = 'bold 7px Arial, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'bottom';
-        ctx.fillStyle = '#b45309';
-        ctx.fillText(`${eraProfile.rangeLabels.pointDefense}: ${canisterRadius}m`, 0, -canisterRadius - 2);
-
-        ctx.fillStyle = primaryColor;
-        ctx.fillText(`${eraProfile.rangeLabels.indirectFire}: ${maxRange}m`, 0, -maxRange - 3);
-
+          ctx.setLineDash([]);
+          ctx.font = font(600, labelSize);
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          haloText(ctx, `${eraProfile.rangeLabels.pointDefense} · ${canisterRadius * 5}m`, 0, -canisterRadius - 2 * hair, '#b45309');
+          haloText(ctx, `${eraProfile.rangeLabels.indirectFire} · ${maxRange * 5}m`, 0, -maxRange - 2 * hair, `rgb(${rgb})`);
+        }
       } else {
-        const eraProfile = ERA_WEAPON_PROFILES[state.era || 'napoleonic'] || ERA_WEAPON_PROFILES.napoleonic;
         const range = unit.range || 100;
-        ctx.strokeStyle = isFrench ? 'rgba(37, 99, 235, 0.55)' : 'rgba(220, 38, 38, 0.55)';
-        ctx.lineWidth = 1.0;
-        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = `rgba(${rgb}, ${a * 0.7})`;
+        ctx.setLineDash([4 * hair, 4 * hair]);
         ctx.beginPath();
         ctx.arc(0, 0, range, 0, Math.PI * 2);
         ctx.stroke();
 
-        ctx.fillStyle = isFrench ? 'rgba(37, 99, 235, 0.04)' : 'rgba(220, 38, 38, 0.04)';
-        ctx.fill();
-
-        // Forward fire arc emphasis (-60 to +60 degrees from heading)
+        // Forward arc of fire (±60° about facing)
         ctx.setLineDash([]);
-        ctx.lineWidth = 1.6;
-        ctx.strokeStyle = isFrench ? 'rgba(37, 99, 235, 0.85)' : 'rgba(220, 38, 38, 0.85)';
+        ctx.strokeStyle = `rgba(${rgb}, ${emphasized ? 0.9 : 0.4})`;
+        ctx.lineWidth = (emphasized ? 2 : 1.2) * hair;
         ctx.beginPath();
         ctx.arc(0, 0, range, unit.heading - Math.PI / 3, unit.heading + Math.PI / 3);
         ctx.stroke();
 
-        // Forward Facing Range Tag
-        ctx.font = 'bold 7px Arial, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = primaryColor;
-        const tagX = Math.cos(unit.heading) * (range + 7);
-        const tagY = Math.sin(unit.heading) * (range + 7);
-        ctx.fillText(`${eraProfile.rangeLabels.directFire}: ${range}m`, tagX, tagY);
+        if (emphasized) {
+          ctx.fillStyle = `rgba(${rgb}, 0.05)`;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.arc(0, 0, range, unit.heading - Math.PI / 3, unit.heading + Math.PI / 3);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.font = font(600, labelSize);
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          const tagR = range + 9 * hair;
+          haloText(ctx, `${eraProfile.rangeLabels.directFire} · ${range * 5}m`, Math.cos(unit.heading) * tagR, Math.sin(unit.heading) * tagR, `rgb(${rgb})`);
+        }
       }
 
       ctx.restore();
@@ -3398,38 +2992,27 @@ export class SandtableRenderer {
       }
     }
 
-    // 4. ACTIVE ENGAGEMENT SECTOR CRISIS BEACONS
+    // 4. Engagements needing reinforcement: thin dashed ring and a small label
     if (state.activeEngagements && state.activeEngagements.length > 0) {
+      const hair = 1 / this.zoom;
+      const ls = this.symbolScale();
       for (const eng of state.activeEngagements) {
-        if (eng.needsReinforcements) {
-          ctx.save();
-          const t = Date.now() / 400;
-          const pulse = (Math.sin(t) + 1) / 2;
-          const radius = 28 + pulse * 14;
-
-          ctx.strokeStyle = `rgba(239, 68, 68, ${0.45 + pulse * 0.45})`;
-          ctx.lineWidth = 2.0;
-          ctx.setLineDash([5, 4]);
-          ctx.beginPath();
-          ctx.arc(eng.sectorLocation.x, eng.sectorLocation.y, radius, 0, Math.PI * 2);
-          ctx.stroke();
-
-          // Sector Alert Label
-          const tag = `ENGAGEMENT: ${eng.name.split(' ')[0]}`;
-          ctx.font = 'bold 8px Arial, sans-serif';
-          const tw = ctx.measureText(tag).width;
-          ctx.fillStyle = 'rgba(153, 27, 27, 0.88)';
-          ctx.fillRect(eng.sectorLocation.x - tw / 2 - 4, eng.sectorLocation.y - radius - 14, tw + 8, 14);
-          ctx.strokeStyle = '#ef4444';
-          ctx.lineWidth = 0.8;
-          ctx.strokeRect(eng.sectorLocation.x - tw / 2 - 4, eng.sectorLocation.y - radius - 14, tw + 8, 14);
-
-          ctx.fillStyle = '#ffffff';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(tag, eng.sectorLocation.x, eng.sectorLocation.y - radius - 7);
-          ctx.restore();
-        }
+        if (!eng.needsReinforcements) continue;
+        const { x, y } = eng.sectorLocation;
+        const radius = 34;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(194, 39, 45, 0.75)';
+        ctx.lineWidth = 1.4 * hair;
+        ctx.setLineDash([5 * hair, 4 * hair]);
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = font(600, 7.5 * ls);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        haloText(ctx, `${eng.name.split(' ')[0]} · reinforce`, x, y - radius - 2 * hair, '#8f1d22', 2.6 * ls);
+        ctx.restore();
       }
     }
   }
@@ -3438,187 +3021,118 @@ export class SandtableRenderer {
   // 11.5 NATO OPERATIONAL GRAPHICS (PHASE LINES, OBJECTIVES, FSCL)
   // =========================================================================
   private renderOperationalGraphics(ctx: CanvasRenderingContext2D, graphics: OperationalGraphic[]) {
+    const hair = 1 / this.zoom;
+    const ls = this.symbolScale();
     ctx.save();
     for (const g of graphics) {
       if (g.type === 'phase_line' || g.type === 'fscl' || g.type === 'boundary') {
         if (g.points.length < 2) continue;
-        ctx.save();
-        ctx.strokeStyle = g.color;
-        ctx.lineWidth = g.type === 'fscl' ? 2.2 : 1.8;
-        ctx.setLineDash(g.type === 'fscl' ? [8, 4] : [14, 7]);
-
+        // Control measures in black per APP-6; fire support lines keep their accent colour
+        const color = g.type === 'fscl' ? '#c2410c' : 'rgba(28, 25, 23, 0.8)';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.6 * hair;
+        ctx.setLineDash(g.type === 'boundary' ? [10 * hair, 6 * hair] : []);
+        ctx.lineJoin = 'round';
         ctx.beginPath();
         ctx.moveTo(g.points[0].x, g.points[0].y);
-        for (let i = 1; i < g.points.length; i++) {
-          ctx.lineTo(g.points[i].x, g.points[i].y);
-        }
+        for (let i = 1; i < g.points.length; i++) ctx.lineTo(g.points[i].x, g.points[i].y);
         ctx.stroke();
+        ctx.setLineDash([]);
 
-        // Draw military label along the line
-        ctx.font = 'bold 9px Arial, sans-serif';
-        for (let i = 0; i < g.points.length - 1; i++) {
-          const midX = (g.points[i].x + g.points[i + 1].x) / 2;
-          const midY = (g.points[i].y + g.points[i + 1].y) / 2;
-          const angle = Math.atan2(g.points[i + 1].y - g.points[i].y, g.points[i + 1].x - g.points[i].x);
-          
-          ctx.save();
-          ctx.translate(midX, midY);
-          ctx.rotate(angle);
-          
-          const tw = ctx.measureText(g.name).width;
-          ctx.fillStyle = 'rgba(244, 244, 245, 0.92)';
-          ctx.fillRect(-tw / 2 - 4, -13, tw + 8, 12);
-          ctx.strokeStyle = g.color;
-          ctx.lineWidth = 0.8;
-          ctx.strokeRect(-tw / 2 - 4, -13, tw + 8, 12);
-          
-          ctx.fillStyle = g.color;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(g.name, 0, -7);
-          ctx.restore();
+        // Label at both ends, just beyond the line, kept upright
+        ctx.font = font(700, 8 * ls);
+        const ends = [
+          { p: g.points[0], q: g.points[1] },
+          { p: g.points[g.points.length - 1], q: g.points[g.points.length - 2] },
+        ];
+        for (const { p, q } of ends) {
+          const dx = p.x - q.x;
+          const dy = p.y - q.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const off = 10 * ls;
+          ctx.textAlign = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'left' : 'right') : 'center';
+          ctx.textBaseline = Math.abs(dy) >= Math.abs(dx) ? (dy > 0 ? 'top' : 'bottom') : 'middle';
+          haloText(ctx, g.name, p.x + (dx / len) * off, p.y + (dy / len) * off, color, 3 * ls);
         }
-        ctx.restore();
       } else if (g.type === 'objective') {
         const pt = g.points[0];
         if (!pt) continue;
-        ctx.save();
-        ctx.strokeStyle = g.color;
-        ctx.lineWidth = 1.6;
-        
-        // Concentric target reticle
+        // Objective: closed, slightly irregular outline with the name inside
+        const r = 46;
+        ctx.strokeStyle = 'rgba(28, 25, 23, 0.8)';
+        ctx.lineWidth = 1.6 * hair;
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 14, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
-        ctx.stroke();
-        
-        // Crosshair ticks
-        ctx.beginPath();
-        ctx.moveTo(pt.x - 18, pt.y);
-        ctx.lineTo(pt.x - 14, pt.y);
-        ctx.moveTo(pt.x + 14, pt.y);
-        ctx.lineTo(pt.x + 18, pt.y);
-        ctx.moveTo(pt.x, pt.y - 18);
-        ctx.lineTo(pt.x, pt.y - 14);
-        ctx.moveTo(pt.x, pt.y + 14);
-        ctx.lineTo(pt.x, pt.y + 18);
+        for (let k = 0; k <= 24; k++) {
+          const t = (k / 24) * Math.PI * 2;
+          const rr = r * (1 + 0.08 * Math.sin(t * 3 + pt.x * 0.01) + 0.05 * Math.cos(t * 5));
+          const x = pt.x + Math.cos(t) * rr * 1.25;
+          const y = pt.y + Math.sin(t) * rr;
+          if (k === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
         ctx.stroke();
 
-        // Objective label pill
-        ctx.font = 'bold 9px Arial, sans-serif';
-        const tw = ctx.measureText(g.name).width;
-        ctx.fillStyle = 'rgba(244, 244, 245, 0.92)';
-        ctx.fillRect(pt.x - tw / 2 - 3, pt.y + 16, tw + 6, 12);
-        ctx.strokeStyle = g.color;
-        ctx.lineWidth = 0.8;
-        ctx.strokeRect(pt.x - tw / 2 - 3, pt.y + 16, tw + 6, 12);
-        ctx.fillStyle = g.color;
+        ctx.font = font(700, 8 * ls);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(g.name, pt.x, pt.y + 22);
-        ctx.restore();
+        haloText(ctx, g.name, pt.x, pt.y - r + 12 * ls, MAP.ink, 3 * ls);
       }
     }
     ctx.restore();
   }
 
   // =========================================================================
-  // 11.6 NATO TARGET REFERENCE POINTS (TRPs)
-  // Pre-planned artillery registration points (crosshair with open ring & tactical badge)
+  // 11.6 TARGET REFERENCE POINTS (TRPs)
   // =========================================================================
   private renderTargetReferencePoints(ctx: CanvasRenderingContext2D, trps: TargetReferencePoint[]) {
+    const s = this.symbolScale();
     ctx.save();
     for (const trp of trps) {
       const { x, y } = trp.position;
       const isHovered = this.hoveredTrpId === trp.id;
       const isDragging = this.draggingTrpId === trp.id;
+      const color = isDragging || isHovered ? '#0b5ea8' : MAP.ink;
 
       ctx.save();
       ctx.translate(x, y);
+      ctx.scale(s, s);
 
-      // Interactive hover & dragging visual feedback
-      if (isDragging) {
-        // Dragging halo with tactical dashed radius
-        ctx.strokeStyle = '#0284c7';
-        ctx.lineWidth = 1.8;
-        ctx.setLineDash([4, 3]);
+      if (isDragging || isHovered) {
+        ctx.fillStyle = 'rgba(11, 94, 168, 0.1)';
+        ctx.strokeStyle = 'rgba(11, 94, 168, 0.7)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash(isDragging ? [3, 2] : []);
         ctx.beginPath();
-        ctx.arc(0, 0, 22, 0, Math.PI * 2);
+        ctx.arc(0, 0, 14, 0, Math.PI * 2);
+        ctx.fill();
         ctx.stroke();
         ctx.setLineDash([]);
-
-        ctx.fillStyle = 'rgba(2, 132, 199, 0.12)';
-        ctx.beginPath();
-        ctx.arc(0, 0, 22, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (isHovered) {
-        // Subtle hover ring
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(0, 0, 18, 0, Math.PI * 2);
-        ctx.stroke();
       }
 
-      // Outer crosshair ticks (NATO Standard TRP)
-      ctx.strokeStyle = isDragging ? '#0284c7' : '#0f172a';
-      ctx.lineWidth = isDragging ? 2.0 : 1.6;
-      ctx.beginPath();
-      // Horizontal crosshair
-      ctx.moveTo(-13, 0); ctx.lineTo(-5, 0);
-      ctx.moveTo(5, 0); ctx.lineTo(13, 0);
-      // Vertical crosshair
-      ctx.moveTo(0, -13); ctx.lineTo(0, -5);
-      ctx.moveTo(0, 5); ctx.lineTo(0, 13);
-      ctx.stroke();
-
-      // Center open ring
+      // Point graphic: open circle with cross ticks
+      ctx.strokeStyle = color;
       ctx.lineWidth = 1.2;
       ctx.beginPath();
-      ctx.arc(0, 0, 5, 0, Math.PI * 2);
+      ctx.arc(0, 0, 4.5, 0, Math.PI * 2);
+      ctx.moveTo(-9, 0); ctx.lineTo(-4.5, 0);
+      ctx.moveTo(4.5, 0); ctx.lineTo(9, 0);
+      ctx.moveTo(0, -9); ctx.lineTo(0, -4.5);
+      ctx.moveTo(0, 4.5); ctx.lineTo(0, 9);
       ctx.stroke();
 
-      // Center pinpoint dot
-      ctx.fillStyle = isDragging ? '#0284c7' : '#0f172a';
-      ctx.beginPath();
-      ctx.arc(0, 0, 1.4, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Tactical Callout Badge [ TRP 01 ]
-      const label = trp.code;
-      ctx.font = 'bold 8.5px Arial, sans-serif';
-      const tw = ctx.measureText(label).width;
-      const boxW = tw + 8;
-      const boxH = 13;
-      const boxX = 8;
-      const boxY = -17;
-
-      ctx.fillStyle = isDragging ? '#0284c7' : '#0f172a';
-      ctx.fillRect(boxX, boxY, boxW, boxH);
-      ctx.strokeStyle = isDragging ? '#38bdf8' : (isHovered ? '#38bdf8' : '#64748b');
-      ctx.lineWidth = 0.8;
-      ctx.strokeRect(boxX, boxY, boxW, boxH);
-
-      ctx.fillStyle = '#ffffff';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(label, boxX + boxW / 2, boxY + boxH / 2);
-
-      // Name below badge
-      ctx.font = 'bold 7px Arial, sans-serif';
-      ctx.fillStyle = isDragging ? '#0284c7' : '#1e3a8a';
       ctx.textAlign = 'left';
-      ctx.fillText(`${trp.name}`, boxX, boxY + boxH + 8);
-
-      // Live coordinates display while dragging
-      if (isDragging) {
-        ctx.font = 'bold 6.5px monospace';
-        ctx.fillStyle = '#0369a1';
-        ctx.fillText(`(${Math.round(x)}, ${Math.round(y)})`, boxX, boxY + boxH + 17);
+      ctx.textBaseline = 'alphabetic';
+      ctx.font = font(700, 7.5);
+      haloText(ctx, trp.code, 8, -5, color);
+      if (isHovered || isDragging) {
+        ctx.font = font(500, 6.5);
+        haloText(ctx, trp.name, 8, 4, MAP.inkMuted, 2.2);
       }
-
+      if (isDragging) {
+        ctx.font = font(500, 6.5, FONT.mono);
+        haloText(ctx, `${Math.round(x)}, ${Math.round(y)}`, 8, 12, '#0b5ea8', 2.2);
+      }
       ctx.restore();
     }
     ctx.restore();
@@ -3893,694 +3407,375 @@ export class SandtableRenderer {
       }
     }
   }
+  // Counter-scale for upright symbols & labels: legible when zoomed out, restrained when zoomed in
+  private symbolScale(): number {
+    return Math.min(1.7, Math.max(0.45, Math.pow(this.zoom, -0.62)));
+  }
 
-  // Contact Marker (Hostile Red Diamond with ? for Fog of War)
+  // Contact marker: APP-6 dashed (suspect) hostile frame for unidentified fog-of-war contacts
   private renderContactDiamond(ctx: CanvasRenderingContext2D, unit: Unit, isHovered: boolean) {
+    const s = this.symbolScale();
     ctx.save();
     ctx.translate(unit.position.x, unit.position.y);
+    ctx.scale(s, s);
 
-    const size = 8.5;
-    ctx.fillStyle = 'rgba(204, 17, 17, 0.88)';
-    ctx.strokeStyle = isHovered ? '#fef08a' : '#ffffff';
-    ctx.lineWidth = 1.1;
-
-    ctx.beginPath();
-    ctx.moveTo(0, -size);
-    ctx.lineTo(size, 0);
-    ctx.lineTo(0, size);
-    ctx.lineTo(-size, 0);
-    ctx.closePath();
+    tracePathFrame(ctx, 'hostile');
+    ctx.fillStyle = 'rgba(255, 128, 128, 0.35)';
     ctx.fill();
+    ctx.setLineDash([2.5, 2]);
+    ctx.strokeStyle = isHovered ? MAP.select : MAP.hostileLine;
+    ctx.lineWidth = 1.3;
     ctx.stroke();
+    ctx.setLineDash([]);
 
-    // Bold Question Mark
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 8.5px Arial, sans-serif';
+    ctx.font = font(700, 10);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    ctx.fillStyle = MAP.hostileLine;
     ctx.fillText('?', 0, 0.5);
 
-    // Contact text
-    ctx.font = 'bold 6.5px Arial, sans-serif';
-    ctx.fillStyle = '#cc1111';
+    ctx.font = font(600, 6.5);
     ctx.textBaseline = 'top';
-    ctx.fillText('CONTACT', 0, size + 1.5);
-    ctx.fillStyle = '#4b5563';
-    ctx.fillText(unit.estimatedStrength || 'EST. UNKNOWN', 0, size + 8);
-
+    const tag = unit.estimatedStrength ? `CONTACT · ${unit.estimatedStrength}` : 'CONTACT';
+    haloText(ctx, tag, 0, DIAMOND_R + 2, MAP.hostileLine);
     ctx.restore();
   }
 
   // =========================================================================
-  // 12. MILITARY UNIT CHITS (EXACT NATO / WEST POINT SYMBOLOGY)
-  // French Royal Blue (#0033cc) vs Allied Red (#cc1111)
-  // Upright, sharp typography matching media_1789975155849.png
+  // 12. MILITARY UNITS — APP-6 symbology on a light topographic sheet
+  // Pass 1: true-scale formation footprints (rotated with heading)
+  // Pass 2: upright, zoom-compensated symbols with designation, bars and one status chip
   // =========================================================================
   private renderMilitaryUnits(
     ctx: CanvasRenderingContext2D,
     state: SimulationState,
     hoveredUnitId: string | null
   ) {
+    const visible: { unit: Unit; matchesFilter: boolean }[] = [];
+    const contacts: Unit[] = [];
+
     for (const unit of state.units) {
-      // 1. Remove shattered or completely destroyed units from the map
       if (unit.status === 'shattered' || unit.strength <= 0) continue;
 
-      // 2. Fog of War detection check for enemy units
       if (state.fogOfWarEnabled && unit.faction !== state.playerFaction) {
-        if (unit.detectionState === 'hidden') {
-          continue; // Completely shrouded in fog of war!
-        }
+        if (unit.detectionState === 'hidden') continue;
         if (unit.detectionState === 'contact') {
-          this.renderContactDiamond(ctx, unit, hoveredUnitId === unit.id);
-          continue; // Vague contact marker
+          contacts.push(unit);
+          continue;
         }
       }
 
-      // 3. Troop Filter Check (Friendly player forces only)
       let matchesFilter = true;
       if (this.activeFilter !== 'all') {
-        if (unit.faction !== state.playerFaction) {
+        if (this.activeFilter === 'french' || this.activeFilter === 'allies') {
+          matchesFilter = unit.faction === this.activeFilter;
+        } else if (unit.faction !== state.playerFaction) {
           matchesFilter = false;
         } else if (this.activeFilter === 'infantry') {
           matchesFilter = unit.type === 'infantry' || unit.type === 'guard';
-        } else if (this.activeFilter === 'cavalry') {
-          matchesFilter = unit.type === 'cavalry';
-        } else if (this.activeFilter === 'artillery') {
-          matchesFilter = unit.type === 'artillery';
-        } else if (this.activeFilter === 'headquarters') {
-          matchesFilter = unit.type === 'headquarters';
+        } else {
+          matchesFilter = unit.type === this.activeFilter;
         }
       }
+      visible.push({ unit, matchesFilter });
+    }
 
-      // 4. Health & Depletion Visual Metrics
-      const healthRatio = Math.max(0, Math.min(1, unit.strength / Math.max(1, unit.initialStrength)));
-      const isDepleted = healthRatio < 0.50;
-      const isCritical = healthRatio < 0.25;
-      const isLowAmmo = unit.ammo !== undefined && (unit.ammo / Math.max(1, unit.maxAmmo)) < 0.20;
-      const isRouting = unit.status === 'routing';
-      const isWavering = unit.status === 'wavering' || (unit.morale <= 50 && unit.morale > 25 && !isRouting);
+    const isSelected = (u: Unit) => !!state.selectedUnitIds?.includes(u.id) || u.id === state.selectedUnitId;
 
-      const isSelected = state.selectedUnitIds?.includes(unit.id) || unit.id === state.selectedUnitId;
-      const isHovered = unit.id === hoveredUnitId;
-      const isFrench = unit.faction === 'french';
-
-      const primaryColor = isFrench ? '#0033cc' : '#cc1111';
-
+    // Pass 1 — footprints & combat effects (world scale)
+    for (const { unit, matchesFilter } of visible) {
       ctx.save();
-      ctx.translate(unit.position.x, unit.position.y);
-
-      // Visual Fading for Filter Dimming or Depleted Troops
-      let alpha = 1.0;
-      if (!matchesFilter) {
-        alpha = 0.20; // Dim non-filtered units
-      } else if (isDepleted) {
-        alpha = Math.max(0.42, 0.45 + 0.55 * healthRatio); // Weakened units visually fade out
-      }
-      ctx.globalAlpha = alpha;
-
-      // Rotated Unit Block (Orientation of battle line)
-      ctx.save();
-      ctx.rotate(unit.heading);
-
-      // Subtle Chit Drop Shadow
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
-      ctx.shadowBlur = 3;
-      ctx.shadowOffsetX = 1.5;
-      ctx.shadowOffsetY = 1.5;
-
-      // Draw exact physical footprint so array dimensions are always clear under the NATO chip
-      if (unit.type !== 'headquarters') {
-        ctx.fillStyle = isFrench ? 'rgba(0, 51, 204, 0.18)' : 'rgba(204, 17, 17, 0.18)';
-        ctx.strokeStyle = isFrench ? 'rgba(0, 51, 204, 0.45)' : 'rgba(204, 17, 17, 0.45)';
-        ctx.lineWidth = 0.8;
-        if (unit.type === 'artillery') {
-          const lw = 28;
-          const lh = 14;
-          ctx.fillRect(-lw / 2, -lh / 2, lw, lh);
-          ctx.strokeRect(-lw / 2, -lh / 2, lw, lh);
-          // Gun barrel ticks
-          ctx.fillStyle = isFrench ? '#1e3a8a' : '#991b1b';
-          for (let g = -4.5; g <= 4.5; g += 4.5) {
-            ctx.fillRect(lw / 2 - 1.5, g - 0.75, 4.5, 1.5);
-          }
-        } else if (unit.formation === 'line') {
-          const lw = 32;
-          const lh = 6;
-          ctx.fillRect(-lw / 2, -lh / 2, lw, lh);
-          ctx.strokeRect(-lw / 2, -lh / 2, lw, lh);
-        } else if (unit.formation === 'column') {
-          const cw = 8;
-          const ch = 22;
-          ctx.fillRect(-cw / 2, -ch / 2, cw, ch);
-          ctx.strokeRect(-cw / 2, -ch / 2, cw, ch);
-        } else if (unit.formation === 'square') {
-          ctx.fillRect(-9, -9, 18, 18);
-          ctx.strokeRect(-9, -9, 18, 18);
-        } else {
-          ctx.fillRect(-12, -4, 24, 8);
-          ctx.strokeRect(-12, -4, 24, 8);
-        }
-      }
-
-      // ==========================================
-      // NATO STANDARD OPERATIONAL COUNTER (Pure APP-6 Tabletop Standard)
-      // ==========================================
-      const isNatoMode = state.wargameSymbology === 'nato';
-      const isOpforDiamond = isNatoMode && !isFrench;
-
-      const natoW = unit.type === 'headquarters' ? 28 : 24;
-      const natoH = 14;
-
-      if (isOpforDiamond) {
-        // NATO APP-6 Hostile OPFOR Diamond
-        const halfW = 16;
-        const halfH = 16;
-
-        ctx.beginPath();
-        ctx.moveTo(0, -halfH);
-        ctx.lineTo(halfW, 0);
-        ctx.lineTo(0, halfH);
-        ctx.lineTo(-halfW, 0);
-        ctx.closePath();
-
-        ctx.fillStyle = primaryColor;
-        ctx.fill();
-
-        ctx.strokeStyle = isRouting
-          ? (this.animFrame % 20 < 10 ? '#dc2626' : '#f59e0b')
-          : '#ffffff';
-        ctx.lineWidth = isRouting ? 1.4 : 1.0;
-        if (isDepleted) {
-          ctx.setLineDash([3, 2]);
-        } else {
-          ctx.setLineDash([]);
-        }
-        ctx.stroke();
-      } else {
-        ctx.fillStyle = primaryColor;
-        ctx.fillRect(-natoW / 2, -natoH / 2, natoW, natoH);
-
-        // Border: Dashed if depleted, flashing red/amber if routing
-        ctx.strokeStyle = isRouting
-          ? (this.animFrame % 20 < 10 ? '#dc2626' : '#f59e0b')
-          : '#ffffff';
-        ctx.lineWidth = isRouting ? 1.4 : 1.0;
-        if (isDepleted) {
-          ctx.setLineDash([3, 2]); // Dashed border visually indicating depleted company ranks
-        } else {
-          ctx.setLineDash([]);
-        }
-        ctx.strokeRect(-natoW / 2, -natoH / 2, natoW, natoH);
-      }
-
-      // Critical damage diagonal warning stripes
-      if (isCritical) {
-        ctx.save();
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
-        ctx.lineWidth = 1.0;
-        ctx.setLineDash([]);
-        for (let x = -natoW / 2; x <= natoW / 2; x += 5) {
-          ctx.beginPath();
-          ctx.moveTo(x, -natoH / 2);
-          ctx.lineTo(x + 4, natoH / 2);
-          ctx.stroke();
-        }
-        ctx.restore();
-      }
-
-      ctx.shadowColor = 'transparent';
-      ctx.setLineDash([]);
-
-      // NATO Symbology inside chit
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.1;
-      if (unit.type === 'infantry' || unit.type === 'guard') {
-        // Infantry Cross (X)
-        ctx.beginPath();
-        ctx.moveTo(-natoW / 2 + 4, -natoH / 2 + 2.5);
-        ctx.lineTo(natoW / 2 - 4, natoH / 2 - 2.5);
-        ctx.moveTo(natoW / 2 - 4, -natoH / 2 + 2.5);
-        ctx.lineTo(-natoW / 2 + 4, natoH / 2 - 2.5);
-        ctx.stroke();
-        if (unit.type === 'guard') {
-          ctx.fillStyle = '#fde047';
-          ctx.beginPath();
-          ctx.arc(0, 0, 2.2, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      } else if (unit.type === 'cavalry') {
-        // Cavalry diagonal slash (/)
-        ctx.beginPath();
-        ctx.moveTo(-natoW / 2 + 4, natoH / 2 - 2.5);
-        ctx.lineTo(natoW / 2 - 4, -natoH / 2 + 2.5);
-        ctx.stroke();
-      } else if (unit.type === 'artillery') {
-        // Artillery symbol: solid projectile with carriage wheels
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(0, 0, 2.6, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 0.9;
-        ctx.beginPath();
-        ctx.arc(-5.5, 0, 2.2, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(5.5, 0, 2.2, 0, Math.PI * 2);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(-2.6, 0); ctx.lineTo(-5.5, 0);
-        ctx.moveTo(2.6, 0); ctx.lineTo(5.5, 0);
-        ctx.stroke();
-      } else if (unit.type === 'supply') {
-        ctx.beginPath();
-        ctx.moveTo(-natoW / 2 + 5, 0); ctx.lineTo(natoW / 2 - 5, 0);
-        ctx.moveTo(0, -natoH / 2 + 3); ctx.lineTo(0, natoH / 2 - 3);
-        ctx.stroke();
-      } else {
-        // HQ flagpole
-        ctx.beginPath();
-        ctx.moveTo(-natoW / 2 + 5, natoH / 2 - 3);
-        ctx.lineTo(-natoW / 2 + 5, -natoH / 2 + 3);
-        ctx.lineTo(0, -natoH / 2 + 6);
-        ctx.lineTo(-natoW / 2 + 5, 0);
-        ctx.stroke();
-      }
-
-      // Forward march direction indicator pip
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.moveTo(natoW / 2 + 3.5, 0);
-      ctx.lineTo(natoW / 2 - 0.5, -2.5);
-      ctx.lineTo(natoW / 2 - 0.5, 2.5);
-      ctx.closePath();
-      ctx.fill();
-
-      // Entrenchment abatis if holding
-      if (unit.status === 'holding') {
-        ctx.save();
-        ctx.strokeStyle = '#15803d';
-        ctx.lineWidth = 1.8;
-        const frontX = natoW / 2 + 4;
-        const spanY = natoH / 2 + 2;
-
-        ctx.beginPath();
-        ctx.moveTo(frontX, -spanY);
-        for (let y = -spanY; y <= spanY; y += 8) {
-          ctx.lineTo(frontX + 3.5, y + 4);
-          ctx.lineTo(frontX, y + 8);
-        }
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      // Forward Skirmish Screen Picket Line (18px ahead along heading)
-      if (unit.isSkirmishScreenActive) {
-        ctx.save();
-        const screenX = natoW / 2 + 16;
-        const screenSpanY = natoH / 2 + 6;
-        ctx.strokeStyle = '#0d9488'; // Teal tactical screen line
-        ctx.lineWidth = 1.2;
-        ctx.setLineDash([3, 3]);
-        ctx.beginPath();
-        ctx.moveTo(screenX, -screenSpanY);
-        ctx.lineTo(screenX, screenSpanY);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // Picket markers along the screening line
-        ctx.fillStyle = '#0d9488';
-        for (let py = -screenSpanY; py <= screenSpanY; py += 7) {
-          ctx.beginPath();
-          ctx.arc(screenX, py, 1.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.restore();
-      }
-
-      // Supply Unit Logistical Replenishment Footprint
-      if (unit.type === 'supply') {
-        ctx.save();
-        const supplyR = unit.supplyRadius || 180;
-        ctx.strokeStyle = 'rgba(22, 163, 74, 0.45)';
-        ctx.lineWidth = 1.0;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.arc(0, 0, supplyR, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = 'rgba(22, 163, 74, 0.03)';
-        ctx.fill();
-        ctx.restore();
-      }
-
-      // Clean NATO Directional Fire Sector & Frontage Volley Flash if engaging
-      if (unit.status === 'engaging' && unit.ammo !== undefined && unit.ammo > 0) {
-        ctx.save();
-        const frontX = natoW / 2 + 1;
-        const spanY = natoH / 2;
-        const fireArcRange = Math.min(85, unit.range || 100);
-        const arcHalfAngle = 0.28; // ~16 degrees half-width (32 deg sector)
-
-        // 1. Directional Tactical Sector Cone
-        const xFar = frontX + fireArcRange * Math.cos(arcHalfAngle);
-        const yTop = -spanY * 0.5 - fireArcRange * Math.sin(arcHalfAngle);
-        const yBottom = spanY * 0.5 + fireArcRange * Math.sin(arcHalfAngle);
-
-        ctx.fillStyle = 'rgba(245, 158, 11, 0.04)';
-        ctx.beginPath();
-        ctx.moveTo(frontX, -spanY * 0.5);
-        ctx.lineTo(xFar, yTop);
-        ctx.arcTo(frontX + fireArcRange + 4, 0, xFar, yBottom, fireArcRange);
-        ctx.lineTo(frontX, spanY * 0.5);
-        ctx.closePath();
-        ctx.fill();
-
-        // 2. Crisp dashed sector boundary rays
-        ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
-        ctx.lineWidth = 0.8;
-        ctx.setLineDash([3, 4]);
-        ctx.beginPath();
-        ctx.moveTo(frontX, -spanY * 0.5);
-        ctx.lineTo(xFar, yTop);
-        ctx.moveTo(frontX, spanY * 0.5);
-        ctx.lineTo(xFar, yBottom);
-        ctx.stroke();
-
-        // 3. Frontline Platoon Volley Pulse
-        ctx.setLineDash([]);
-        const pulse = 0.5 + 0.5 * Math.sin((Date.now() + unit.id.charCodeAt(0) * 120) / 140);
-        ctx.strokeStyle = `rgba(254, 240, 138, ${0.75 * pulse})`;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(frontX + 1, -spanY);
-        ctx.lineTo(frontX + 1, spanY);
-        ctx.stroke();
-
-        // 4. Clean NATO micro-tracers along firing lines
-        if (pulse > 0.6) {
-          ctx.strokeStyle = `rgba(254, 240, 138, ${0.9 * pulse})`;
-          ctx.lineWidth = 1.0;
-          for (let y = -spanY * 0.7; y <= spanY * 0.7; y += 6) {
-            const startDist = frontX + 3 + (Math.random() * 6);
-            const tracerLen = 6 + Math.random() * 8;
-            ctx.beginPath();
-            ctx.moveTo(startDist, y);
-            ctx.lineTo(startDist + tracerLen, y);
-            ctx.stroke();
-          }
-        }
-
-        ctx.restore();
-      }
-
-      // Melee Hand-to-Hand Contact Box
-      if (unit.status === 'melee') {
-        ctx.save();
-        const pulse = 0.5 + 0.5 * Math.sin(this.animFrame / 4);
-        ctx.strokeStyle = `rgba(185, 28, 28, ${0.85 * pulse})`;
-        ctx.lineWidth = 2.0;
-        ctx.strokeRect(-natoW / 2 - 3, -natoH / 2 - 3, natoW + 6, natoH + 6);
-        ctx.restore();
-      }
-
-      // Charge Shock Chevrons surging forward ahead of the unit
-      if (unit.status === 'charging') {
-        ctx.save();
-        ctx.strokeStyle = '#ea580c';
-        ctx.lineWidth = 1.6;
-        const frontX = natoW / 2 + 4;
-        const pulseX = (this.animFrame % 14) * 0.7;
-        for (let i = 0; i < 2; i++) {
-          const cx = frontX + i * 5 + pulseX;
-          ctx.beginPath();
-          ctx.moveTo(cx, -5.5);
-          ctx.lineTo(cx + 4, 0);
-          ctx.lineTo(cx, 5.5);
-          ctx.stroke();
-        }
-        ctx.restore();
-      }
-
-      ctx.restore(); // Restore orientation for strictly upright typography!
-
-      const drawW = natoW;
-      const drawH = natoH;
-
-      // Selection Halo
-      if (isSelected || isHovered) {
-        ctx.strokeStyle = isSelected ? '#eab308' : '#38bdf8';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(-drawW / 2 - 2.5, -drawH / 2 - 2.5, drawW + 5, drawH + 5);
-      }
-
-      // Tactical SITREP [LOCATE] Pulsing Target Reticle & Radar Beacon
-      if (unit.id === state.locatedUnitId && state.locatedUnitHighlightUntil && Date.now() < state.locatedUnitHighlightUntil) {
-        ctx.save();
-        const pulseCycle = (this.animFrame % 40) / 40; // 0 to 1
-        const rWave = 24 + pulseCycle * 32;
-        const waveAlpha = Math.max(0, 1 - pulseCycle);
-
-        // Expanding radar circle
-        ctx.strokeStyle = `rgba(239, 68, 68, ${waveAlpha})`;
-        ctx.lineWidth = 2.0;
-        ctx.beginPath();
-        ctx.arc(0, 0, rWave, 0, Math.PI * 2);
-        ctx.stroke();
-
-        // Inner solid focus ring
-        ctx.strokeStyle = '#f59e0b';
-        ctx.lineWidth = 2.0;
-        ctx.beginPath();
-        ctx.arc(0, 0, 22, 0, Math.PI * 2);
-        ctx.stroke();
-
-        // 4 High-contrast Tactical Crosshair ticks
-        ctx.strokeStyle = '#ef4444';
-        ctx.lineWidth = 2.2;
-        ctx.beginPath();
-        ctx.moveTo(0, -32); ctx.lineTo(0, -18);
-        ctx.moveTo(0, 18);  ctx.lineTo(0, 32);
-        ctx.moveTo(-32, 0); ctx.lineTo(-18, 0);
-        ctx.moveTo(18, 0);  ctx.lineTo(32, 0);
-        ctx.stroke();
-
-        // Military Alert Tag
-        ctx.fillStyle = '#dc2626';
-        ctx.font = 'bold 9px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('⚡ CONTACT LOCATED', 0, -36);
-
-        ctx.restore();
-      }
-
-      // Troop Filter Pulsing Focus Brackets
-      if (matchesFilter && this.activeFilter !== 'all') {
-        ctx.save();
-        const pulse = Math.sin(this.animFrame / 12) * 1.5;
-        const bw = drawW + 7 + pulse;
-        const bh = drawH + 7 + pulse;
-        ctx.strokeStyle = '#06b6d4';
-        ctx.lineWidth = 1.6;
-        const clen = 4;
-        ctx.beginPath();
-        ctx.moveTo(-bw/2, -bh/2 + clen); ctx.lineTo(-bw/2, -bh/2); ctx.lineTo(-bw/2 + clen, -bh/2);
-        ctx.moveTo(bw/2 - clen, -bh/2); ctx.lineTo(bw/2, -bh/2); ctx.lineTo(bw/2, -bh/2 + clen);
-        ctx.moveTo(bw/2, bh/2 - clen); ctx.lineTo(bw/2, bh/2); ctx.lineTo(bw/2 - clen, bh/2);
-        ctx.moveTo(-bw/2 + clen, bh/2); ctx.lineTo(-bw/2, bh/2); ctx.lineTo(-bw/2, bh/2 - clen);
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      // Reset drop shadow to avoid blurred unit text or borders
-      ctx.shadowColor = 'transparent';
-      ctx.shadowBlur = 0;
-      ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 0;
-
-      // Echelon Markings above unit block (****, ***, **, GD, [BTY])
-      let echelon = 'XX';
-      if (unit.type === 'artillery') echelon = 'II [BTY]';
-      else if (unit.type === 'headquarters') echelon = 'XXXX';
-      else if (unit.corps.includes('Corps') || unit.corps.includes('Reserve') || unit.corps.includes('Wing')) echelon = 'XXX';
-      else if (unit.type === 'guard') echelon = 'GD';
-
-      ctx.font = 'bold 8px Arial, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-      ctx.lineWidth = 2.0;
-      ctx.lineJoin = 'round';
-      ctx.strokeText(echelon, 0, -drawH / 2 - 1.5);
-      ctx.fillStyle = primaryColor;
-      ctx.fillText(echelon, 0, -drawH / 2 - 1.5);
-
-      // EXTERNAL UNIT LABELS (Razor-sharp, authentic military wargame scale)
-      ctx.font = 'bold 9.5px Arial, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      const labelText = isNatoMode
-        ? (isFrench ? `[BLUFOR] ${unit.name}` : `[OPFOR] ${unit.name}`)
-        : unit.name;
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-      ctx.lineWidth = 2.4;
-      ctx.lineJoin = 'round';
-      ctx.strokeText(labelText, 0, drawH / 2 + 2);
-      ctx.fillStyle = '#0f172a';
-      ctx.fillText(labelText, 0, drawH / 2 + 2);
-
-      // Status Indicators (Ammo, Combat, Entrenching, Delivering, Routing, Depleted)
-      let statusY = drawH / 2 + 13;
-      ctx.font = 'bold 7px Arial, sans-serif';
-
-      const drawStatusBadge = (text: string, fill: string) => {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-        ctx.lineWidth = 2.0;
-        ctx.lineJoin = 'round';
-        ctx.strokeText(text, 0, statusY);
-        ctx.fillStyle = fill;
-        ctx.fillText(text, 0, statusY);
-        statusY += 8.5;
-      };
-      
-      if (isRouting) {
-        drawStatusBadge('ROUTING', '#b91c1c');
-      } else if (isWavering) {
-        drawStatusBadge('WAVERING', '#d97706');
-      }
-
-      if (isCritical) {
-        drawStatusBadge('CRITICAL [-75%]', '#dc2626');
-      } else if (isDepleted) {
-        drawStatusBadge('DEPLETED [-50%]', '#ea580c');
-      }
-
-      if (isLowAmmo) {
-        drawStatusBadge('LOW AMMO', '#dc2626');
-      }
-      
-      if (unit.status === 'melee') {
-        ctx.font = 'bold 7.5px Arial, sans-serif';
-        drawStatusBadge('CLOSE COMBAT', '#7f1d1d');
-        ctx.font = 'bold 7px Arial, sans-serif';
-      } else if (unit.status === 'charging') {
-        ctx.font = 'bold 7.5px Arial, sans-serif';
-        drawStatusBadge('CHARGING', '#ea580c');
-        ctx.font = 'bold 7px Arial, sans-serif';
-      } else if (unit.status === 'entrenching') {
-        drawStatusBadge('ENTRENCHING', '#ca8a04');
-      } else if (unit.currentOrder?.type === 'bombard' && unit.currentOrder.status === 'executing') {
-        drawStatusBadge('BOMBARDING [CFF]', '#ea580c');
-      } else if (unit.currentOrder?.status === 'delivering') {
-        drawStatusBadge('DISPATCH PENDING', '#2563eb');
-      }
-
-      if (unit.isEncircled) {
-        drawStatusBadge('ISOLATED', '#dc2626');
-      }
-
-      if (unit.type === 'artillery') {
-        if (unit.canisterActive) {
-          drawStatusBadge('CANISTER [DEFENSE]', '#ea580c');
-        } else if (unit.directDefenseActive || (unit.status === 'engaging' && unit.currentOrder?.type !== 'bombard')) {
-          drawStatusBadge('DIRECT FIRE [DEFENSE]', '#b45309');
-        }
-      }
-
-      if (unit.isGarrisoned) {
-        ctx.fillStyle = '#059669';
-        ctx.fillText('GARRISON [80%]', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.isWadingRiver) {
-        ctx.fillStyle = '#0284c7';
-        ctx.fillText('WADING STREAM [-75%]', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.isForcedMarch) {
-        ctx.fillStyle = '#b45309';
-        ctx.fillText('FORCED MARCH', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.volleyReady) {
-        ctx.fillStyle = '#b45309';
-        ctx.fillText('VOLLEY READY', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.suppressingTargetId || unit.currentOrder?.type === 'suppress') {
-        ctx.fillStyle = '#c2410c';
-        ctx.fillText('COVERING FIRE', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.isEnfiladed) {
-        ctx.fillStyle = '#b91c1c';
-        ctx.fillText('ENFILADED [CROSSFIRE]', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.observerForBatteryId) {
-        ctx.fillStyle = '#0284c7';
-        ctx.fillText('FORWARD OBSERVER [C2]', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.ammo !== undefined && unit.ammo <= 0) {
-        drawStatusBadge('OUT OF AMMO', '#7f1d1d');
-        ctx.fillStyle = '#991b1b';
-        ctx.fillText('[MELEE ONLY]', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.isSkirmishScreenActive) {
-        ctx.fillStyle = '#0f766e';
-        ctx.fillText('SKIRMISH SCREEN', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.isGrandBatteryLeader) {
-        drawStatusBadge('GB LEADER', '#b45309');
-      } else if (unit.grandBatteryGroupId) {
-        ctx.fillStyle = '#b45309';
-        ctx.fillText('GRAND BATTERY', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.isResupplying) {
-        ctx.fillStyle = '#15803d';
-        ctx.fillText('RESUPPLYING (+CLASS V)', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.gunsDisabled && unit.gunsDisabled > 0) {
-        ctx.fillStyle = '#dc2626';
-        ctx.fillText(`GUNS KO: -${unit.gunsDisabled}`, 0, statusY);
-        statusY += 7.5;
-      }
-      
-      // In Combat Clashing Indicator (Clean crossed tactical strokes on right side of unit block)
-      if (unit.status === 'melee' || unit.status === 'engaging') {
-        const isMelee = unit.status === 'melee';
-        ctx.save();
-        ctx.translate(drawW / 2 + 7, 0);
-        ctx.strokeStyle = isMelee ? '#7f1d1d' : '#b91c1c';
-        ctx.lineWidth = 1.2;
-        const s = isMelee ? 3.5 : 2.5;
-        ctx.beginPath();
-        ctx.moveTo(-s, -s); ctx.lineTo(s, s);
-        ctx.moveTo(-s, s); ctx.lineTo(s, -s);
-        ctx.stroke();
-        ctx.restore();
-      }
-
+      ctx.globalAlpha = matchesFilter ? 1 : 0.25;
+      this.renderUnitFootprint(ctx, unit, unit.faction === state.playerFaction);
       ctx.restore();
     }
+
+    for (const unit of contacts) {
+      this.renderContactDiamond(ctx, unit, hoveredUnitId === unit.id);
+    }
+
+    // Pass 2 — symbols. Selected & hovered draw last so they sit on top of neighbours.
+    const rank = (u: Unit) => (isSelected(u) ? 2 : u.id === hoveredUnitId ? 1 : 0);
+    visible.sort((a, b) => rank(a.unit) - rank(b.unit));
+    for (const { unit, matchesFilter } of visible) {
+      this.renderUnitSymbol(ctx, state, unit, matchesFilter, isSelected(unit), unit.id === hoveredUnitId);
+    }
+  }
+
+  private footprintSize(unit: Unit): { lw: number; lh: number } {
+    if (unit.type === 'headquarters') return { lw: 12, lh: 8 };
+    if (unit.type === 'artillery') return { lw: 28, lh: 12 };
+    switch (unit.formation) {
+      case 'line': return { lw: 34, lh: 6 };
+      case 'column': return { lw: 10, lh: 22 };
+      case 'square': return { lw: 18, lh: 18 };
+      default: return { lw: 24, lh: 8 };
+    }
+  }
+
+  private renderUnitFootprint(ctx: CanvasRenderingContext2D, unit: Unit, isFriendly: boolean) {
+    const line = isFriendly ? MAP.friendLine : MAP.hostileLine;
+    const { lw, lh } = this.footprintSize(unit);
+    const hair = 1 / this.zoom;
+    const now = performance.now();
+
+    ctx.translate(unit.position.x, unit.position.y);
+    ctx.rotate(unit.heading);
+
+    // Formation footprint — actual frontage & depth on the ground
+    ctx.fillStyle = isFriendly ? 'rgba(11, 94, 168, 0.16)' : 'rgba(194, 39, 45, 0.16)';
+    ctx.strokeStyle = isFriendly ? 'rgba(11, 94, 168, 0.55)' : 'rgba(194, 39, 45, 0.55)';
+    ctx.lineWidth = hair;
+    ctx.fillRect(-lw / 2, -lh / 2, lw, lh);
+    ctx.strokeRect(-lw / 2, -lh / 2, lw, lh);
+
+    // Facing tick on the front edge
+    ctx.fillStyle = line;
+    ctx.beginPath();
+    ctx.moveTo(lw / 2 + 4, 0);
+    ctx.lineTo(lw / 2, -2.6);
+    ctx.lineTo(lw / 2, 2.6);
+    ctx.closePath();
+    ctx.fill();
+
+    // Field fortification (holding): APP-6 style toothed line along the front
+    if (unit.status === 'holding' || unit.status === 'entrenching') {
+      ctx.strokeStyle = '#57534e';
+      ctx.lineWidth = Math.max(hair, 1);
+      const fx = lw / 2 + 2;
+      const span = Math.max(lh / 2 + 3, 8);
+      ctx.beginPath();
+      ctx.moveTo(fx, -span);
+      ctx.lineTo(fx, span);
+      for (let y = -span + 2; y <= span - 1; y += 4) {
+        ctx.moveTo(fx, y);
+        ctx.lineTo(fx + 2.5, y + 1);
+      }
+      ctx.stroke();
+    }
+
+    // Skirmish screen: dotted picket line ahead of the formation
+    if (unit.isSkirmishScreenActive) {
+      const sx = lw / 2 + 14;
+      const span = Math.max(lh / 2 + 6, 12);
+      ctx.fillStyle = 'rgba(13, 148, 136, 0.85)';
+      for (let y = -span; y <= span; y += 5) {
+        ctx.beginPath();
+        ctx.arc(sx, y, 1.1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Sustainment radius
+    if (unit.type === 'supply') {
+      ctx.strokeStyle = 'rgba(21, 128, 61, 0.45)';
+      ctx.lineWidth = hair;
+      ctx.setLineDash([6 / this.zoom, 5 / this.zoom]);
+      ctx.beginPath();
+      ctx.arc(0, 0, unit.supplyRadius || 180, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Direct fire sector while engaging
+    if (unit.status === 'engaging' && unit.ammo > 0) {
+      const fx = lw / 2 + 1;
+      const rng = Math.min(85, unit.range || 100);
+      const half = 0.3;
+      ctx.fillStyle = 'rgba(234, 88, 12, 0.07)';
+      ctx.strokeStyle = 'rgba(234, 88, 12, 0.45)';
+      ctx.lineWidth = hair;
+      ctx.beginPath();
+      ctx.moveTo(fx, -lh / 4);
+      ctx.arc(fx, 0, rng, -half, half);
+      ctx.lineTo(fx, lh / 4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Volley flicker along the front
+      const pulse = 0.5 + 0.5 * Math.sin((now + unit.id.charCodeAt(0) * 120) / 140);
+      ctx.strokeStyle = `rgba(234, 88, 12, ${0.25 + 0.6 * pulse})`;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(fx + 1, -lh / 2);
+      ctx.lineTo(fx + 1, lh / 2);
+      ctx.stroke();
+    }
+
+    // Charge: chevrons surging forward
+    if (unit.status === 'charging') {
+      ctx.strokeStyle = '#ea580c';
+      ctx.lineWidth = 1.4;
+      const off = ((now / 60) % 10) * 0.6;
+      for (let i = 0; i < 2; i++) {
+        const cx = lw / 2 + 5 + i * 5 + off;
+        ctx.beginPath();
+        ctx.moveTo(cx, -5);
+        ctx.lineTo(cx + 4, 0);
+        ctx.lineTo(cx, 5);
+        ctx.stroke();
+      }
+    }
+  }
+
+  private unitStatusChip(unit: Unit): { text: string; color: string } | null {
+    const ratioAmmo = unit.ammo / Math.max(1, unit.maxAmmo);
+    if (unit.status === 'routing') return { text: 'ROUTING', color: '#b91c1c' };
+    if (unit.status === 'melee') return { text: 'MELEE', color: '#7f1d1d' };
+    if (unit.status === 'charging') return { text: 'CHARGING', color: '#c2410c' };
+    if (unit.status === 'wavering' || (unit.morale <= 50 && unit.morale > 25)) return { text: 'WAVERING', color: '#b45309' };
+    if (unit.ammo !== undefined && unit.ammo <= 0) return { text: 'NO AMMO', color: '#7f1d1d' };
+    if (unit.isEncircled) return { text: 'ISOLATED', color: '#b91c1c' };
+    if (unit.isEnfiladed) return { text: 'ENFILADED', color: '#b91c1c' };
+    if (unit.currentOrder?.type === 'bombard' && unit.currentOrder.status === 'executing') return { text: 'FIRE MISSION', color: '#c2410c' };
+    if (unit.canisterActive) return { text: 'CANISTER', color: '#c2410c' };
+    if (unit.status === 'entrenching') return { text: 'DIGGING IN', color: '#78716c' };
+    if (unit.currentOrder?.status === 'delivering') return { text: 'ORDER EN ROUTE', color: '#1d4ed8' };
+    if (unit.ammo !== undefined && ratioAmmo < 0.2) return { text: 'LOW AMMO', color: '#b45309' };
+    if (unit.isResupplying) return { text: 'RESUPPLY', color: '#15803d' };
+    if (unit.isForcedMarch) return { text: 'FORCED MARCH', color: '#78716c' };
+    if (unit.isWadingRiver) return { text: 'FORDING', color: '#2f6fb3' };
+    if (unit.isGarrisoned) return { text: 'GARRISON', color: '#15803d' };
+    return null;
+  }
+
+  private renderUnitSymbol(
+    ctx: CanvasRenderingContext2D,
+    state: SimulationState,
+    unit: Unit,
+    matchesFilter: boolean,
+    isSelected: boolean,
+    isHovered: boolean
+  ) {
+    const s = this.symbolScale();
+    const isFriendly = unit.faction === state.playerFaction;
+    const isNatoMode = state.wargameSymbology === 'nato';
+    const identity: SymbolIdentity = isNatoMode && !isFriendly ? 'hostile' : 'friend';
+    const fill = isNatoMode
+      ? undefined
+      : unit.faction === 'french' ? '#9fb8f0' : '#f2a7a7';
+    const { hw, hh } = frameExtents(identity);
+    const emphasis = isSelected || isHovered;
+    const now = performance.now();
+
+    ctx.save();
+    ctx.translate(unit.position.x, unit.position.y);
+    ctx.scale(s, s);
+    ctx.globalAlpha = matchesFilter ? 1 : 0.28;
+
+    // Soft offset shadow (cheaper and crisper than shadowBlur)
+    ctx.save();
+    ctx.translate(0.8, 1.2);
+    tracePathFrame(ctx, identity);
+    ctx.fillStyle = 'rgba(28, 25, 23, 0.22)';
+    ctx.fill();
+    ctx.restore();
+
+    drawUnitSymbol(ctx, unit, identity, { fill });
+
+    // Routing: blinking warning outline
+    if (unit.status === 'routing' && Math.floor(now / 300) % 2 === 0) {
+      ctx.save();
+      ctx.scale(1.28, 1.28);
+      tracePathFrame(ctx, identity);
+      ctx.restore();
+      ctx.strokeStyle = '#dc2626';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    }
+
+    // Selection brackets / hover outline
+    if (emphasis) {
+      const bx = hw + 4;
+      const by = hh + 4;
+      const c = 4.5;
+      ctx.strokeStyle = isSelected ? MAP.select : 'rgba(28, 25, 23, 0.65)';
+      ctx.lineWidth = isSelected ? 1.8 : 1.1;
+      ctx.beginPath();
+      ctx.moveTo(-bx, -by + c); ctx.lineTo(-bx, -by); ctx.lineTo(-bx + c, -by);
+      ctx.moveTo(bx - c, -by); ctx.lineTo(bx, -by); ctx.lineTo(bx, -by + c);
+      ctx.moveTo(bx, by - c); ctx.lineTo(bx, by); ctx.lineTo(bx - c, by);
+      ctx.moveTo(-bx + c, by); ctx.lineTo(-bx, by); ctx.lineTo(-bx, by - c);
+      ctx.stroke();
+    }
+
+    // Strength & cohesion bars beneath the frame
+    const strength = Math.max(0, Math.min(1, unit.strength / Math.max(1, unit.initialStrength)));
+    const cohesion = Math.max(0, Math.min(1, unit.morale / 100));
+    const barW = identity === 'hostile' ? DIAMOND_R * 1.7 : FRAME_W;
+    let y = hh + (unit.type === 'headquarters' ? 10.5 : 2.5);
+    const drawBar = (ratio: number, color: string, h: number) => {
+      ctx.fillStyle = 'rgba(28, 25, 23, 0.22)';
+      ctx.fillRect(-barW / 2, y, barW, h);
+      ctx.fillStyle = color;
+      ctx.fillRect(-barW / 2, y, barW * ratio, h);
+      y += h + 0.8;
+    };
+    if (unit.type !== 'headquarters') {
+      drawBar(strength, healthColor(strength), 2);
+      drawBar(cohesion, cohesion > 0.5 ? '#334155' : healthColor(cohesion), 1.3);
+    }
+
+    // Designation (T) and higher formation (M) to the right of the frame
+    const showLabels = this.zoom >= 0.55 || emphasis;
+    const showDetail = this.zoom >= 1.05 || emphasis;
+    if (showLabels) {
+      const lx = hw + 3;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.font = font(600, 8.5);
+      haloText(ctx, designationFor(unit), lx, showDetail ? -0.5 : 3, isFriendly ? MAP.ink : '#7f1d1d');
+      if (showDetail) {
+        ctx.font = font(500, 6.5);
+        haloText(ctx, higherFormationFor(unit), lx, 7, MAP.inkMuted, 2.2);
+      }
+    }
+
+    // Single highest-priority status chip
+    const chip = showLabels ? this.unitStatusChip(unit) : null;
+    if (chip) {
+      ctx.font = font(700, 6);
+      const tw = ctx.measureText(chip.text).width;
+      const cy = y + 1;
+      ctx.fillStyle = chip.color;
+      this.roundRect(ctx, -tw / 2 - 3, cy, tw + 6, 8, 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(chip.text, 0, cy + 4.3);
+    }
+
+    // SITREP [LOCATE] beacon
+    if (unit.id === state.locatedUnitId && state.locatedUnitHighlightUntil && Date.now() < state.locatedUnitHighlightUntil) {
+      const t = (now % 1200) / 1200;
+      ctx.strokeStyle = `rgba(217, 119, 6, ${1 - t})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 18 + t * 26, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = MAP.select;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(0, -30); ctx.lineTo(0, -19);
+      ctx.moveTo(0, 19); ctx.lineTo(0, 30);
+      ctx.moveTo(-30, 0); ctx.lineTo(-19, 0);
+      ctx.moveTo(19, 0); ctx.lineTo(30, 0);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  private roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
   }
 
 
@@ -4797,326 +3992,63 @@ export class SandtableRenderer {
   // =========================================================================
   // 14. AUTHENTIC WEST POINT ATLAS CARTOUCHE & MAP LEGEND
   // Exact layout from media_1789975155849.png
-  // =========================================================================
-  private renderAtlasCartouche(ctx: CanvasRenderingContext2D, state: SimulationState) {
+  // Screen-space map furniture: north arrow and a scale bar that tracks zoom (1px = 5m)
+  private renderMapFurniture(ctx: CanvasRenderingContext2D, screenH: number) {
+    const x0 = 16;
+    const y0 = screenH - 50;
+    const metersPerScreenPx = 5 / this.zoom;
+    const steps = [100, 200, 250, 500, 1000, 2000];
+    let meters = steps[0];
+    for (const m of steps) if (m / metersPerScreenPx <= 170) meters = m;
+    const len = meters / metersPerScreenPx;
+
     ctx.save();
-    ctx.translate(2385, 1485);
-    
-    const bw = 175;
-    const bh = 95;
-    const bx = -bw;
-    const by = -bh;
-
-    // Card background
-    ctx.fillStyle = 'rgba(244, 244, 245, 0.94)';
-    ctx.fillRect(bx, by, bw, bh);
-
-    // Precise double border
-    ctx.strokeStyle = '#4b5563';
-    ctx.lineWidth = 1.0;
-    ctx.strokeRect(bx, by, bw, bh);
-    ctx.strokeStyle = '#a1a1aa';
-    ctx.lineWidth = 0.5;
-    ctx.strokeRect(bx + 1.5, by + 1.5, bw - 3, bh - 3);
-
-    // Title & Time header
-    const timeHours = Math.floor(state.timeMinutes / 60) + 7;
-    const timeMins = Math.floor(state.timeMinutes % 60);
-    const formattedHour = `${String(timeHours).padStart(2, '0')}:${String(timeMins).padStart(2, '0')}`;
-    
-    ctx.fillStyle = '#111827';
-    ctx.font = '900 10px Arial, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText('AUSTERLITZ 1805', bx + 8, by + 13);
-
-    ctx.font = 'bold 8px Arial, sans-serif';
-    ctx.fillStyle = '#4b5563';
-    ctx.textAlign = 'right';
-    ctx.fillText(`T+${Math.floor(state.timeMinutes)}m (${formattedHour})`, bx + bw - 8, by + 13);
-
-    // Faction Swatches
-    ctx.fillStyle = '#1e3a8a';
-    ctx.fillRect(bx + 8, by + 20, 10, 6);
-    ctx.fillStyle = '#111827';
-    ctx.font = 'bold 7.5px Arial, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText('BLUFOR (FR)', bx + 22, by + 26);
-
-    ctx.fillStyle = '#dc2626';
-    ctx.fillRect(bx + 90, by + 20, 10, 6);
-    ctx.fillStyle = '#111827';
-    ctx.fillText('REDFOR (ALLIED)', bx + 104, by + 26);
-
-    // Divider line
-    ctx.strokeStyle = '#d4d4d8';
-    ctx.lineWidth = 0.6;
-    ctx.beginPath();
-    ctx.moveTo(bx + 8, by + 32);
-    ctx.lineTo(bx + bw - 8, by + 32);
+    ctx.fillStyle = 'rgba(250, 248, 242, 0.88)';
+    ctx.strokeStyle = 'rgba(28, 25, 23, 0.18)';
+    ctx.lineWidth = 1;
+    this.roundRect(ctx, x0 - 8, y0 - 22, len + 64, 40, 6);
+    ctx.fill();
     ctx.stroke();
 
-    // Troop Symbology Key (Concise 2x2 Grid)
-    ctx.font = 'bold 7px Arial, sans-serif';
-    const keys = [
-      { sym: '[ INF ]', name: 'INFANTRY' },
-      { sym: '[ CAV ]', name: 'CAVALRY' },
-      { sym: '[ ART ]', name: 'ARTILLERY' },
-      { sym: '[ HQ ]', name: 'HEADQUARTERS' },
-    ];
-
-    keys.forEach((k, idx) => {
-      const col = idx % 2;
-      const row = Math.floor(idx / 2);
-      const kx = bx + 8 + col * 82;
-      const ky = by + 43 + row * 13;
-
-      ctx.fillStyle = '#1e3a8a';
-      ctx.textAlign = 'left';
-      ctx.fillText(k.sym, kx, ky);
-
-      ctx.fillStyle = '#374151';
-      const symWidth = ctx.measureText(k.sym).width;
-      ctx.fillText(k.name, kx + symWidth + 4, ky);
-    });
-
-    // Bottom Scale Bar: Authenticated to 1px = 5m (200px = 1km MGRS grid)
-    const scaleY = by + 76;
-    ctx.strokeStyle = '#374151';
-    ctx.lineWidth = 0.8;
-
-    // 0 to 500m graphic scale bar (100px total length)
-    const barX = bx + 12;
-    const barH = 3;
-
-    // 0 - 250m (solid block)
-    ctx.fillStyle = '#1e3a8a';
-    ctx.fillRect(barX, scaleY - barH, 50, barH);
-    ctx.strokeRect(barX, scaleY - barH, 50, barH);
-
-    // 250m - 500m (open block)
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(barX + 50, scaleY - barH, 50, barH);
-    ctx.strokeRect(barX + 50, scaleY - barH, 50, barH);
-
-    // Ticks
+    // North arrow
+    const nx = x0 + 6;
+    ctx.fillStyle = MAP.ink;
     ctx.beginPath();
-    ctx.moveTo(barX, scaleY - barH - 2); ctx.lineTo(barX, scaleY + 2);
-    ctx.moveTo(barX + 50, scaleY - barH - 2); ctx.lineTo(barX + 50, scaleY + 2);
-    ctx.moveTo(barX + 100, scaleY - barH - 2); ctx.lineTo(barX + 100, scaleY + 2);
-    ctx.stroke();
-
-    // Labels
-    ctx.font = 'bold 6.5px Arial, sans-serif';
-    ctx.fillStyle = '#374151';
-    ctx.textAlign = 'center';
-    ctx.fillText('0', barX, scaleY + 9);
-    ctx.fillText('250m', barX + 50, scaleY + 9);
-    ctx.fillText('500m', barX + 100, scaleY + 9);
-
-    // Grid ratio note
-    ctx.font = 'bold 6px "Courier New", monospace';
-    ctx.fillStyle = '#4b5563';
-    ctx.textAlign = 'right';
-    ctx.fillText('1km = 200px', bx + bw - 10, scaleY + 9);
-
-    ctx.restore();
-  }
-
-  // =========================================================================
-  // 15. AUTHENTIC NATO STANAG 3677 DECLINATION & ORIENTATION DIAGRAM
-  // True North (TN), Grid North (GN), Magnetic North (MN), and Declination Arc
-  // =========================================================================
-  private renderNorthArrow(ctx: CanvasRenderingContext2D) {
-    ctx.save();
-    const bx = 16;
-    const by = 1380;
-    const bw = 175;
-    const bh = 100;
-
-    // Cartographic Specification Plate (Bottom-Left Neatline)
-    ctx.fillStyle = 'rgba(250, 250, 249, 0.94)';
-    ctx.strokeStyle = '#475569';
-    ctx.lineWidth = 1.0;
-    ctx.fillRect(bx, by, bw, bh);
-    ctx.strokeRect(bx, by, bw, bh);
-
-    // Inner thin border
-    ctx.strokeStyle = 'rgba(100, 116, 139, 0.4)';
-    ctx.lineWidth = 0.5;
-    ctx.strokeRect(bx + 2, by + 2, bw - 4, bh - 4);
-
-    // 1. Declination Diagram Origin & Prongs
-    const ox = bx + 42;
-    const oy = by + 68;
-
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 1.2;
-
-    // --- Grid North (GN) ---
-    ctx.beginPath();
-    ctx.moveTo(ox, oy);
-    ctx.lineTo(ox, oy - 46);
-    ctx.stroke();
-
-    // GN Label
-    ctx.font = 'bold 7px Arial, sans-serif';
-    ctx.fillStyle = '#0f172a';
-    ctx.textAlign = 'center';
-    ctx.fillText('GN', ox, oy - 50);
-
-    // --- True North (TN - Star Crest) ---
-    // Offset slightly to the left for clarity
-    const tx = ox - 14;
-    const ty = oy - 46;
-    ctx.beginPath();
-    ctx.moveTo(ox, oy);
-    ctx.lineTo(tx, ty);
-    ctx.stroke();
-
-    // 5-Point Star symbol for True North
-    ctx.save();
-    ctx.translate(tx, ty - 6);
-    ctx.fillStyle = '#1e3a8a';
-    ctx.beginPath();
-    for (let i = 0; i < 5; i++) {
-      ctx.lineTo(Math.cos(((18 + i * 72) * Math.PI) / 180) * 4, -Math.sin(((18 + i * 72) * Math.PI) / 180) * 4);
-      ctx.lineTo(Math.cos(((54 + i * 72) * Math.PI) / 180) * 2, -Math.sin(((54 + i * 72) * Math.PI) / 180) * 2);
-    }
+    ctx.moveTo(nx, y0 - 13);
+    ctx.lineTo(nx + 5, y0 + 6);
+    ctx.lineTo(nx, y0 + 2);
+    ctx.lineTo(nx - 5, y0 + 6);
     ctx.closePath();
     ctx.fill();
-    ctx.restore();
+    ctx.font = font(700, 8);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('N', nx, y0 + 7);
 
-    ctx.font = 'bold 6.5px Arial, sans-serif';
-    ctx.fillText('TN', tx, ty - 12);
-
-    // --- Magnetic North (MN) - Easterly Declination +2°24' (43 Mils) ---
-    const mx = ox + 15;
-    const my = oy - 45;
-    ctx.beginPath();
-    ctx.moveTo(ox, oy);
-    ctx.lineTo(mx, my);
-    ctx.stroke();
-
-    // Single-sided barb for Magnetic North (standard cartographic convention)
-    ctx.beginPath();
-    ctx.moveTo(mx, my);
-    ctx.lineTo(mx - 4, my + 6);
-    ctx.stroke();
-
-    ctx.font = 'bold 7px Arial, sans-serif';
-    ctx.fillText('MN', mx + 3, my - 6);
-
-    // Declination Arc connecting GN and MN
-    ctx.save();
-    ctx.strokeStyle = '#dc2626';
+    // Alternating scale bar
+    const sx = x0 + 24;
+    const segs = 4;
+    for (let i = 0; i < segs; i++) {
+      ctx.fillStyle = i % 2 === 0 ? MAP.ink : '#faf8f2';
+      ctx.fillRect(sx + (len / segs) * i, y0 - 2, len / segs, 4);
+    }
+    ctx.strokeStyle = MAP.ink;
     ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.arc(ox, oy, 28, -Math.PI / 2, -Math.PI / 2 + 0.3);
-    ctx.stroke();
-    ctx.restore();
+    ctx.strokeRect(sx, y0 - 2, len, 4);
 
-    // Pivot baseline dot
-    ctx.fillStyle = '#0f172a';
-    ctx.beginPath();
-    ctx.arc(ox, oy, 1.8, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 2. Cartographic Data Block (Right side of plate)
-    const txLeft = bx + 76;
-    ctx.font = 'bold 7px Arial, sans-serif';
-    ctx.fillStyle = '#0f172a';
+    ctx.font = font(500, 9, FONT.mono);
+    ctx.fillStyle = MAP.ink;
+    ctx.textBaseline = 'bottom';
     ctx.textAlign = 'left';
-    ctx.fillText('DECLINATION DIAGRAM', txLeft, by + 14);
-
-    ctx.font = 'bold 6.5px "Courier New", monospace';
-    ctx.fillStyle = '#334155';
-    ctx.fillText('G-M ANGLE: 2°24\'', txLeft, by + 26);
-    ctx.fillText('          (43 MILS E)', txLeft, by + 35);
-
-    ctx.font = '6px Arial, sans-serif';
-    ctx.fillStyle = '#475569';
-    ctx.fillText('GRID CONVERGENCE: 0°00\'', txLeft, by + 47);
-
-    // Separator line
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.lineWidth = 0.5;
-    ctx.beginPath();
-    ctx.moveTo(txLeft, by + 52);
-    ctx.lineTo(bx + bw - 6, by + 52);
-    ctx.stroke();
-
-    // Map Parameters
-    ctx.font = 'bold 6px "Courier New", monospace';
-    ctx.fillStyle = '#1e3a8a';
-    ctx.fillText('CONTOUR INTERVAL: 10m', txLeft, by + 62);
-    ctx.fillText('INDEX CONTOURS:   20m', txLeft, by + 71);
-    ctx.fillText('ELEVATION: METERS MSL', txLeft, by + 80);
-
-    ctx.font = 'bold 6px Arial, sans-serif';
-    ctx.fillStyle = '#64748b';
-    ctx.fillText('NATO STANAG 3677 TLM', txLeft, by + 91);
-
+    ctx.fillText('0', sx - 2, y0 - 5);
+    ctx.textAlign = 'right';
+    ctx.fillText(meters >= 1000 ? `${meters / 1000} km` : `${meters} m`, sx + len + 2, y0 - 5);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = MAP.inkMuted;
+    ctx.font = font(500, 8);
+    ctx.fillText('GRID 1 KM · CI 10 M', sx, y0 + 5);
     ctx.restore();
   }
 
-  // =========================================================================
-  // THE MORNING MIST OF AUSTERLITZ ("LE BROUILLARD D'AUSTERLITZ")
-  // Authentic low-lying valley fog in the Goldbach depression (07:00 - 08:45 AM)
-  // =========================================================================
-  private renderMorningMist(ctx: CanvasRenderingContext2D, state: SimulationState) {
-    if (state.timeMinutes >= 115) return;
-    // Don't blur the central map if fog of war is disabled
-    if (!state.fogOfWarEnabled) return;
-
-    // Smooth evaporation transition as the sun burns through the mist (t between 70 and 110)
-    let mistDensity = 0.08;
-    if (state.timeMinutes > 70) {
-      mistDensity *= Math.max(0, 1.0 - (state.timeMinutes - 70) / 40);
-    }
-    if (mistDensity <= 0.005) return;
-
-    ctx.save();
-    // Gentle drifting movement based on animation frame
-    const driftX = (this.animFrame * 0.12) % 240;
-    const driftY = (this.animFrame * 0.04) % 120;
-
-    // Valley cloud bank puffs along the Goldbach stream (world coords: x: 800 - 1300, y: 350 - 1450)
-    const mistPuffs = [
-      { x: 920, y: 450, rx: 210, ry: 95 },
-      { x: 1040, y: 560, rx: 240, ry: 110 },
-      { x: 980, y: 700, rx: 260, ry: 125 },
-      { x: 1080, y: 820, rx: 230, ry: 115 },
-      { x: 950, y: 960, rx: 270, ry: 130 },
-      { x: 920, y: 1120, rx: 250, ry: 120 },
-      { x: 1020, y: 1280, rx: 280, ry: 140 },
-      { x: 1180, y: 1400, rx: 300, ry: 150 },
-      { x: 880, y: 1380, rx: 240, ry: 110 },
-    ];
-
-    for (const puff of mistPuffs) {
-      const px = puff.x + ((driftX + puff.y) % 80) - 40;
-      const py = puff.y + ((driftY + puff.x) % 60) - 30;
-
-      const grad = ctx.createRadialGradient(px, py, puff.rx * 0.15, px, py, puff.rx);
-      grad.addColorStop(0, `rgba(241, 245, 249, ${mistDensity * 0.65})`);
-      grad.addColorStop(0.5, `rgba(226, 232, 240, ${mistDensity * 0.40})`);
-      grad.addColorStop(0.85, `rgba(203, 213, 225, ${mistDensity * 0.15})`);
-      grad.addColorStop(1, 'rgba(203, 213, 225, 0)');
-
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.ellipse(px, py, puff.rx, puff.ry, 0.15, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Atmospheric mist label at low alpha
-    if (state.timeMinutes < 80) {
-      ctx.font = 'italic 11px Arial, sans-serif';
-      ctx.fillStyle = `rgba(100, 116, 139, ${mistDensity * 0.8})`;
-      ctx.textAlign = 'center';
-      ctx.fillText('≈ MORNING VALLEY MIST (GOLDBACH DEPRESSION) ≈', 1050, 720);
-    }
-
-    ctx.restore();
-  }
 }
