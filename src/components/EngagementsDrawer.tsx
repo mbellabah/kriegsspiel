@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ActiveEngagement, Vector2D, SitrepNotification } from '../types/game';
-import { Crosshair, AlertTriangle, Users, Flame, X, ChevronLeft, ChevronRight, Radio } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X } from './glyphs';
 
 interface EngagementsDrawerProps {
   isOpen: boolean;
@@ -125,7 +125,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
       {/* Urgent Reinforcement Banner if any */}
       {totalThreats > 0 && (
         <div className="px-2.5 py-1 bg-red-50 border-b border-red-300 flex items-center gap-1.5 text-red-800 text-[10px] font-semibold ">
-          <AlertTriangle size={12} className="text-red-600 flex-shrink-0" />
+          
           <span>{totalThreats} {totalThreats === 1 ? 'SECTOR REQUIRES' : 'SECTORS REQUIRE'} REINFORCEMENTS!</span>
         </div>
       )}
@@ -150,7 +150,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
  : 'text-neutral-700 hover:bg-[#e8e4db]'
  }`}
         >
-          <Radio size={10} className={sitreps.length > 0 ? 'text-red-600' : 'text-neutral-500'} />
+          
           <span>Contacts ({sitreps.length})</span>
           {sitreps.some((s) => !s.read) && (
             <span className="w-1.5 h-1.5 rounded-full bg-red-600 inline-block" />
@@ -164,7 +164,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
           /* Tactical In-Contact SITREPs List */
           sitreps.length === 0 ? (
             <div className="py-6 px-3 text-center text-neutral-500">
-              <Radio className="w-6 h-6 mx-auto mb-1.5 opacity-40 text-neutral-600" />
+              
               <p className="text-[10.5px] font-semibold text-neutral-600">No Contacts Reported</p>
               <p className="text-[10.5px] text-neutral-500 mt-0.5 leading-relaxed">
                 Battalions are not currently taking fire or in close melee contact.
@@ -253,7 +253,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
                       className="px-2 py-0.5 bg-[#23324a] hover:bg-[#2e4160] text-white text-[10.5px] font-semibold flex items-center gap-1 transition-transform cursor-pointer"
                       title="Center camera on this unit and select it"
                     >
-                      <Crosshair size={10} />
+                      
                       <span>LOCATE</span>
                     </button>
                   </div>
@@ -266,7 +266,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
           /* Sector Engagements List */
           engagements.length === 0 ? (
             <div className="py-6 px-3 text-center text-neutral-500">
-              <Users className="w-6 h-6 mx-auto mb-1.5 opacity-40" />
+              
               <p className="text-[10.5px] font-semibold text-neutral-600">No Active Clashes</p>
               <p className="text-[10.5px] text-neutral-500 mt-0.5 leading-relaxed">
                 Troops are wheeling into position or maintaining standoff distances.
@@ -296,7 +296,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
                   {/* Sector Title & Badge */}
                   <div className="flex items-center justify-between gap-1 mb-1">
                     <div className="flex items-center gap-1 min-w-0">
-                      <Flame size={12} className="text-amber-600 flex-shrink-0" />
+                      
                       <span className="text-[10.5px] font-semibold text-black truncate" title={eng.name}>
                         {eng.name.split('(')[0]}
                       </span>
@@ -310,7 +310,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
                   {/* Reinforcement tag */}
                   {eng.needsReinforcements && (
                     <div className="my-1 bg-red-100 border border-red-400 text-red-800 text-[10.5px] font-semibold px-1.5 py-0.5 flex items-center gap-1 ">
-                      <AlertTriangle size={10} className="text-red-600 flex-shrink-0" />
+                      
                       <span>Reinforcements needed</span>
                     </div>
                   )}
@@ -363,7 +363,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
                     onClick={() => onFocusSector(eng.sectorLocation)}
                     className="w-full mt-1 py-0.5 px-2 bg-[#f5f3ee] hover:bg-[#e8e4db] active:bg-[#d9d3c7] border border-[#a8a29e] text-[10.5px] font-semibold text-black flex items-center justify-center gap-1 transition cursor-pointer"
                   >
-                    <Crosshair size={11} className="text-[#23324a]" />
+                    
                     <span>Focus sector</span>
                   </button>
                 </div>

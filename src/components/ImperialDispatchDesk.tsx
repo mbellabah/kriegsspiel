@@ -2,20 +2,13 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { BattleEngine, SimulationState } from '../engine/simulation';
 import { dispatchService, stripDiacritics, parseTemporalConstraints, parseConditionAndChaining } from '../services/llmDispatchService';
 import { DispatchEntry, Vector2D, HistoricalDispatch, OrderSource } from '../types/game';
-import {
-  Send,
-  X,
-  Clock,
-  MapPin,
-  User,
-  Shield,
-  Crosshair,
-  Trash2,
-  Edit3,
-  Layers,
-  CheckCircle2,
-  ScrollText,
-} from 'lucide-react';
+import { Check, X } from './glyphs';
+
+export interface DispatchInsert {
+  text: string;
+  mode: 'replace' | 'append';
+  id: number;
+}
 
 interface ImperialDispatchDeskProps {
   engine: BattleEngine;
@@ -26,7 +19,7 @@ interface ImperialDispatchDeskProps {
   onTogglePickCoordinates?: () => void;
   pinpointedCoords?: Vector2D | null;
   onClearPinpointedCoords?: () => void;
-  initialText?: string;
+  insert?: DispatchInsert | null;
   embedded?: boolean;
 }
 
@@ -62,10 +55,11 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
   onTogglePickCoordinates,
   pinpointedCoords = null,
   onClearPinpointedCoords,
-  initialText,
+  insert,
   embedded = false,
 }) => {
-  const [inputText, setInputText] = useState(initialText || '');
+  const [inputText, setInputText] = useState('');
+  const [sendError, setSendError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [dispatches, setDispatches] = useState<DispatchEntry[]>([]);
   const [queuedDispatches, setQueuedDispatches] = useState<QueuedDispatch[]>([]);
@@ -176,14 +170,26 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
   }, [pinpointedCoords, onClearPinpointedCoords, selectedUnit, selectedCommanderSurname, selectedCleanName]);
 
   useEffect(() => {
-    if (initialText) {
-      setInputText(initialText);
-      setTimeout(() => {
-        inputRef.current?.focus();
-        setIsInputFocused(true);
-      }, 60);
+    if (!insert) return;
+    if (insert.mode === 'replace') {
+      setInputText(insert.text);
+    } else {
+      // Append to whatever is being written; start a fresh order for the selected unit if empty
+      setInputText((prev) => {
+        const trimmed = prev.trim();
+        if (trimmed) return `${trimmed} ${insert.text}`;
+        const live = engine.getState();
+        const sel = live.units.find((u) => u.id === live.selectedUnitId);
+        const cmd = sel?.commander ? `@${sel.commander.split(' ').pop()}, ` : '';
+        return `${cmd}advance ${insert.text}`;
+      });
     }
-  }, [initialText]);
+    const t = setTimeout(() => {
+      inputRef.current?.focus();
+      setIsInputFocused(true);
+    }, 60);
+    return () => clearTimeout(t);
+  }, [insert?.id]);
 
   // Build comprehensive tactical mentions catalog from scenario state
   const tacticalMentions = useMemo<TacticalMention[]>(() => {
@@ -585,11 +591,18 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
       playerUnits,
       enemyUnits,
       landmarks,
-      currentTimeMinutes: state.timeMinutes,
+      currentTimeMinutes: engine.getState().timeMinutes,
       trps: state.targetReferencePoints,
+      defaultRecipientId: (() => {
+        const live = engine.getState();
+        const sel = live.units.find((u) => u.id === live.selectedUnitId);
+        return sel && sel.faction === live.playerFaction ? sel.id : null;
+      })(),
     });
 
-    const arrivalTime = state.timeMinutes + result.delayMinutes;
+    // The parse may take seconds; date the order from the clock when it is actually sent
+    const sentAt = engine.getState().timeMinutes;
+    const arrivalTime = sentAt + result.delayMinutes;
 
     if (result.isCorpsOrder && result.corpsName) {
       engine.issueCorpsOrder(result.corpsName, {
@@ -626,7 +639,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
         curveControl: result.curveControl,
         targetFormation: result.targetFormation,
         finalHeading: result.finalHeading,
-        plannedTime: state.timeMinutes,
+        plannedTime: sentAt,
         dispatchArrivalTime: arrivalTime,
         isSmokeMission: result.isSmokeMission,
         isForcedMarch: result.isForcedMarch,
@@ -645,13 +658,13 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
       });
     }
 
-    const hours = Math.floor(state.timeMinutes / 60) + 7;
-    const mins = Math.floor(state.timeMinutes % 60);
+    const hours = Math.floor(sentAt / 60) + 7;
+    const mins = Math.floor(sentAt % 60);
     const timeFormatted = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
 
     return {
       id: `dispatch_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-      timestamp: state.timeMinutes,
+      timestamp: sentAt,
       formattedTime: timeFormatted,
       sender: customSender || 'Command Staff',
       rawText: text,
@@ -764,6 +777,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
     setInputText('');
     setIsMentionOpen(false);
 
+    setSendError(null);
     try {
       const entry = await processSingleDispatch(text);
       if (entry) {
@@ -771,7 +785,9 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
         setActiveTab('history');
       }
     } catch (err) {
-      console.error('[DispatchDesk] Failed to send immediate dispatch:', err);
+      // Keep the text so the order can be corrected rather than retyped
+      setInputText(text);
+      setSendError(err instanceof Error ? err.message : 'The order could not be sent.');
     } finally {
       setIsProcessing(false);
     }
@@ -790,7 +806,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
         setQueuedDispatches((prev) => prev.filter((q) => q.id !== queuedId));
       }
     } catch (err) {
-      console.error('[DispatchDesk] Failed to transmit queued dispatch:', err);
+      setSendError(err instanceof Error ? err.message : 'The order could not be sent.');
     } finally {
       setIsProcessing(false);
     }
@@ -807,21 +823,28 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
     const newEntries: DispatchEntry[] = [];
     const queueToProcess = [...queuedDispatches];
 
+    setSendError(null);
+    const failed: { item: QueuedDispatch; message: string }[] = [];
     try {
       for (let i = 0; i < queueToProcess.length; i++) {
         setBatchProgress({ current: i + 1, total: queueToProcess.length });
         const item = queueToProcess[i];
-        const entry = await processSingleDispatch(item.rawText);
-        if (entry) {
-          newEntries.push(entry);
+        try {
+          const entry = await processSingleDispatch(item.rawText);
+          if (entry) newEntries.push(entry);
+        } catch (err) {
+          failed.push({ item, message: err instanceof Error ? err.message : 'could not be sent' });
         }
       }
 
       setDispatches((prev) => [...newEntries.reverse(), ...prev]);
-      setQueuedDispatches([]);
-      setActiveTab('history');
-    } catch (err) {
-      console.error('[DispatchDesk] Batch transmission failed:', err);
+      // Orders that failed stay queued for correction
+      setQueuedDispatches(failed.map((f) => f.item));
+      if (failed.length > 0) {
+        setSendError(`${failed.length} order${failed.length > 1 ? 's' : ''} not sent: ${failed[0].message}`);
+      } else {
+        setActiveTab('history');
+      }
     } finally {
       setIsProcessing(false);
       setIsBatchTransmitting(false);
@@ -877,7 +900,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
  : 'text-neutral-700 hover:bg-[#ebe7df]'
  }`}
         >
-          <Layers size={11} />
+          
           <span>Queue</span>
           {queuedDispatches.length > 0 && (
             <span className="px-1.5 py-0.2 rounded-full bg-[#23324a] text-white text-[10px] font-semibold">
@@ -895,7 +918,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
  : 'text-neutral-700 hover:bg-[#ebe7df]'
  }`}
         >
-          <Clock size={11} />
+          
           <span>Sent</span>
           {dispatches.length > 0 && (
             <span className="px-1.5 py-0.2 rounded-full bg-neutral-300 text-neutral-800 text-[10px] font-semibold">
@@ -913,7 +936,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
  : 'text-neutral-700 hover:bg-[#ebe7df]'
  }`}
         >
-          <ScrollText size={11} className="shrink-0" />
+          
           <span>Historical plan</span>
           {state.autoGeneralEnabled && <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 shrink-0" />}
         </button>
@@ -937,7 +960,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                     onClick={handleLoadHistoricalMasterplan}
                     className="px-3 py-1.5 bg-white border border-[#23324a] hover:bg-blue-50 text-[#23324a] font-sans text-[10px] font-semibold transition-colors inline-flex items-center gap-1.5 cursor-pointer "
                   >
-                    <ScrollText size={12} />
+                    
                     <span>Load the historical plan ({historicalDispatches.length} orders)</span>
                   </button>
                 )}
@@ -947,7 +970,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                 {/* Batch Action Bar */}
                 <div className="flex items-center justify-between p-2 bg-blue-50/80 border border-blue-200 ">
                   <div className="flex items-center gap-1.5 text-[10px] font-sans font-semibold text-[#23324a]">
-                    <CheckCircle2 size={12} />
+                    <Check size={12} />
                     <span>{queuedDispatches.length} orders queued</span>
                   </div>
 
@@ -967,7 +990,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                       disabled={isProcessing}
                       className="flex items-center gap-1 px-3 py-1 bg-[#15803d] hover:bg-[#16a34a] disabled:opacity-50 text-white text-[10px] font-sans font-semibold cursor-pointer "
                     >
-                      <Send size={11} />
+                      
                       <span>
                         {isBatchTransmitting && batchProgress
                           ? `Sending ${batchProgress.current}/${batchProgress.total}…`
@@ -1003,13 +1026,13 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                         <div className="flex flex-wrap gap-1 mb-2">
                           {q.timingHint && (
                             <span className="text-[10px] font-sans font-semibold px-1.5 py-0.5 bg-amber-50 text-amber-900 border border-amber-300 flex items-center gap-1 ">
-                              <Clock size={9} className="text-amber-700" />
+                              
                               <span>{q.timingHint}</span>
                             </span>
                           )}
                           {q.conditionHint && (
                             <span className="text-[10px] font-sans font-semibold px-1.5 py-0.5 bg-purple-50 text-purple-900 border border-purple-300 flex items-center gap-1 ">
-                              <Shield size={9} className="text-purple-700" />
+                              
                               <span>{q.conditionHint}</span>
                             </span>
                           )}
@@ -1029,18 +1052,14 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                             disabled={isProcessing}
                             title="Edit this dispatch"
                             className="p-1 text-neutral-600 hover:text-black hover:bg-neutral-100 cursor-pointer"
-                          >
-                            <Edit3 size={11} />
-                          </button>
+                          >Edit</button>
                           <button
                             type="button"
                             onClick={() => handleDeleteQueued(q.id)}
                             disabled={isProcessing}
                             title="Discard from queue"
                             className="p-1 text-neutral-600 hover:text-red-700 hover:bg-red-50 cursor-pointer"
-                          >
-                            <Trash2 size={11} />
-                          </button>
+                          >Remove</button>
                           <button
                             type="button"
                             onClick={() => handleTransmitSingleQueued(q.id)}
@@ -1048,7 +1067,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                             title="Transmit this dispatch now"
                             className="flex items-center gap-0.5 px-2 py-0.5 bg-[#23324a] hover:bg-[#2e4160] text-white font-semibold cursor-pointer "
                           >
-                            <Send size={9} />
+                            
                             <span>SEND</span>
                           </button>
                         </div>
@@ -1088,12 +1107,12 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                         <span className="text-[#23324a] font-semibold">{d.recipientName}</span>
                         {isDelivered ? (
                           <span className="text-[10px] font-semibold px-1.5 py-0.2 bg-emerald-50 text-emerald-800 border border-emerald-300 flex items-center gap-0.5">
-                            <CheckCircle2 size={8} />
+                            <Check size={8} />
                             <span>Delivered</span>
                           </span>
                         ) : (
                           <span className="text-[10px] font-semibold px-1.5 py-0.2 bg-amber-50 text-amber-800 border border-amber-300 flex items-center gap-0.5">
-                            <Clock size={8} />
+                            
                             <span>COURIER ETA ~{Math.max(0.5, d.delayMinutes - timeSince).toFixed(1)}m</span>
                           </span>
                         )}
@@ -1115,7 +1134,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                     {/* Contingency (if present) */}
                     {d.conditionDescription && (
                       <div className="flex items-center gap-1 text-[10px] font-sans text-purple-900 bg-purple-50/70 border border-purple-200 px-1.5 py-0.5">
-                        <Shield size={8.5} className="text-purple-700" />
+                        
                         <span>Contingency: {d.conditionDescription}</span>
                       </div>
                     )}
@@ -1134,7 +1153,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 bg-amber-100 border border-amber-400 flex items-center justify-center text-amber-900 ">
-                    <ScrollText size={16} />
+                    
                   </div>
                   <div>
                     <div className="text-[10.5px] font-sans font-semibold text-neutral-900 flex items-center gap-1.5 ">
@@ -1183,7 +1202,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                   disabled={isProcessing}
                   className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 bg-[#23324a] hover:bg-[#2e4160] disabled:opacity-50 text-white text-[10px] font-sans font-semibold cursor-pointer transition-colors"
                 >
-                  <Layers size={11} />
+                  
                   <span>LOAD FULL MASTERPLAN ({historicalDispatches.length} DISPATCHES)</span>
                 </button>
               </div>
@@ -1223,13 +1242,13 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
 
                       <div className="flex items-center gap-2">
                         <span className="text-[10.5px] font-sans font-semibold px-1.5 py-0.5 bg-neutral-100 border border-neutral-300 text-neutral-700 flex items-center gap-1">
-                          <Clock size={9} />
+                          
                           <span>{d.timeFormatted}</span>
                         </span>
 
                         {isExecuted ? (
                           <span className="text-[10px] font-sans font-semibold px-1.5 py-0.5 bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center gap-0.5">
-                            <CheckCircle2 size={8} />
+                            <Check size={8} />
                             <span>Sent</span>
                           </span>
                         ) : isDue ? (
@@ -1288,7 +1307,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                           className="flex items-center gap-0.5 px-2 py-0.5 bg-[#23324a] hover:bg-[#2e4160] text-white font-semibold cursor-pointer transition-colors"
                           title="Immediately transmit this dispatch"
                         >
-                          <Send size={9} />
+                          
                           <span>SEND</span>
                         </button>
                       </div>
@@ -1336,13 +1355,9 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                       </span>
                       <div className="flex flex-col truncate">
                         <span className="font-sans text-[10.5px] font-semibold text-black flex items-center gap-1.5">
-                          {item.category === 'commander' ? (
-                            <User size={11} className="text-amber-700 shrink-0" />
-                          ) : item.category === 'location' ? (
-                            <MapPin size={11} className="text-emerald-700 shrink-0" />
-                          ) : (
-                            <Shield size={11} className="text-[#23324a] shrink-0" />
-                          )}
+                          <span className="w-8 shrink-0 text-[9px] font-semibold uppercase text-neutral-500">
+                            {item.category === 'commander' ? 'Unit' : item.category === 'location' ? 'Place' : 'TRP'}
+                          </span>
                           <span className="text-neutral-900 font-semibold truncate">{item.name}</span>
                           <span className="text-[#23324a] text-[10px] font-sans font-normal shrink-0">({item.token})</span>
                         </span>
@@ -1366,7 +1381,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
         {selectedUnit && (
           <div className="flex items-center gap-1.5 mb-1.5 px-2 py-1 bg-blue-50/70 border border-blue-200 text-[10.5px] font-sans select-none ">
             <span className="text-neutral-500 font-semibold text-[10px] flex items-center gap-1 shrink-0">
-              <User size={10} className="text-[#23324a]" />
+              
               <span>Target:</span>
             </span>
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar flex-1">
@@ -1538,6 +1553,14 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
 
         {/* Dispatch Input and Actions Cluster */}
         <div className="flex flex-col gap-1.5">
+          {sendError && (
+            <div role="alert" className="flex items-start justify-between gap-2 px-2 py-1 border-l-2 border-[#c2272d] bg-[#c2272d]/[0.06] text-[11px] text-[#8f1d22]">
+              <span>{sendError}</span>
+              <button type="button" onClick={() => setSendError(null)} className="text-[#8f1d22]/70 hover:text-[#8f1d22] cursor-pointer" title="Dismiss">
+                ×
+              </button>
+            </div>
+          )}
           <div className="flex items-stretch gap-2">
             <div className="flex-1 relative">
               <textarea
@@ -1545,6 +1568,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                 rows={2}
                 value={inputText}
                 onChange={(e) => {
+                  if (sendError) setSendError(null);
                   setInputText(e.target.value);
                   const cursor = e.target.selectionStart ?? e.target.value.length;
                   evaluateMentionTrigger(e.target.value, cursor);
@@ -1663,7 +1687,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                 title="Queue dispatch to Staged Orders (Enter)"
                 className="px-2.5 py-1 bg-white hover:bg-neutral-100 disabled:opacity-40 text-[#23324a] border border-[#23324a] text-[10.5px] font-semibold font-sans flex items-center justify-center gap-1 transition-colors cursor-pointer h-[25px]"
               >
-                <Layers size={11} />
+                
                 <span>Queue</span>
               </button>
 
@@ -1674,7 +1698,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                 title="Transmit immediately (Shift+Enter)"
                 className="px-3 py-1 bg-[#23324a] hover:bg-[#2e4160] disabled:opacity-40 text-white text-[10.5px] font-semibold font-sans flex items-center justify-center gap-1 transition-colors cursor-pointer h-[26px]"
               >
-                <Send size={11} />
+                
                 <span>{isProcessing ? 'Sending…' : 'Send'}</span>
               </button>
             </div>
@@ -1694,7 +1718,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
  : 'bg-white hover:bg-neutral-100 text-[#23324a] border-neutral-300'
  }`}
                 >
-                  <Crosshair size={10} className={isPickingCoordinates ? 'animate-spin' : ''} />
+                  
                   <span>{isPickingCoordinates ? 'Picking…' : 'Pick on map'}</span>
                 </button>
               )}

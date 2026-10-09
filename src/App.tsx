@@ -8,6 +8,7 @@ import { LeftStaffRail, StaffTab } from './components/LeftStaffRail';
 import { TroopDoctrineModal } from './components/TroopDoctrineModal';
 
 import { TroopFilterType, Vector2D } from './types/game';
+import type { DispatchInsert } from './components/ImperialDispatchDesk';
 
 export const App: React.FC = () => {
   const engine = useMemo(() => new BattleEngine(REALISTIC_AUSTERLITZ_SCENARIO), []);
@@ -15,7 +16,8 @@ export const App: React.FC = () => {
   const [showRangeRings, setShowRangeRings] = useState(false);
   const [showCorpsOverlay, setShowCorpsOverlay] = useState(false);
   const [hoveredCorps, setHoveredCorps] = useState<string | null>(null);
-  const [dispatchDeskInitialText, setDispatchDeskInitialText] = useState<string>('');
+  // Text pushed into the Orders input; `id` makes repeated identical inserts still apply
+  const [dispatchInsert, setDispatchInsert] = useState<DispatchInsert | null>(null);
   const [isBombardTargeting, setIsBombardTargeting] = useState(false);
   const [isDoctrineOpen, setIsDoctrineOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState<TroopFilterType>('all');
@@ -28,11 +30,20 @@ export const App: React.FC = () => {
   const [isPickingCoordinates, setIsPickingCoordinates] = useState(false);
   const [pinpointedCoords, setPinpointedCoords] = useState<Vector2D | null>(null);
 
+  // Coalesce engine notifications (some actions notify per mouse move) into one render per frame
   useEffect(() => {
-    const unsubscribe = engine.subscribe((newState) => {
-      setState({ ...newState });
+    let frame = 0;
+    const unsubscribe = engine.subscribe(() => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        setState({ ...engine.getState() });
+      });
     });
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      cancelAnimationFrame(frame);
+    };
   }, [engine]);
 
   // Auto-cancel CFF targeting if selected unit is no longer an artillery battery
@@ -89,22 +100,13 @@ export const App: React.FC = () => {
   const handleHoverCorps = useCallback((c: string | null) => setHoveredCorps(c), []);
   const handleDispatchCorps = useCallback((corpsName: string) => {
     const cleanName = corpsName.replace(/\s*\([^)]*\)/g, '').trim();
-    setDispatchDeskInitialText(`@${cleanName}, `);
+    setDispatchInsert({ text: `@${cleanName}, `, mode: 'replace', id: Date.now() });
     setActiveStaffTab('dispatch');
   }, []);
   const handleInsertCompassText = useCallback((text: string) => {
     setActiveStaffTab('dispatch');
-    setDispatchDeskInitialText((prev) => {
-      const trimmed = prev.trim();
-      if (!trimmed) {
-        const curState = engine.getState();
-        const sel = curState.units.find((u) => u.id === curState.selectedUnitId);
-        const cmdName = sel?.commander ? `@${sel.commander.split(' ').pop()}, ` : '';
-        return `${cmdName}advance ${text}`;
-      }
-      return `${trimmed} ${text}`;
-    });
-  }, [engine]);
+    setDispatchInsert({ text, mode: 'append', id: Date.now() });
+  }, []);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#f5f3ee] text-neutral-900 font-sans">
@@ -155,7 +157,7 @@ export const App: React.FC = () => {
         onTogglePickCoordinates={handleTogglePickCoordinates}
         pinpointedCoords={pinpointedCoords}
         onClearPinpointedCoords={handleClearPinpointedCoords}
-        initialDispatchText={dispatchDeskInitialText}
+        dispatchInsert={dispatchInsert}
         onFocusLocation={handleFocusLocation}
         onHoverCorps={handleHoverCorps}
         onDispatchCorps={handleDispatchCorps}

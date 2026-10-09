@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { toMgrs } from '../engine/grid';
 import { Vector2D, Unit, TargetReferencePoint } from '../types/game';
-import { Copy, Compass, Send, Crosshair, Check, X, MapPin, Move, PlusCircle, Target, Radio, ShieldAlert } from 'lucide-react';
+import { Check, X } from './glyphs';
 import { sounds } from '../engine/soundEffects';
 
 interface TacticalContextMenuProps {
@@ -68,7 +68,6 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
       {/* Header */}
       <div className="flex items-center justify-between px-2.5 py-1.5 bg-[#e8e4db] border-b border-[#a8a29e] text-[10px] font-sans">
         <div className="flex items-center gap-1.5 font-semibold text-[#23324a] truncate pr-2">
-          {activeTrp ? <Target size={12} className="text-amber-700 shrink-0" /> : <MapPin size={12} className="shrink-0" />}
           <span className="truncate">{activeTrp ? `[${activeTrp.code}] ${activeTrp.name}` : coordStr}</span>
         </div>
         <button
@@ -117,7 +116,7 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
               className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-blue-50 text-left cursor-pointer transition-colors text-neutral-900"
             >
               <div className="flex items-center gap-2">
-                <Send size={13} className="text-[#23324a] shrink-0" />
+                
                 <span className="text-[10.5px] font-semibold text-[#23324a]">Insert TRP into Dispatch</span>
               </div>
               {copiedLabel === 'trp_dispatch' && (
@@ -134,7 +133,7 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
               className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-neutral-100 text-left cursor-pointer transition-colors text-neutral-900 group"
             >
               <div className="flex items-center gap-2">
-                <Copy size={13} className="text-[#23324a] shrink-0" />
+                
                 <span className="text-[10.5px] font-semibold">Copy TRP Reference</span>
               </div>
               {copiedLabel === 'trp_tag' ? (
@@ -148,7 +147,7 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
 
             {/* TRP Option 3: Drag & Drop Guidance */}
             <div className="px-2 py-1.5 bg-amber-50/70 border border-amber-200/80 text-[10px] text-amber-900 font-sans flex items-start gap-1.5 my-1">
-              <Move size={12} className="text-amber-700 shrink-0 mt-0.5" />
+              
               <span>Left-click and drag this marker across the map to relocate anytime.</span>
             </div>
           </>
@@ -169,7 +168,7 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                 className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-amber-50 text-left cursor-pointer transition-colors text-neutral-900 group"
               >
                 <div className="flex items-center gap-2">
-                  <PlusCircle size={13} className="text-amber-700 shrink-0" />
+                  
                   <span className="text-[10.5px] font-semibold text-amber-900">Register New TRP Here</span>
                 </div>
                 <span className="text-neutral-500 font-normal text-[10.5px]">TRP {String(availableTrps.length + 1).padStart(2, '0')}</span>
@@ -185,7 +184,7 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                   className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-neutral-100 text-left cursor-pointer transition-colors text-neutral-900"
                 >
                   <div className="flex items-center gap-2">
-                    <Move size={13} className="text-[#23324a] shrink-0" />
+                    
                     <span className="text-[10.5px] font-semibold">Relocate TRP Here...</span>
                   </div>
                   <span className="text-neutral-500 text-[10.5px]">{showRelocateList ? '▲' : '▼'}</span>
@@ -222,7 +221,7 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
               className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-neutral-100 text-left cursor-pointer transition-colors text-neutral-900 group"
             >
               <div className="flex items-center gap-2">
-                <Copy size={13} className="text-[#23324a] shrink-0" />
+                
                 <span className="text-[10.5px] font-semibold">Copy Coordinates</span>
               </div>
               {copiedLabel === 'coords' ? (
@@ -247,7 +246,7 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                 className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-neutral-100 text-left cursor-pointer transition-colors text-neutral-900 group"
               >
                 <div className="flex items-center gap-2">
-                  <Compass size={13} className="text-[#23324a] shrink-0" />
+                  
                   <span className="text-[10.5px] font-semibold">Copy Bearing</span>
                 </div>
                 {copiedLabel === 'bearing' ? (
@@ -283,7 +282,7 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
               className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-blue-50 text-left cursor-pointer transition-colors text-neutral-900"
             >
               <div className="flex items-center gap-2">
-                <Send size={13} className="text-[#23324a] shrink-0" />
+                
                 <span className="text-[10.5px] font-semibold text-[#23324a]">To Dispatch Desk</span>
               </div>
               {copiedLabel === 'dispatch' && (
@@ -312,7 +311,7 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                   className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-cyan-50 text-left cursor-pointer transition-colors text-neutral-900 group"
                 >
                   <div className="flex items-center gap-2">
-                    <Radio size={13} className="text-cyan-700 shrink-0" />
+                    
                     <span className="text-[10.5px] font-semibold text-cyan-900">Request Artillery CFF (FO)</span>
                   </div>
                   {copiedLabel === 'cff_fo' && (
@@ -338,7 +337,7 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                   className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-amber-50 text-left cursor-pointer transition-colors text-neutral-900 group"
                 >
                   <div className="flex items-center gap-2">
-                    <ShieldAlert size={13} className="text-amber-700 shrink-0" />
+                    
                     <span className="text-[10.5px] font-semibold text-amber-900">Hold Fire for Mass Volley</span>
                   </div>
                   {copiedLabel === 'volley' && (
@@ -364,7 +363,7 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                   className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-orange-50 text-left cursor-pointer transition-colors text-neutral-900 group"
                 >
                   <div className="flex items-center gap-2">
-                    <Crosshair size={13} className="text-orange-700 shrink-0" />
+                    
                     <span className="text-[10.5px] font-semibold text-orange-900">Lay Suppressive Fire</span>
                   </div>
                   {copiedLabel === 'suppress' && (
@@ -387,7 +386,7 @@ export const TacticalContextMenu: React.FC<TacticalContextMenuProps> = ({
                 className="w-full px-2 py-1.5 flex items-center justify-between hover:bg-red-50 text-left cursor-pointer transition-colors text-neutral-900"
               >
                 <div className="flex items-center gap-2">
-                  <Crosshair size={13} className="text-red-700 shrink-0" />
+                  
                   <span className="text-[10.5px] font-semibold text-red-900">Pinpoint Target</span>
                 </div>
               </button>

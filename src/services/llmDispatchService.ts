@@ -1,4 +1,5 @@
 import { Unit, Vector2D, ManeuverOrder, Formation, OrderCondition, TargetReferencePoint } from '../types/game';
+import { PLACE_NAMES } from '../data/gazetteer';
 import { normalizeGridRefs, parseMgrs } from '../engine/grid';
 import { useState, useEffect } from 'react';
 import {
@@ -24,6 +25,25 @@ export interface TacticalDispatchContext {
   landmarks: TacticalLandmarkContext[];
   currentTimeMinutes: number;
   trps?: TargetReferencePoint[];
+  /** Unit that receives an order with no addressee (the player's current selection). */
+  defaultRecipientId?: string | null;
+}
+
+/** Raised when an order cannot be attributed or understood; the message is shown to the player. */
+export class DispatchError extends Error {}
+
+function nearestBattery(units: Unit[], target: Vector2D): Unit | undefined {
+  let best: Unit | undefined;
+  let bestDist = Infinity;
+  for (const u of units) {
+    if (u.type !== 'artillery' || u.status === 'shattered' || u.strength <= 0) continue;
+    const d = Math.hypot(u.position.x - target.x, u.position.y - target.y);
+    if (d < bestDist) {
+      bestDist = d;
+      best = u;
+    }
+  }
+  return best;
 }
 
 export interface ParsedDispatchResult {
@@ -293,8 +313,9 @@ export function parseTemporalConstraints(
     }
   }
 
-  // 3. Duration: "for 20 minutes", "for 30m", "for 1 hour", "for half an hour"
-  const durMinMatch = /\bfor\s+(\d+(?:\.\d+)?)\s*(?:min(?:ute)?s?|m)\b/i.exec(norm);
+  // 3. Duration: "for 20 minutes", "for 30 min", "for 1 hour", "for half an hour".
+  // A bare "m" is metres ("on bearing 090° for 750m"), never minutes.
+  const durMinMatch = /\bfor\s+(\d+(?:\.\d+)?)\s*(?:min(?:ute)?s?)\b/i.exec(norm);
   if (durMinMatch) {
     durationMinutes = Math.round(parseFloat(durMinMatch[1]));
   } else {
@@ -372,7 +393,7 @@ export function parseConditionAndChaining(
     if (!retreatMatch) return {};
     const retreatSubstr = text.slice(retreatMatch.index);
     for (const lm of landmarks) {
-      const cleanLm = stripDiacritics(lm.name.toLowerCase().replace(/[^a-z0-9]/g, ' '));
+      const cleanLm = stripDiacritics(lm.name.toLowerCase()).replace(/[^a-z0-9]/g, ' ');
       const tokens = cleanLm.split(' ').filter((t) => t.length >= 3);
       if (tokens.some((t) => new RegExp(`\\b${escapeRegex(t)}\\b`, 'i').test(retreatSubstr))) {
         return { dest: { ...lm.position }, name: lm.name };
@@ -533,7 +554,7 @@ export function parseChainedDirective(
 
   if (!explicitCoords) {
     for (const lm of context.landmarks) {
-      const cleanLm = stripDiacritics(lm.name.toLowerCase().replace(/[^a-z0-9]/g, ' '));
+      const cleanLm = stripDiacritics(lm.name.toLowerCase()).replace(/[^a-z0-9]/g, ' ');
       const tokens = cleanLm.split(' ').filter((t) => t.length >= 3);
       for (const t of tokens) {
         if (new RegExp(`\\b${escapeRegex(t)}\\b`, 'i').test(norm)) {
@@ -680,9 +701,17 @@ export class LLMDispatchService {
   ): Promise<ParsedDispatchResult> {
     // MGRS references ("XQ 1834 5172") become map coordinates before any parsing
     const rawText = normalizeGridRefs(originalText);
-    const isOnline = await this.checkConnection();
 
-    if (isOnline) {
+    // The deterministic staff parser is authoritative: it is instant and always resolves real units
+    // and places. A local Ollama model is opt-in (localStorage "dispatch.localModel" = "1"); in testing
+    // small models were slow (8-10 s) and returned unit names instead of IDs and invented coordinates.
+    let modelOptIn = false;
+    try {
+      modelOptIn = typeof localStorage?.getItem === 'function' && localStorage.getItem('dispatch.localModel') === '1';
+    } catch {
+      modelOptIn = false; // storage unavailable (private mode, non-browser runtime)
+    }
+    if (modelOptIn && (await this.checkConnection())) {
       try {
         const ollamaResult = await this.queryOllama(rawText, context);
         if (ollamaResult) {
@@ -954,9 +983,29 @@ OPERATIONAL RULES:
     const normText = rawText.replace(/[’‘`]/g, "'").trim();
     const textLower = normText.toLowerCase();
 
+    // Every named place on the sheet, not only the scenario's tactical terrain
+    const landmarks: TacticalLandmarkContext[] = [...context.landmarks];
+    for (const place of PLACE_NAMES) {
+      const key = stripDiacritics(place.name.toLowerCase()).split(/[^a-z0-9]+/)[0];
+      const known = landmarks.some((l) => stripDiacritics(l.name.toLowerCase()).split(/[^a-z0-9]+/).includes(key));
+      if (!known) landmarks.push(place);
+    }
+    context = { ...context, landmarks };
+
+    // The primary clause excludes any follow-up ("... then advance to Bosenitz"), and the action text
+    // additionally excludes contingencies ("if attacked, form square") so they don't read as actions.
+    const chainedAt = /\b(?:then|afterwards|subsequently|followed\s+by)\b/i.exec(normText);
+    const primaryText = chainedAt ? normText.slice(0, chainedAt.index) : normText;
+    const condAt = /\b(?:if|when|should|once|in\s+case|unless)\b/i.exec(primaryText);
+    const actionText = condAt ? primaryText.slice(0, condAt.index) : primaryText;
+    const actionLower = actionText.toLowerCase();
+    const plainPrimary = stripDiacritics(primaryText);
+    const hasAction = /\b(advance|march|move|go|proceed|push|attack|assault|charge|storm|take|seize|secure|occupy|capture|hold|defend|stand|entrench|dig|retreat|withdraw|retire|fall\s+back|pull\s+back|reinforce|support|join|relieve|bombard|fire|shell|barrage|smoke|suppress|volley|screen|deploy|cross|wheel|engage|intercept|counter[- ]?battery)\b/i.test(actionText);
+    const isPureContingency = !!condAt && !hasAction;
+
     // Check if user specifically ordered artillery bombardment or battery fire
     const isBombardmentKeyword =
-      /\b(bombard|bombardment|fire|battery|artillery|barrage|cannon|shell|salvo|strike|call\s+for\s+fire|cff|fire\s+mission)\b/i.test(normText);
+      /\b(bombard|bombardment|fire|battery|artillery|barrage|cannon|shell|salvo|strike|call\s+for\s+fire|cff|fire\s+mission)\b/i.test(actionText);
 
     // 1. Identify Target Corps or Individual Unit / Commander
     let isCorpsOrder = false;
@@ -972,7 +1021,8 @@ OPERATIONAL RULES:
     const rankMatch = /^(?:marshal|general|colonel|major|prince|emperor|tsar)\s+([a-zA-Z0-9_'\-]+(?:\s+(?:corps|division|battery|column|reserve|guard))?)/i.exec(normText);
     const leadPlain = /^([a-zA-Z0-9_'\-]+(?:\s+(?:corps|division|battery|column|reserve|guard))?)[\s,:]+/i.exec(normText);
 
-    const rawLead = leadAt ? leadAt[1] : (rankMatch ? rankMatch[1] : (leadPlain ? leadPlain[1] : null));
+    const leadComma = /^([^,@:;\n]{2,40}),/.exec(normText);
+    const rawLead = leadAt ? leadAt[1] : (rankMatch ? rankMatch[1] : (leadComma ? leadComma[1] : (leadPlain ? leadPlain[1] : null)));
     const leadToken = rawLead ? rawLead.replace(/^(?:marshal|general|colonel|major|prince)\s+/i, '').toLowerCase().trim() : null;
 
     const availableCorps = Array.from(new Set(context.playerUnits.map((u) => u.corps)));
@@ -1100,13 +1150,29 @@ OPERATIONAL RULES:
       }
     }
 
+    // Orders to a corps commander that mention the corps go to the whole corps
+    if (!isCorpsOrder && matchedUnit && matchedUnit.type === 'headquarters' && /\bcorps\b/i.test(normText)) {
+      const corpsUnits = context.playerUnits.filter((u) => u.corps === matchedUnit!.corps && u.status !== 'shattered');
+      if (corpsUnits.length > 1) {
+        isCorpsOrder = true;
+        matchedCorps = matchedUnit.corps;
+        targetUnitIds = corpsUnits.map((u) => u.id);
+      }
+    }
+
+    if (!matchedUnit && leadAt) {
+      throw new DispatchError(`No unit answers to "${leadAt[1].trim()}". Check the name in the ORBAT.`);
+    }
+    if (!matchedUnit && context.defaultRecipientId) {
+      matchedUnit = context.playerUnits.find((u) => u.id === context.defaultRecipientId) || null;
+    }
     if (!matchedUnit) {
-      matchedUnit = context.playerUnits.find((u) => u.type === 'infantry' && u.status !== 'shattered') || context.playerUnits[0];
+      throw new DispatchError('Address the order to a unit, e.g. "@Vandamme advance to Pratzen", or select a unit first.');
     }
 
     // 2. Identify Target Location / Destination
     // PRIORITY 1: Check for explicit grid coordinates (e.g. (1420, 680), 1420, 680)
-    const explicitCoords = extractCoordinates(normText, context.trps);
+    const explicitCoords = extractCoordinates(primaryText, context.trps);
     let destination: Vector2D = explicitCoords ? { ...explicitCoords } : { ...matchedUnit.position };
     let destinationName = '';
 
@@ -1130,40 +1196,53 @@ OPERATIONAL RULES:
     if (!explicitCoords) {
       // Check landmarks with whole-token matching, prioritizing destination landmarks and filtering origin landmarks
       let matchedLandmark: TacticalLandmarkContext | null = null;
-      const destMatches: { lm: TacticalLandmarkContext; isDestPreposition: boolean }[] = [];
+      const destMatches: { lm: TacticalLandmarkContext; isDestPreposition: boolean; at: number; tok: string }[] = [];
 
       for (const lm of context.landmarks) {
-        const cleanLm = stripDiacritics(lm.name.toLowerCase().replace(/[^a-z0-9]/g, ' '));
+        const cleanLm = stripDiacritics(lm.name.toLowerCase()).replace(/[^a-z0-9]/g, ' ');
         const tokens = cleanLm.split(' ').filter((t) => t.length >= 3);
         for (const t of tokens) {
           const regex = new RegExp(`\\b${t}\\b`, 'gi');
           let match: RegExpExecArray | null;
-          while ((match = regex.exec(normText)) !== null) {
+          while ((match = regex.exec(plainPrimary)) !== null) {
             const matchIdx = match.index;
-            const textBefore = normText.slice(Math.max(0, matchIdx - 35), matchIdx);
+            const textBefore = plainPrimary.slice(Math.max(0, matchIdx - 35), matchIdx);
 
             const isDestPrep = /\b(?:to|towards?|at|reach|storm|take|occupy|near|on)\s+@?[a-z0-9]*\s*$/i.test(textBefore);
             const isOrigin = !isDestPrep && /\b(?:from|leaving|departing|out\s+of|starting\s+(?:from|at))\s+@?[a-z0-9]*\s*$/i.test(textBefore);
 
             if (!isOrigin) {
-              destMatches.push({ lm, isDestPreposition: isDestPrep });
+              destMatches.push({ lm, isDestPreposition: isDestPrep, at: matchIdx, tok: t });
             }
           }
         }
       }
 
+      // A place whose whole name is the word used wins; then villages and hills over bridges/fords
+      const primaryLower = plainPrimary.toLowerCase();
+      const rank = (m: (typeof destMatches)[number]) => {
+        const bare = stripDiacritics(m.lm.name.replace(/\s*\([^)]*\)/g, '').toLowerCase()).trim();
+        const words = bare.split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+        const wordsPresent = words.filter((w) => new RegExp(`\\b${w}\\b`).test(primaryLower)).length;
+        const wholeName = primaryLower.includes(bare) ? 1 : 0;
+        const kind = m.lm.type === 'village' || m.lm.type === 'hill' || m.lm.type === 'ridge' ? 1 : 0;
+        return wordsPresent * 3 + wholeName + kind;
+      };
+      const bestAt = (group: typeof destMatches) => group.reduce((a, b) => (rank(b) > rank(a) ? b : a)).lm;
       const prepMatches = destMatches.filter((m) => m.isDestPreposition);
       if (prepMatches.length > 0) {
-        matchedLandmark = prepMatches[prepMatches.length - 1].lm;
+        const lastAt = Math.max(...prepMatches.map((m) => m.at));
+        matchedLandmark = bestAt(destMatches.filter((m) => Math.abs(m.at - lastAt) <= 24));
       } else if (destMatches.length > 0) {
-        matchedLandmark = destMatches[0].lm;
+        const firstAt = Math.min(...destMatches.map((m) => m.at));
+        matchedLandmark = bestAt(destMatches.filter((m) => Math.abs(m.at - firstAt) <= 24));
       } else {
         // Fallback to checking any landmark token
         for (const lm of context.landmarks) {
-          const cleanLm = stripDiacritics(lm.name.toLowerCase().replace(/[^a-z0-9]/g, ' '));
+          const cleanLm = stripDiacritics(lm.name.toLowerCase()).replace(/[^a-z0-9]/g, ' ');
           const tokens = cleanLm.split(' ').filter((t) => t.length >= 3);
           for (const t of tokens) {
-            if (new RegExp(`\\b${t}\\b`, 'i').test(normText)) {
+            if (new RegExp(`\\b${t}\\b`, 'i').test(plainPrimary)) {
               matchedLandmark = lm;
               break;
             }
@@ -1172,23 +1251,38 @@ OPERATIONAL RULES:
         }
       }
 
-      const isHoldOrder = /\b(hold|defend|entrench|stand|dig\s*in)\b/i.test(textLower);
+      const isHoldOrder = isPureContingency || /\b(hold|defend|entrench|stand|dig\s*in)\b/i.test(actionLower);
 
       // If holding/defending at a landmark, destination IS the landmark itself!
-      if (isHoldOrder && matchedLandmark) {
+      const isWithdrawal = /\b(retreat|withdraw|retire|fall\s+back|pull\s+back)\b/i.test(actionLower);
+      if (isHoldOrder && matchedLandmark && !isPureContingency) {
         destination = { ...matchedLandmark.position };
         destinationName = matchedLandmark.name.replace(/\s*\([^)]*\)/g, '').trim();
+      } else if (isHoldOrder) {
+        destination = { ...matchedUnit.position };
+        destinationName = 'present position';
+      } else if (isWithdrawal && !matchedLandmark) {
+        // Fall back directly away from the nearest enemy
+        let nearest: Unit | null = null;
+        let best = Infinity;
+        for (const e of context.enemyUnits) {
+          const d = Math.hypot(e.position.x - matchedUnit.position.x, e.position.y - matchedUnit.position.y);
+          if (d < best) {
+            best = d;
+            nearest = e;
+          }
+        }
+        const away = nearest
+          ? Math.atan2(matchedUnit.position.y - nearest.position.y, matchedUnit.position.x - nearest.position.x)
+          : matchedUnit.heading + Math.PI;
+        destination = {
+          x: Math.max(50, Math.min(2350, matchedUnit.position.x + Math.cos(away) * 200)),
+          y: Math.max(50, Math.min(1450, matchedUnit.position.y + Math.sin(away) * 200)),
+        };
+        destinationName = 'a position 1 km to the rear';
       } else {
         // Check if user specifically ordered an attack or engagement against enemy forces
-        const attacksEnemy =
-          textLower.includes('enemy') ||
-          textLower.includes('hostile') ||
-          textLower.includes('attack') ||
-          textLower.includes('intercept') ||
-          textLower.includes('engage') ||
-          textLower.includes('charge') ||
-          textLower.includes('storm') ||
-          textLower.includes('destroy');
+        const attacksEnemy = !isWithdrawal && /\b(enemy|hostile|attack|intercept|engage|charge|storm|destroy)\b/.test(actionLower);
 
         if (attacksEnemy) {
           if (matchedLandmark) {
@@ -1343,13 +1437,13 @@ OPERATIONAL RULES:
     // Extract tactical condition and chained directive (e.g. "if attacked form square", "then assault Pratzen")
     const conditionInfo = parseConditionAndChaining(normText, context.landmarks);
 
-    // If there is a chained follow-up clause ("... then assault Pratzen"), strip it from primary evaluation
-    const chainedSplit = /\b(?:then|afterwards|subsequently|followed\s+by)\b/i.exec(textLower);
-    const primaryTextLower = chainedSplit ? textLower.slice(0, chainedSplit.index) : textLower;
+    const primaryTextLower = actionLower;
 
     // 3. Determine Order Type & Formation
     let explicitFormation: Formation | undefined = undefined;
-    if (/\b(?:in|into|as|form(?:ing)?)\s+square\b|\bsquare\s+formation\b/i.test(normText)) {
+    if (isPureContingency) {
+      // The formation named in a contingency ("if attacked, form square") applies only when triggered
+    } else if (/\b(?:in|into|as|form(?:ing)?)\s+square\b|\bsquare\s+formation\b/i.test(normText)) {
       explicitFormation = 'square';
     } else if (/\b(?:in|into|as|form(?:ing)?)\s+line\b|\bline\s+formation\b/i.test(normText)) {
       explicitFormation = 'line';
@@ -1368,7 +1462,7 @@ OPERATIONAL RULES:
     let holdFireThreshold: number | undefined = undefined;
     let suppressionTargetId: string | undefined = undefined;
 
-    const isSmoke = /\b(smoke|smoke\s*screen|obscurant|screen)\b/i.test(rawText);
+    const isSmoke = /\b(smoke|smoke\s*screen|obscurant)\b/i.test(actionText);
     const isVolleyFire = /\b(?:volley|fire\s+by\s+ranks|whites\s+of\s+their\s+eyes|hold\s+fire(?:\s+for\s+volley)?|mass\s+volley)\b/i.test(normText);
     const isSuppressiveFire = /\b(?:suppress|suppressive|covering\s+fire|base\s+of\s+fire|pin\s+down|pinning\s+fire)\b/i.test(normText);
     const isCounterBattery = /\b(?:counter[- ]?battery|contre[- ]?batterie|silence\s+(?:enemy\s+)?guns|knock\s*out\s+(?:enemy\s+)?battery)\b/i.test(normText);
@@ -1378,11 +1472,30 @@ OPERATIONAL RULES:
     const isTrpFire = !!trpMatch;
     const trpCode = trpMatch ? `TRP 0${parseInt(trpMatch[1], 10)}` : undefined;
 
-    if (isSkirmishScreen) {
+    if (isPureContingency) {
+      orderType = 'hold';
+      formation = matchedUnit.formation;
+      actionDesc = 'Holding present position';
+    } else if (isSkirmishScreen) {
       orderType = 'hold';
       formation = explicitFormation || 'line';
       actionDesc = `Deploying forward skirmish screen line (35% incoming fire absorption & shock charge disruption)`;
     } else if (isCounterBattery) {
+      // Lock onto the enemy battery nearest the named area
+      let guns: Unit | null = null;
+      let best = 320;
+      for (const e of context.enemyUnits) {
+        if (e.type !== 'artillery' || e.status === 'shattered' || e.strength <= 0) continue;
+        const d = Math.hypot(e.position.x - destination.x, e.position.y - destination.y);
+        if (d < best) {
+          best = d;
+          guns = e;
+        }
+      }
+      if (guns) {
+        destination = { ...guns.position };
+        destinationName = guns.name;
+      }
       orderType = 'bombard';
       formation = explicitFormation || 'unlimbered';
       actionDesc = `Executing counter-battery mission on ${destinationName} targeting enemy guns and caissons`;
@@ -1427,10 +1540,7 @@ OPERATIONAL RULES:
           }
         }
         if (!supportingBatteryId) {
-          const defaultArty = context.playerUnits.find((u) => u.type === 'artillery' && u.status !== 'shattered');
-          if (defaultArty) {
-            supportingBatteryId = defaultArty.id;
-          }
+          supportingBatteryId = nearestBattery(context.playerUnits, destination)?.id;
         }
         formation = explicitFormation || 'line';
         const batteryName = supportingBatteryId
@@ -1447,7 +1557,7 @@ OPERATIONAL RULES:
       orderType = 'charge';
       formation = explicitFormation || 'column';
       actionDesc = `Advancing to assault ${destinationName}`;
-    } else if (primaryTextLower.includes('assault') || primaryTextLower.includes('attack')) {
+    } else if (/\b(assault|attack|take|seize|capture)\b/.test(primaryTextLower)) {
       orderType = 'assault';
       formation = explicitFormation || 'column';
       actionDesc = `Advancing to assault ${destinationName}`;
@@ -1463,7 +1573,7 @@ OPERATIONAL RULES:
       orderType = 'entrench';
       formation = explicitFormation || 'line';
       actionDesc = `Constructing field fortifications at ${destinationName}`;
-    } else if (primaryTextLower.includes('retreat') || primaryTextLower.includes('fall back')) {
+    } else if (/\b(retreat|withdraw|retire|fall\s+back|pull\s+back)\b/.test(primaryTextLower)) {
       orderType = 'retreat';
       formation = explicitFormation || 'column';
       actionDesc = `Conducting fighting withdrawal to ${destinationName}`;
@@ -1471,6 +1581,14 @@ OPERATIONAL RULES:
       orderType = 'march';
       formation = explicitFormation || 'column';
       actionDesc = `Marching to ${destinationName}`;
+    }
+
+    if (orderType === 'bombard' && matchedUnit.type !== 'artillery' && !supportingBatteryId) {
+      const battery = nearestBattery(context.playerUnits, destination);
+      if (!battery) throw new DispatchError('No friendly battery is available to fire this mission.');
+      observerUnitId = matchedUnit.id;
+      supportingBatteryId = battery.id;
+      actionDesc += `, observed for ${battery.name}`;
     }
 
     if (explicitFormation) {

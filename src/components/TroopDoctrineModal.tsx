@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Shield, Swords, Flame, Flag, HelpCircle } from 'lucide-react';
+import { X } from './glyphs';
 
 interface TroopDoctrineModalProps {
   isOpen: boolean;
@@ -17,7 +17,7 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
         {/* Header */}
         <div className="bg-[#23324a] text-white px-4 py-3 flex items-center justify-between border-b border-[#2e4160]">
           <div className="flex items-center gap-2">
-            <HelpCircle size={18} className="text-yellow-400" />
+            
             <div>
               <h2 className="text-sm font-semibold ">
                 Reference: units, formations and symbols
@@ -45,7 +45,7 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
  : 'border-transparent text-neutral-600 hover:text-neutral-900'
  }`}
           >
-            <Swords size={13} />
+            
             <span>Infantry [ X ]</span>
           </button>
           <button
@@ -56,7 +56,7 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
  : 'border-transparent text-neutral-600 hover:text-neutral-900'
  }`}
           >
-            <Shield size={13} />
+            
             <span>Cavalry [ / ]</span>
           </button>
           <button
@@ -67,7 +67,7 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
  : 'border-transparent text-neutral-600 hover:text-neutral-900'
  }`}
           >
-            <Flame size={13} />
+            
             <span>Artillery [ ART ]</span>
           </button>
           <button
@@ -78,7 +78,7 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
  : 'border-transparent text-neutral-600 hover:text-neutral-900'
  }`}
           >
-            <Flag size={13} />
+            
             <span>HQ & Supply</span>
           </button>
           <button

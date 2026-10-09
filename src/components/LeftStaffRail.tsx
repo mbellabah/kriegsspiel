@@ -2,10 +2,10 @@ import React, { useState, useRef } from 'react';
 import { BattleEngine, SimulationState } from '../engine/simulation';
 import { Vector2D } from '../types/game';
 import { EngagementsDrawer } from './EngagementsDrawer';
-import { ImperialDispatchDesk } from './ImperialDispatchDesk';
+import { ImperialDispatchDesk, DispatchInsert } from './ImperialDispatchDesk';
 import { OrderOfBattle } from './OrderOfBattle';
 import { CombatDispatches } from './CombatDispatches';
-import { ShieldAlert, Send, Users, MessageSquare, X, GripVertical } from 'lucide-react';
+import { Grip, X } from './glyphs';
 import { ui, cx } from './ui';
 
 export type StaffTab = 'sitrep' | 'dispatch' | 'orbat' | 'log';
@@ -20,7 +20,7 @@ interface LeftStaffRailProps {
   onTogglePickCoordinates?: () => void;
   pinpointedCoords?: Vector2D | null;
   onClearPinpointedCoords?: () => void;
-  initialDispatchText?: string;
+  dispatchInsert?: DispatchInsert | null;
   // Map / Camera callbacks
   onFocusLocation?: (loc: Vector2D) => void;
   onHoverCorps?: (corpsName: string | null) => void;
@@ -36,7 +36,7 @@ export const LeftStaffRail: React.FC<LeftStaffRailProps> = React.memo(({
   onTogglePickCoordinates,
   pinpointedCoords,
   onClearPinpointedCoords,
-  initialDispatchText = '',
+  dispatchInsert = null,
   onFocusLocation,
   onHoverCorps,
   onDispatchCorps,
@@ -89,11 +89,11 @@ export const LeftStaffRail: React.FC<LeftStaffRailProps> = React.memo(({
     window.addEventListener('pointerup', onPointerUp);
   };
 
-  const TAB_META: Record<StaffTab, { icon: React.ReactNode; title: string; subtitle: string }> = {
-    sitrep: { icon: <ShieldAlert size={13} />, title: 'Situation report', subtitle: 'Contacts and engagements' },
-    dispatch: { icon: <Send size={13} />, title: 'Orders', subtitle: 'Write orders to your commanders' },
-    orbat: { icon: <Users size={13} />, title: 'Order of battle', subtitle: 'Corps, divisions and strengths' },
-    log: { icon: <MessageSquare size={13} />, title: 'Combat log', subtitle: 'Signals and events' },
+  const TAB_META: Record<StaffTab, { title: string }> = {
+    sitrep: { title: 'Situation report' },
+    dispatch: { title: 'Orders' },
+    orbat: { title: 'Order of battle' },
+    log: { title: 'Combat log' },
   };
   const meta = activeTab ? TAB_META[activeTab] : null;
   const isDispatch = activeTab === 'dispatch';
@@ -119,8 +119,7 @@ export const LeftStaffRail: React.FC<LeftStaffRailProps> = React.memo(({
         title="Drag to move · double-click to reset"
       >
         <div className="flex items-center gap-1.5 min-w-0">
-          <GripVertical size={12} className="text-stone-400 flex-shrink-0" />
-          <span className="text-stone-600">{meta?.icon}</span>
+          <Grip size={12} className="text-stone-400 flex-shrink-0" />
           <span className="truncate">{meta?.title}</span>
         </div>
         <button type="button" onClick={() => onSelectTab(null)} className={cx(ui.btnIcon, 'h-6 w-6')} title="Close panel">
@@ -159,7 +158,7 @@ export const LeftStaffRail: React.FC<LeftStaffRailProps> = React.memo(({
             onTogglePickCoordinates={onTogglePickCoordinates}
             pinpointedCoords={pinpointedCoords}
             onClearPinpointedCoords={onClearPinpointedCoords}
-            initialText={initialDispatchText}
+            insert={dispatchInsert}
             embedded={true}
           />
         </div>

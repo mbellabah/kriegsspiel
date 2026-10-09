@@ -2,6 +2,7 @@ import { Unit, ManeuverOrder, Vector2D, OperationalGraphic, TroopFilterType, Tar
 import { SimulationState, BattleEngine } from './simulation';
 import { EffectsSystem } from './effects';
 import { GZD, SQUARE, eastingKm, northingKm } from './grid';
+import { SETTLEMENTS, HEIGHTS } from '../data/gazetteer';
 import {
   MAP,
   FONT,
@@ -48,7 +49,7 @@ export class SandtableRenderer {
   public set engine(eng: BattleEngine | undefined) {
     if (this._engine !== eng) {
       this._engine = eng;
-      this.cachedTopoCanvas = null;
+      this.cachedIndexContours = null;
       this.cachedBaseMapCanvas = null;
     }
   }
@@ -78,7 +79,6 @@ export class SandtableRenderer {
   public mapTheme: 'classic' | 'dark' | 'slate' = 'classic';
   private fowCanvas: HTMLCanvasElement | null = null;
   private fowCtx: CanvasRenderingContext2D | null = null;
-  private cachedTopoCanvas: HTMLCanvasElement | null = null;
   private cachedIntermediateContours: Path2D | null = null;
   private cachedIndexContours: Path2D | null = null;
   private cachedContourLabels: { x: number; y: number; angle: number; level: number }[] = [];
@@ -141,7 +141,7 @@ export class SandtableRenderer {
     // =========================================================================
 
     // 1. Base Map Paper Background (Clean outer void fill beyond 2400x1500)
-    ctx.fillStyle = '#dedbd2';
+    ctx.fillStyle = '#e6e6e2';
     ctx.fillRect(-2000, -2000, 6400, 5500);
 
     // 2. Pre-rendered Master Cartography (Instant GPU texture blit)
@@ -149,6 +149,22 @@ export class SandtableRenderer {
     if (this.cachedBaseMapCanvas) {
       ctx.drawImage(this.cachedBaseMapCanvas, 0, 0, 2400, 1500);
     }
+
+    // 1 km grid, drawn live so it stays a crisp 1 px line at every zoom
+    ctx.save();
+    ctx.strokeStyle = MAP.grid;
+    ctx.lineWidth = 1 / camera.zoom;
+    ctx.beginPath();
+    for (let gx = 200; gx < 2400; gx += 200) {
+      ctx.moveTo(gx, 0);
+      ctx.lineTo(gx, 1500);
+    }
+    for (let gy = 200; gy < 1500; gy += 200) {
+      ctx.moveTo(0, gy);
+      ctx.lineTo(2400, gy);
+    }
+    ctx.stroke();
+    ctx.restore();
 
     // 2.5 Dynamic Shattered Ice Cracks (Artillery impacts on Satschan Pond)
     if (state.iceCracks && state.iceCracks.length > 0) {
@@ -206,6 +222,7 @@ export class SandtableRenderer {
 
     ctx.save();
     ctx.scale(dpr, dpr);
+    this.renderGridEdgeLabels(ctx, camera, screenW, screenH);
     this.renderMapFurniture(ctx, screenH);
     ctx.restore();
   }
@@ -495,50 +512,12 @@ export class SandtableRenderer {
     ctx.fillRect(0, 0, 2400, 1500);
   }
 
-  // 1 km reference grid (200px = 1km), drawn above terrain like a printed military sheet
-  private renderMgrsGrid(ctx: CanvasRenderingContext2D) {
-    const step = 200;
+  // Sheet neatline (the 1 km grid itself is drawn live each frame)
+  private renderNeatline(ctx: CanvasRenderingContext2D) {
     ctx.save();
-    ctx.strokeStyle = MAP.grid;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let x = step; x < 2400; x += step) {
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, 1500);
-    }
-    for (let y = step; y < 1500; y += step) {
-      ctx.moveTo(0, y);
-      ctx.lineTo(2400, y);
-    }
-    ctx.stroke();
-
-    // Two-digit kilometre values just inside the neatline (MGRS 33U XQ)
-    ctx.font = font(600, 10, FONT.mono);
-    ctx.textBaseline = 'top';
-    ctx.textAlign = 'left';
-    for (let x = step; x < 2400; x += step) {
-      const label = eastingKm(x);
-      haloText(ctx, label, x + 3, 5, MAP.gridLabel, 3);
-      ctx.textBaseline = 'bottom';
-      haloText(ctx, label, x + 3, 1495, MAP.gridLabel, 3);
-      ctx.textBaseline = 'top';
-    }
-    for (let y = step; y < 1500; y += step) {
-      const label = northingKm(y);
-      ctx.textAlign = 'left';
-      haloText(ctx, label, 5, y + 3, MAP.gridLabel, 3);
-      ctx.textAlign = 'right';
-      haloText(ctx, label, 2395, y + 3, MAP.gridLabel, 3);
-    }
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.font = font(600, 9, FONT.mono);
-    haloText(ctx, `${GZD} ${SQUARE}`, 5, 5, MAP.gridLabel, 3);
-
-    // Neatline
     ctx.strokeStyle = MAP.ink;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(1, 1, 2398, 1498);
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(0.75, 0.75, 2398.5, 1498.5);
     ctx.restore();
   }
 
@@ -577,7 +556,7 @@ export class SandtableRenderer {
     this.renderSpotHeights(bCtx);
     bCtx.restore();
 
-    this.renderMgrsGrid(bCtx);
+    this.renderNeatline(bCtx);
 
     this.cachedBaseMapCanvas = baseCanvas;
   }
@@ -586,7 +565,7 @@ export class SandtableRenderer {
   // RELIEF: analytic hillshade + hypsometric tint + 10m contours (index every 50m)
   // =========================================================================
   private initTopographyCache() {
-    if (this.cachedTopoCanvas || typeof document === 'undefined' || !this.engine) return;
+    if (this.cachedIndexContours || typeof document === 'undefined' || !this.engine) return;
     const engine = this.engine;
 
     // Sample grid over the 1600x1000 cartography space (2px per sample)
@@ -632,31 +611,6 @@ export class SandtableRenderer {
         }
       }
     }
-
-    // Hypsometric tint: pale green-grey lowlands to warm buff uplands. Relief is carried by contours.
-    const img = new ImageData(W, H);
-    const px = img.data;
-    for (let j = 0; j < H; j++) {
-      for (let i = 0; i < W; i++) {
-        const k = j * W + i;
-        const e = z[k];
-        const t = Math.min(1, Math.max(0, (e - 182) / 120));
-        const low = e < 184 ? 1 : 0;
-        const r = 242 - 8 * t - 6 * low;
-        const g = 242 - 20 * t - 1 * low;
-        const b = 232 - 34 * t + 3 * low;
-        const o = k * 4;
-        px[o] = r;
-        px[o + 1] = g;
-        px[o + 2] = b;
-        px[o + 3] = 255;
-      }
-    }
-    const relief = document.createElement('canvas');
-    relief.width = W;
-    relief.height = H;
-    relief.getContext('2d')?.putImageData(img, 0, 0);
-    this.cachedTopoCanvas = relief;
 
     // Marching squares contours
     const interPath = new Path2D();
@@ -738,9 +692,6 @@ export class SandtableRenderer {
     this.initTopographyCache();
 
     ctx.save();
-    if (this.cachedTopoCanvas) {
-      ctx.drawImage(this.cachedTopoCanvas, 0, 0, 1600, 1000);
-    }
 
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -767,7 +718,7 @@ export class SandtableRenderer {
       ctx.translate(l.x, l.y);
       ctx.rotate(a);
       ctx.lineJoin = 'round';
-      ctx.strokeStyle = 'rgba(240, 234, 220, 0.95)';
+      ctx.strokeStyle = 'rgba(251, 251, 248, 0.95)';
       ctx.lineWidth = 3;
       ctx.strokeText(String(l.level), 0, 0);
       ctx.fillStyle = MAP.contourLabel;
@@ -779,14 +730,7 @@ export class SandtableRenderer {
 
   // Named spot heights (triangulation points)
   private renderSpotHeights(ctx: CanvasRenderingContext2D) {
-    const spots = [
-      { name: 'Santon', elev: 320, x: 890, y: 155 },
-      { name: 'Žuráň', elev: 280, x: 720, y: 250 },
-      { name: 'Staré Vinohrady', elev: 300, x: 1060, y: 390 },
-      { name: 'Pratzeberg', elev: 285, x: 1000, y: 490 },
-      { name: 'Hostieradek', elev: 275, x: 980, y: 700 },
-      { name: 'Turas', elev: 235, x: 380, y: 420 },
-    ];
+    const spots = HEIGHTS;
     ctx.save();
     for (const sp of spots) {
       ctx.fillStyle = MAP.ink;
@@ -813,153 +757,46 @@ export class SandtableRenderer {
   private renderHistoricalTerrainFeatures(ctx: CanvasRenderingContext2D) {
     ctx.save();
 
-    // 1. SANTON FORTIFIED REDOUBT (Charbonnel's 18-Gun Lunette at 890, 155)
+    // Santon redoubt: earthwork line with ticks on the outer (enemy) face
     ctx.save();
     ctx.translate(890, 155);
-
-    // Outer ditch / dry moat
-    ctx.strokeStyle = '#451a03';
-    ctx.lineWidth = 2.2;
+    ctx.strokeStyle = MAP.ink;
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(0, 0, 24, Math.PI * 0.8, Math.PI * 2.2);
+    ctx.arc(0, 0, 20, Math.PI * 0.8, Math.PI * 2.2);
     ctx.stroke();
-
-    // Earthen revetted parapet
-    ctx.fillStyle = '#78350f';
+    ctx.lineWidth = 0.7;
     ctx.beginPath();
-    ctx.arc(0, 0, 21, Math.PI * 0.8, Math.PI * 2.2);
-    ctx.arc(0, 0, 15, Math.PI * 2.2, Math.PI * 0.8, true);
-    ctx.closePath();
-    ctx.fill();
-
-    // Abatis stakes (sharpened wooden chevaux-de-frise)
-    ctx.strokeStyle = '#292524';
-    ctx.lineWidth = 0.8;
-    for (let a = Math.PI * 0.85; a <= Math.PI * 2.15; a += 0.15) {
-      const cosA = Math.cos(a);
-      const sinA = Math.sin(a);
-      ctx.beginPath();
-      ctx.moveTo(cosA * 24, sinA * 24);
-      ctx.lineTo(cosA * 29, sinA * 29);
-      ctx.stroke();
+    for (let a = Math.PI * 0.85; a <= Math.PI * 2.15; a += 0.18) {
+      ctx.moveTo(Math.cos(a) * 20, Math.sin(a) * 20);
+      ctx.lineTo(Math.cos(a) * 23.5, Math.sin(a) * 23.5);
     }
-
-    // 6 Gun Embrasures
-    ctx.fillStyle = '#1c1917';
-    for (let a = Math.PI * 0.95; a <= Math.PI * 2.05; a += 0.22) {
-      const cosA = Math.cos(a);
-      const sinA = Math.sin(a);
-      ctx.fillRect(cosA * 17 - 1.2, sinA * 17 - 1.2, 2.4, 2.4);
-    }
-
-    // Interior firing step / command post
-    ctx.fillStyle = '#fef08a';
-    ctx.beginPath();
-    ctx.arc(0, 0, 3, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.font = font(500, 6.5, FONT.carto, true);
+    ctx.stroke();
+    ctx.font = font(500, 6, FONT.label, true);
     ctx.textAlign = 'center';
-    haloText(ctx, 'Santon redoubt', 0, -31, '#44403c', 2.2);
+    haloText(ctx, 'Redoubt', 0, -27, MAP.inkMuted, 2);
     ctx.restore();
 
-    // 2. SOKOLNITZ PHEASANTRY ("FAISANDERIE") STONE WALL ENCLOSURE (645, 645)
-    const px = 645;
-    const py = 645;
-    const pw = 66;
-    const ph = 54;
-
-    // Heavy perimeter stone wall
-    ctx.strokeStyle = '#3f3f46';
-    ctx.lineWidth = 1.8;
-    ctx.strokeRect(px, py, pw, ph);
-
-    // Stone corner bastions / watch pavilions
-    const corners = [
-      { x: px, y: py },
-      { x: px + pw, y: py },
-      { x: px, y: py + ph },
-      { x: px + pw, y: py + ph },
-    ];
-    ctx.fillStyle = '#27272a';
-    for (const c of corners) {
-      ctx.fillRect(c.x - 2.5, c.y - 2.5, 5, 5);
-    }
-
-    // Breached wall section on west face
-    ctx.strokeStyle = '#b91c1c';
-    ctx.lineWidth = 1.6;
-    ctx.setLineDash([2, 2]);
-    ctx.beginPath();
-    ctx.moveTo(px, py + 18);
-    ctx.lineTo(px, py + 34);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Pheasantry Manor Chateau Building
-    ctx.fillStyle = '#52525b';
-    ctx.fillRect(px + 14, py + 12, 16, 12);
-    ctx.strokeRect(px + 14, py + 12, 16, 12);
-
-    // 3. STARÉ VINOHRADY VINEYARD TERRACES (1020, 370 to 1100, 420)
-    ctx.save();
-    ctx.strokeStyle = '#78350f';
+    // Sokolnitz pheasantry: walled enclosure with the manor house
+    ctx.strokeStyle = MAP.ink;
     ctx.lineWidth = 0.9;
-    const terraces = [
-      { x1: 1020, y1: 375, x2: 1085, y2: 360 },
-      { x1: 1025, y1: 395, x2: 1090, y2: 380 },
-      { x1: 1030, y1: 415, x2: 1095, y2: 400 },
-      { x1: 1035, y1: 435, x2: 1100, y2: 420 },
-    ];
-    for (const t of terraces) {
-      ctx.beginPath();
-      ctx.moveTo(t.x1, t.y1);
-      ctx.lineTo(t.x2, t.y2);
-      ctx.stroke();
+    ctx.strokeRect(645, 645, 66, 54);
+    ctx.fillStyle = MAP.building;
+    ctx.fillRect(659, 657, 14, 9);
 
-      // Micro vine posts
-      ctx.fillStyle = '#4d7c0f';
-      for (let vx = t.x1 + 6; vx < t.x2 - 4; vx += 10) {
-        const ratio = (vx - t.x1) / (t.x2 - t.x1);
-        const vy = t.y1 + ratio * (t.y2 - t.y1) - 2;
-        ctx.fillRect(vx - 0.7, vy - 0.7, 1.4, 1.4);
-      }
-    }
-    ctx.restore();
-
-    // 4. PUNTOWITZ & KOBELNITZ RAVINES (Sunken Defiles)
-    ctx.save();
-    ctx.strokeStyle = 'rgba(120, 53, 15, 0.65)';
-    ctx.lineWidth = 1.2;
-
-    // Puntowitz Ravine: descending from (840, 470) to (685, 440)
+    // Gullies (Puntowitz, Kobelnitz)
+    ctx.strokeStyle = 'rgba(150, 85, 35, 0.75)';
+    ctx.lineWidth = 0.8;
     ctx.beginPath();
     ctx.moveTo(840, 470);
     ctx.bezierCurveTo(790, 465, 735, 450, 685, 440);
-    ctx.stroke();
-
-    // Kobelnitz Gully: descending from (835, 590) to (695, 500)
-    ctx.beginPath();
     ctx.moveTo(835, 590);
     ctx.bezierCurveTo(780, 570, 735, 535, 695, 500);
     ctx.stroke();
 
-    // Erosion tick marks along ravine edges
-    ctx.strokeStyle = 'rgba(120, 53, 15, 0.45)';
-    ctx.lineWidth = 0.6;
-    for (let i = 0; i < 6; i++) {
-      const t = i / 5;
-      const rx = 840 - t * 150;
-      const ry = 470 - t * 28;
-      ctx.beginPath();
-      ctx.moveTo(rx - 2, ry - 3);
-      ctx.lineTo(rx + 2, ry + 3);
-      ctx.stroke();
-    }
-    ctx.restore();
-
     ctx.restore();
   }
+
 
   // =========================================================================
   // 3. WOODLANDS & FORESTS (NATO STANAG 3677 Organic Canopy & Military Tint)
@@ -1011,7 +848,7 @@ export class SandtableRenderer {
       ctx.fill();
 
       ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = isWalled ? 1.6 : 0.85;
+      ctx.lineWidth = 0.6;
       ctx.stroke();
     };
 
@@ -1093,18 +930,18 @@ export class SandtableRenderer {
     ];
 
     for (const f of forestParcels) {
-      const isWalled = f.type === 'walled_preserve';
-      drawScallopedForest(f.points, MAP.woods, isWalled ? '#57534e' : MAP.woodsEdge, isWalled);
+      // Flat woodland tint with a clean edge, as on 1:50,000 military sheets
+      drawScallopedForest(f.points, MAP.woods, MAP.woodsEdge, true);
 
-      // Canopy stipple
-      ctx.fillStyle = 'rgba(54, 83, 20, 0.5)';
-      const minX = Math.min(...f.points.map(p => p.x));
-      const maxX = Math.max(...f.points.map(p => p.x));
-      const minY = Math.min(...f.points.map(p => p.y));
-      const maxY = Math.max(...f.points.map(p => p.y));
-
-      for (let sx = minX + 10; sx < maxX - 6; sx += 16) {
-        for (let sy = minY + 10; sy < maxY - 6; sy += 13) {
+      if (f.type !== 'orchard') continue;
+      // Vineyard / orchard symbol rows
+      ctx.fillStyle = 'rgba(70, 110, 50, 0.7)';
+      const minX = Math.min(...f.points.map((p) => p.x));
+      const maxX = Math.max(...f.points.map((p) => p.x));
+      const minY = Math.min(...f.points.map((p) => p.y));
+      const maxY = Math.max(...f.points.map((p) => p.y));
+      for (let sx = minX + 8; sx < maxX - 4; sx += 8) {
+        for (let sy = minY + 8; sy < maxY - 4; sy += 9) {
           let inside = false;
           for (let i = 0, j = f.points.length - 1; i < f.points.length; j = i++) {
             const xi = f.points[i].x, yi = f.points[i].y;
@@ -1113,18 +950,7 @@ export class SandtableRenderer {
             if (intersect) inside = !inside;
           }
           if (inside) {
-            if (f.type === 'coniferous') {
-              ctx.beginPath();
-              ctx.moveTo(sx, sy - 3); ctx.lineTo(sx - 2, sy + 2); ctx.lineTo(sx + 2, sy + 2);
-              ctx.closePath();
-              ctx.fill();
-            } else if (f.type === 'orchard') {
-              ctx.fillRect(sx - 0.8, sy - 0.8, 1.6, 1.6);
-            } else {
-              ctx.beginPath();
-              ctx.arc(sx, sy, 1.4, 0, Math.PI * 2);
-              ctx.fill();
-            }
+            ctx.fillRect(sx - 0.7, sy - 0.7, 1.4, 1.4);
           }
         }
       }
@@ -1141,7 +967,23 @@ export class SandtableRenderer {
   // 4. HYDROLOGY (RIVERS, LAKES, MARSHES & CAUSEWAYS - NATO STANAG 3677)
   // Deep Prussian/indigo flowlines, soft hydrographic wash, frozen ponds
   // =========================================================================
-  private renderHydrology(ctx: CanvasRenderingContext2D, state?: SimulationState) {
+  // Stroke a polyline as a smooth curve through segment midpoints
+  private smoothPath(ctx: CanvasRenderingContext2D, pts: { x: number; y: number }[]) {
+    ctx.moveTo(pts[0].x, pts[0].y);
+    if (pts.length === 2) {
+      ctx.lineTo(pts[1].x, pts[1].y);
+      return;
+    }
+    for (let i = 1; i < pts.length - 1; i++) {
+      const mx = (pts[i].x + pts[i + 1].x) / 2;
+      const my = (pts[i].y + pts[i + 1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+    }
+    const last = pts[pts.length - 1];
+    ctx.lineTo(last.x, last.y);
+  }
+
+  private renderHydrology(ctx: CanvasRenderingContext2D) {
     ctx.save();
     const riverNavy = MAP.water;
     const riverCasing = MAP.water;
@@ -1149,14 +991,9 @@ export class SandtableRenderer {
 
     // 1. Frozen Ponds: Satschan & Menitz Basin (174 - 176m)
     // Satschan Pond Frosted Ice Sheet (Soft hydrographic vignette & fine military casing)
-    const satGrad = ctx.createRadialGradient(650, 930, 20, 650, 930, 130);
-    satGrad.addColorStop(0, 'rgba(238, 246, 252, 0.88)');
-    satGrad.addColorStop(0.65, 'rgba(196, 222, 242, 0.65)');
-    satGrad.addColorStop(1, 'rgba(165, 198, 225, 0.55)');
-
-    ctx.fillStyle = satGrad;
+    ctx.fillStyle = MAP.waterFill;
     ctx.strokeStyle = riverCasing;
-    ctx.lineWidth = 1.1;
+    ctx.lineWidth = 0.8;
 
     ctx.beginPath();
     ctx.moveTo(560, 890);
@@ -1166,29 +1003,11 @@ export class SandtableRenderer {
     ctx.fill();
     ctx.stroke();
 
-    // Satschan Interior Bathymetric Depth Isolines (1m & 2m depth contours)
-    ctx.save();
-    ctx.strokeStyle = 'rgba(30, 64, 175, 0.22)';
-    ctx.lineWidth = 0.6;
-    ctx.setLineDash([4, 3]);
-    ctx.beginPath();
-    ctx.moveTo(585, 905);
-    ctx.bezierCurveTo(650, 885, 715, 895, 725, 935);
-    ctx.bezierCurveTo(705, 965, 630, 975, 575, 945);
-    ctx.closePath();
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
 
     // Menitz Pond Frosted Ice Sheet
-    const menGrad = ctx.createRadialGradient(810, 965, 15, 810, 965, 85);
-    menGrad.addColorStop(0, 'rgba(238, 246, 252, 0.88)');
-    menGrad.addColorStop(0.7, 'rgba(196, 222, 242, 0.65)');
-    menGrad.addColorStop(1, 'rgba(165, 198, 225, 0.55)');
-
-    ctx.fillStyle = menGrad;
+    ctx.fillStyle = MAP.waterFill;
     ctx.strokeStyle = riverCasing;
-    ctx.lineWidth = 1.1;
+    ctx.lineWidth = 0.8;
 
     ctx.beginPath();
     ctx.moveTo(765, 935);
@@ -1197,58 +1016,6 @@ export class SandtableRenderer {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-
-    // Natural hairline ice stress fractures across frozen ponds
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-    ctx.lineWidth = 0.85;
-    const iceStressLines = [
-      { x1: 580, y1: 910, x2: 660, y2: 935, x3: 740, y2b: 910 },
-      { x1: 620, y1: 960, x2: 670, y2: 920, x3: 720, y2b: 970 },
-      { x1: 780, y1: 950, x2: 830, y2: 965, x3: 860, y2b: 940 },
-    ];
-    for (const isl of iceStressLines) {
-      ctx.beginPath();
-      ctx.moveTo(isl.x1, isl.y1);
-      ctx.lineTo(isl.x2, isl.y2);
-      ctx.lineTo(isl.x3, isl.y2b);
-      ctx.stroke();
-    }
-
-    // Dynamic Shattered Ice Holes from Artillery Shells or Heavy Formations
-    if (state?.iceCracks && state.iceCracks.length > 0) {
-      for (const crack of state.iceCracks) {
-        const cx = crack.x / 1.5;
-        const cy = crack.y / 1.5;
-        const cr = (crack.radius || 30) / 1.5;
-
-        // Dark freezing water hole
-        ctx.fillStyle = '#090d16';
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.2;
-
-        ctx.beginPath();
-        for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) {
-          const r = cr * (0.5 + (Math.sin(a * 3) * 0.2 + 0.3));
-          const jx = cx + Math.cos(a) * r;
-          const jy = cy + Math.sin(a) * r;
-          if (a === 0) ctx.moveTo(jx, jy);
-          else ctx.lineTo(jx, jy);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-
-        // Radiating spiderweb fracture needles
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-        ctx.lineWidth = 0.75;
-        for (let a = 0; a < Math.PI * 2; a += Math.PI / 3) {
-          ctx.beginPath();
-          ctx.moveTo(cx + Math.cos(a) * (cr * 0.4), cy + Math.sin(a) * (cr * 0.4));
-          ctx.lineTo(cx + Math.cos(a) * (cr * 1.5), cy + Math.sin(a) * (cr * 1.5));
-          ctx.stroke();
-        }
-      }
-    }
 
     // Mönitz Earthen Causeway (Dam defile between Satschan & Menitz Ponds)
     ctx.save();
@@ -1367,10 +1134,7 @@ export class SandtableRenderer {
     ctx.strokeStyle = MAP.water;
     for (const trib of tributaries) {
       ctx.beginPath();
-      ctx.moveTo(trib[0].x, trib[0].y);
-      for (let i = 1; i < trib.length; i++) {
-        ctx.lineTo(trib[i].x, trib[i].y);
-      }
+      this.smoothPath(ctx, trib);
       ctx.stroke();
     }
 
@@ -1487,11 +1251,11 @@ export class SandtableRenderer {
 
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#57534e';
+    ctx.strokeStyle = '#2b2b2b';
     ctx.lineWidth = 3;
     ctx.stroke();
 
-    ctx.strokeStyle = '#e05a47';
+    ctx.strokeStyle = '#d7301f';
     ctx.lineWidth = 1.8;
     ctx.stroke();
 
@@ -1508,10 +1272,10 @@ export class SandtableRenderer {
     ctx.bezierCurveTo(80, 900, 100, 775, 100, 580);
     ctx.bezierCurveTo(100, 385, 160, 225, 225, 145);
 
-    ctx.strokeStyle = '#57534e';
+    ctx.strokeStyle = '#2b2b2b';
     ctx.lineWidth = 2.6;
     ctx.stroke();
-    ctx.strokeStyle = '#f3c969';
+    ctx.strokeStyle = '#f2a33a';
     ctx.lineWidth = 1.4;
     ctx.stroke();
 
@@ -1539,22 +1303,20 @@ export class SandtableRenderer {
 
     // Outer casing
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#78716c';
-    ctx.lineWidth = 1.9;
+    ctx.strokeStyle = '#3a3a3a';
+    ctx.lineWidth = 1.8;
     for (const r of secondaryRoads) {
       ctx.beginPath();
-      ctx.moveTo(r[0].x, r[0].y);
-      for (let i = 1; i < r.length; i++) ctx.lineTo(r[i].x, r[i].y);
+      this.smoothPath(ctx, r);
       ctx.stroke();
     }
 
     // Inner white core
-    ctx.strokeStyle = '#fbfaf6';
+    ctx.strokeStyle = '#fbfbf8';
     ctx.lineWidth = 0.9;
     for (const r of secondaryRoads) {
       ctx.beginPath();
-      ctx.moveTo(r[0].x, r[0].y);
-      for (let i = 1; i < r.length; i++) ctx.lineTo(r[i].x, r[i].y);
+      this.smoothPath(ctx, r);
       ctx.stroke();
     }
 
@@ -1567,13 +1329,12 @@ export class SandtableRenderer {
       [{ x: 870, y: 745 }, { x: 810, y: 840 }, { x: 755, y: 935 }],
     ];
 
-    ctx.strokeStyle = 'rgba(87, 83, 78, 0.8)';
-    ctx.lineWidth = 0.7;
+    ctx.strokeStyle = 'rgba(30, 30, 30, 0.75)';
+    ctx.lineWidth = 0.6;
     ctx.setLineDash([4, 2.5]);
     for (const t of farmTracks) {
       ctx.beginPath();
-      ctx.moveTo(t[0].x, t[0].y);
-      for (let i = 1; i < t.length; i++) ctx.lineTo(t[i].x, t[i].y);
+      this.smoothPath(ctx, t);
       ctx.stroke();
     }
     ctx.setLineDash([]);
@@ -1590,137 +1351,98 @@ export class SandtableRenderer {
   private renderSettlements(ctx: CanvasRenderingContext2D) {
     ctx.save();
 
-    const settlements = [
-      { name: 'BRÜNN', x: 250, y: 80, isMajor: true, hasFortress: true },
-      { name: 'Latain', x: 500, y: 265 },
-      { name: 'Kritschen', x: 720, y: 115 },
-      { name: 'Bosenitz', x: 920, y: 190, hasChurch: true },
-      { name: 'Posoritz', x: 1220, y: 160, isPostRelay: true },
-      { name: 'Raussnitz', x: 1320, y: 105 },
-      { name: 'Turas', x: 445, y: 440, hasChurch: true },
-      { name: 'Marxdorf', x: 520, y: 480 },
-      { name: 'Schlappanitz', x: 710, y: 380, hasChurch: true },
-      { name: 'Puntowitz', x: 800, y: 440, hasMill: true },
-      { name: 'Kobelnitz', x: 690, y: 490, hasMill: true, hasChurch: true },
-      { name: 'Pratzen', x: 915, y: 520, hasChurch: true },
-      { name: 'Krzenowitz', x: 1150, y: 510, hasChurch: true },
-      { name: 'Holubitz', x: 1220, y: 320 },
-      { name: 'Blasowitz', x: 1080, y: 280, hasChurch: true },
-      { name: 'Jirschikowitz', x: 840, y: 310 },
-      { name: 'Walspitz', x: 1300, y: 260 },
-      { name: 'Sokolnitz', x: 640, y: 660, hasChateau: true, hasChurch: true, hasMill: true },
-      { name: 'Telnitz', x: 610, y: 810, hasChurch: true },
-      { name: 'Aujest', x: 870, y: 745, hasChurch: true },
-      { name: 'Hostieradek', x: 980, y: 700 },
-      { name: 'Birnbaum', x: 1260, y: 630 },
-      { name: 'Raigern', x: 120, y: 855, hasAbbey: true },
-      { name: 'Satschan', x: 730, y: 935 },
-      { name: 'Menitz', x: 530, y: 935 },
-      { name: 'AUSTERLITZ', x: 1540, y: 420, isMajor: true, hasChateau: true },
-    ];
+    const settlements = SETTLEMENTS;
 
     for (const s of settlements) {
       ctx.save();
       ctx.translate(s.x, s.y);
 
-      if (s.isMajor) {
-        // Major Urban Fortress/City Center (BRÜNN, AUSTERLITZ)
-        const bw = 38;
-        const bh = 38;
+      // Deterministic per-village generator so the layout is stable between sessions
+      let seed = 0;
+      for (const ch of s.name) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+      const rand = () => {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        return seed / 4294967296;
+      };
 
-        // 1. NATO Urban Built-up Tint Wash (STANAG 3677 Salmon)
-        ctx.fillStyle = MAP.builtUp;
-        ctx.fillRect(-bw / 2, -bh / 2, bw, bh);
+      const major = !!s.isMajor;
+      const isTacticalGarrison = ['Sokolnitz', 'Telnitz', 'Kobelnitz', 'Puntowitz', 'Pratzen', 'Bosenitz'].includes(s.name);
+      const len = major ? 46 : isTacticalGarrison ? 30 : 24; // main street length
+      const streetAngle = rand() * Math.PI;
+      const ca = Math.cos(streetAngle);
+      const sa = Math.sin(streetAngle);
+      const along = (t: number, off: number) => ({ x: ca * t - sa * off, y: sa * t + ca * off });
 
-        // 2. City Wall / Bastioned Enclosure (Spilberk / Town Wall)
-        ctx.strokeStyle = '#7c2d12';
-        ctx.lineWidth = 1.2;
-        ctx.strokeRect(-bw / 2, -bh / 2, bw, bh);
+      // Built-up area tint: a soft lozenge around the streets
+      ctx.fillStyle = MAP.builtUp;
+      ctx.beginPath();
+      const halfW = major ? 16 : 8;
+      for (let k = 0; k <= 16; k++) {
+        const th = (k / 16) * Math.PI * 2;
+        const r = 1 + (rand() - 0.5) * 0.18;
+        const p = along(Math.cos(th) * (len / 2 + 4) * r, Math.sin(th) * (halfW + 4) * r);
+        if (k === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      }
+      ctx.closePath();
+      ctx.fill();
 
-        // Corner bastions
-        ctx.fillStyle = '#431407';
-        for (const [cx, cy] of [[-bw/2, -bh/2], [bw/2, -bh/2], [bw/2, bh/2], [-bw/2, bh/2]]) {
-          ctx.beginPath();
-          ctx.arc(cx, cy, 3, 0, Math.PI * 2);
-          ctx.fill();
+      // Buildings lining the main street (and a cross street in towns)
+      ctx.fillStyle = MAP.building;
+      const placeRow = (t0: number, t1: number, off: number, angle: number) => {
+        const c = Math.cos(angle);
+        const sn = Math.sin(angle);
+        for (let t = t0; t < t1; t += 3.2 + rand() * 2.2) {
+          if (rand() < 0.15) continue;
+          const w = 2 + rand() * 1.8;
+          const h = 1.6 + rand() * 1.4;
+          const side = off + (off > 0 ? h / 2 : -h / 2);
+          const cx = c * t - sn * side;
+          const cy = sn * t + c * side;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(angle);
+          ctx.fillRect(-w / 2, -h / 2, w, h);
+          ctx.restore();
         }
+      };
+      placeRow(-len / 2, len / 2, 2.2, streetAngle);
+      placeRow(-len / 2, len / 2, -2.2, streetAngle);
+      if (major) {
+        placeRow(-len / 2.4, len / 2.4, 9, streetAngle);
+        placeRow(-len / 2.4, len / 2.4, -9, streetAngle);
+        placeRow(-len / 3, len / 3, 2.2, streetAngle + Math.PI / 2);
+        placeRow(-len / 3, len / 3, -2.2, streetAngle + Math.PI / 2);
+      }
 
-        // 3. Street Grid Cuts
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.8;
+      // Church: small circle with cross
+      if (s.hasChurch || major) {
+        const c = along(len * 0.12, 0);
+        ctx.strokeStyle = MAP.building;
+        ctx.lineWidth = 0.6;
+        ctx.fillStyle = MAP.paper;
         ctx.beginPath();
-        ctx.moveTo(-bw / 2, 0); ctx.lineTo(bw / 2, 0);
-        ctx.moveTo(0, -bh / 2); ctx.lineTo(0, bh / 2);
+        ctx.arc(c.x, c.y, 1.8, 0, Math.PI * 2);
+        ctx.fill();
         ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(c.x, c.y - 4.2);
+        ctx.lineTo(c.x, c.y - 1.8);
+        ctx.moveTo(c.x - 1.1, c.y - 3.3);
+        ctx.lineTo(c.x + 1.1, c.y - 3.3);
+        ctx.stroke();
+      }
 
-        // 4. Solid Black NATO Building Footprints
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(-14, -14, 7, 6);
-        ctx.fillRect(7, -14, 6, 7);
-        ctx.fillRect(-14, 8, 6, 6);
-        ctx.fillRect(8, 8, 7, 6);
-        ctx.fillRect(-4, -4, 8, 8); // Central citadel
-
-        // 5. Crisp Military Label with Drop-Halo
+      // Name: towns larger; tactically significant villages in bold
+      const labelY = -Math.max(Math.abs(sa) * len / 2, halfW) - 6;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      if (major) {
         ctx.font = font(700, 9.5);
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'bottom';
-        haloText(ctx, s.name, 0, -bh / 2 - 3, MAP.ink, 3);
-
+        haloText(ctx, s.name.toUpperCase(), 0, labelY - 2, MAP.ink, 3);
       } else {
-        // Rural Settlement / Tactical Strongpoint (Moravian Strassendorf)
-        const isTacticalGarrison = ['Sokolnitz', 'Telnitz', 'Kobelnitz', 'Puntowitz', 'Pratzen', 'Bosenitz'].includes(s.name);
-        const vw = isTacticalGarrison ? 28 : 22;
-        const vh = isTacticalGarrison ? 20 : 16;
-
-        // 1. NATO Urban Built-up Tint
-        ctx.fillStyle = MAP.builtUp;
-        ctx.fillRect(-vw / 2, -vh / 2, vw, vh);
-
-        // 2. Built-up Boundary
-        ctx.strokeStyle = isTacticalGarrison ? '#57534e' : 'rgba(120, 72, 52, 0.7)';
-        ctx.lineWidth = isTacticalGarrison ? 1.2 : 0.75;
-        if (isTacticalGarrison) {
-          ctx.strokeRect(-vw / 2, -vh / 2, vw, vh);
-        } else {
-          ctx.setLineDash([3, 2]);
-          ctx.strokeRect(-vw / 2, -vh / 2, vw, vh);
-          ctx.setLineDash([]);
-        }
-
-        // 3. Authentic Individual Building Footprints (STANAG 3677 black structures)
-        ctx.fillStyle = MAP.building;
-        ctx.fillRect(-vw / 2 + 2, -vh / 2 + 2, 5, 4);
-        ctx.fillRect(vw / 2 - 7, -vh / 2 + 2, 5, 4);
-        ctx.fillRect(-vw / 2 + 2, vh / 2 - 6, 4, 4);
-        ctx.fillRect(vw / 2 - 7, vh / 2 - 6, 5, 4);
-
-        // 4. Church / Tactical Strongpoint Symbol (with stone cemetery wall)
-        if (s.hasChurch) {
-          ctx.strokeStyle = '#475569';
-          ctx.lineWidth = 0.8;
-          ctx.strokeRect(-4, -4, 8, 8);
-          ctx.fillStyle = '#1e293b';
-          ctx.fillRect(-2, -2, 4, 4);
-          ctx.strokeStyle = '#ffffff';
-          ctx.lineWidth = 0.8;
-          ctx.beginPath();
-          ctx.moveTo(0, -3.5); ctx.lineTo(0, 3.5);
-          ctx.moveTo(-2, -1); ctx.lineTo(2, -1);
-          ctx.stroke();
-        } else if (s.hasMill) {
-          ctx.strokeStyle = '#0284c7';
-          ctx.lineWidth = 0.9;
-          ctx.beginPath();
-          ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-
-        // 5. Village Name Label with White Halo
-        ctx.font = font(600, isTacticalGarrison ? 7 : 6.5);
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'bottom';
-        haloText(ctx, s.name.toUpperCase(), 0, -vh / 2 - 2, isTacticalGarrison ? MAP.ink : '#44403c', 2.6);
+        ctx.font = font(isTacticalGarrison ? 700 : 500, isTacticalGarrison ? 7 : 6.5);
+        haloText(ctx, s.name, 0, labelY, MAP.ink, 2.6);
       }
       ctx.restore();
     }
@@ -2851,80 +2573,46 @@ export class SandtableRenderer {
   // 11.5 TACTICAL FOG OF WAR RECONNAISSANCE SHROUD
   // Soft atmospheric staff mist with line-of-sight vision apertures around troops
   // =========================================================================
+  // Fog of war: a quarter-resolution mask (edges are soft anyway), rebuilt at most ~8 times a second
+  private fowLastBuild = 0;
   private renderFogOfWarShroud(ctx: CanvasRenderingContext2D, state: SimulationState) {
+    const Q = 0.25;
     if (!this.fowCanvas) {
       this.fowCanvas = document.createElement('canvas');
-      this.fowCanvas.width = 2400;
-      this.fowCanvas.height = 1500;
+      this.fowCanvas.width = 2400 * Q;
+      this.fowCanvas.height = 1500 * Q;
       this.fowCtx = this.fowCanvas.getContext('2d');
+      this.fowLastBuild = 0;
     }
     const fCtx = this.fowCtx;
     if (!fCtx) return;
 
-    // 1. Fill entire sandtable bounds with tactical staff mist overlay
-    fCtx.clearRect(0, 0, 2400, 1500);
-    fCtx.fillStyle = 'rgba(215, 218, 224, 0.72)';
-    fCtx.fillRect(0, 0, 2400, 1500);
-
-    // 2. Punch soft-feathered reconnaissance sight holes using destination-out
-    fCtx.globalCompositeOperation = 'destination-out';
-
-    const playerUnits = state.units.filter(
-      (u) => u.faction === state.playerFaction && u.status !== 'shattered' && u.strength > 0
-    );
-
-    for (const unit of playerUnits) {
-      let r = unit.type === 'cavalry' ? 260 : unit.type === 'headquarters' ? 220 : unit.type === 'artillery' ? 140 : 160;
-      
-      // Vantage elevation bonus
-      for (const feat of state.terrain) {
-        if (feat.elevation && feat.radius && feat.center) {
-          const d = Math.hypot(unit.position.x - feat.center.x, unit.position.y - feat.center.y);
-          if (d <= feat.radius && feat.elevation > 230) {
-            r *= 1.45;
-            break;
-          }
-        }
+    const now = performance.now();
+    if (now - this.fowLastBuild > 120) {
+      this.fowLastBuild = now;
+      fCtx.setTransform(Q, 0, 0, Q, 0, 0);
+      fCtx.globalCompositeOperation = 'source-over';
+      fCtx.clearRect(0, 0, 2400, 1500);
+      fCtx.fillStyle = 'rgba(222, 222, 218, 0.78)';
+      fCtx.fillRect(0, 0, 2400, 1500);
+      fCtx.globalCompositeOperation = 'destination-out';
+      for (const unit of state.units) {
+        if (unit.faction !== state.playerFaction || unit.status === 'shattered' || unit.strength <= 0) continue;
+        const r = this.engine ? this.engine.getUnitVisionRadius(unit) : 160;
+        const grad = fCtx.createRadialGradient(unit.position.x, unit.position.y, r * 0.7, unit.position.x, unit.position.y, r);
+        grad.addColorStop(0, 'rgba(0, 0, 0, 1)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        fCtx.fillStyle = grad;
+        fCtx.beginPath();
+        fCtx.arc(unit.position.x, unit.position.y, r, 0, Math.PI * 2);
+        fCtx.fill();
       }
-
-      const grad = fCtx.createRadialGradient(
-        unit.position.x, unit.position.y, r * 0.70,
-        unit.position.x, unit.position.y, r
-      );
-      grad.addColorStop(0, 'rgba(0, 0, 0, 1)');
-      grad.addColorStop(0.85, 'rgba(0, 0, 0, 0.75)');
-      grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-
-      fCtx.fillStyle = grad;
-      fCtx.beginPath();
-      fCtx.arc(unit.position.x, unit.position.y, r, 0, Math.PI * 2);
-      fCtx.fill();
+      fCtx.globalCompositeOperation = 'source-over';
     }
 
-    fCtx.globalCompositeOperation = 'source-over';
-
-    // 3. Render the composited shroud to the sandtable
-    ctx.drawImage(this.fowCanvas, 0, 0);
-
-    // 4. Draw subtle scouting perimeter rings around cavalry reconnaissance
-    for (const unit of playerUnits) {
-      if (unit.type === 'cavalry') {
-        const r = 260;
-        ctx.save();
-        ctx.strokeStyle = 'rgba(30, 64, 175, 0.25)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.arc(unit.position.x, unit.position.y, r, 0, Math.PI * 2);
-        ctx.stroke();
-
-        ctx.font = 'bold 7px Arial, sans-serif';
-        ctx.fillStyle = 'rgba(30, 64, 175, 0.65)';
-        ctx.fillText('CAV SCOUT SECTOR', unit.position.x + r - 55, unit.position.y);
-        ctx.restore();
-      }
-    }
+    ctx.drawImage(this.fowCanvas, 0, 0, 2400, 1500);
   }
+
   // Counter-scale for upright symbols & labels: legible when zoomed out, restrained when zoomed in
   private symbolScale(): number {
     return Math.min(1.7, Math.max(0.45, Math.pow(this.zoom, -0.62)));
@@ -3295,6 +2983,33 @@ export class SandtableRenderer {
   // =========================================================================
   // 14. AUTHENTIC WEST POINT ATLAS CARTOUCHE & MAP LEGEND
   // Exact layout from media_1789975155849.png
+  // MGRS kilometre values pinned to the viewport edges (as on C2 map displays), so the grid
+  // can be read at any zoom without hunting for the sheet margin.
+  private renderGridEdgeLabels(ctx: CanvasRenderingContext2D, camera: Camera, screenW: number, screenH: number) {
+    const z = camera.zoom;
+    const toSx = (wx: number) => (wx - camera.x) * z + screenW / 2;
+    const toSy = (wy: number) => (wy - camera.y) * z + screenH / 2;
+    const top = 40; // below the toolbar
+    const bottom = screenH - 30; // above the status bar
+    ctx.save();
+    ctx.font = font(600, 10, FONT.mono);
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'center';
+    for (let x = 200; x < 2400; x += 200) {
+      const sx = toSx(x);
+      if (sx < 30 || sx > screenW - 30) continue;
+      haloText(ctx, eastingKm(x), sx, top, MAP.gridLabel, 3);
+    }
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    for (let y = 200; y < 1500; y += 200) {
+      const sy = toSy(y);
+      if (sy < top + 16 || sy > bottom) continue;
+      haloText(ctx, northingKm(y), 6, sy, MAP.gridLabel, 3);
+    }
+    ctx.restore();
+  }
+
   // Screen-space map furniture: north arrow and a scale bar that tracks zoom (1px = 5m)
   private renderMapFurniture(ctx: CanvasRenderingContext2D, screenH: number) {
     const x0 = 16;

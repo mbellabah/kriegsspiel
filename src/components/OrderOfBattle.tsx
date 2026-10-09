@@ -3,7 +3,7 @@ import { UnitSymbol } from './UnitSymbol';
 import React, { useState } from 'react';
 import { Unit, Faction, Vector2D } from '../types/game';
 import { BattleEngine } from '../engine/simulation';
-import { ChevronDown, ChevronRight, X, Send, Eye, ArrowRightLeft, Shield } from 'lucide-react';
+import { ChevronDown, ChevronRight, X } from './glyphs';
 
 interface OrderOfBattleProps {
   units: Unit[];
@@ -152,10 +152,8 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                     type="button"
                     onClick={() => handleCenterOnCorps(corpsUnits)}
                     title="Show on map"
-                    className={ui.btnIcon}
-                  >
-                    <Eye size={12} />
-                  </button>
+                    className={cx(ui.btn, 'h-6 px-1.5 text-[10.5px]')}
+                  >Show</button>
 
                   {activeTab === 'french' && onDispatchCorps && (
                     <button
@@ -164,7 +162,7 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                       title={`Dispatch Corps Orders to ${corpsName}`}
                       className={cx(ui.btn, 'h-6 px-2 border-[#b3ada2] bg-[#fbfaf7]')}
                     >
-                      <Send size={11} />
+                      
                       <span>Order</span>
                     </button>
                   )}
@@ -227,9 +225,7 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                               className={`p-1 text-neutral-500 hover:text-black hover:bg-neutral-200 transition-colors cursor-pointer ${
  isTransferring ? 'bg-[#d9d3c7] text-black' : ''
  }`}
-                            >
-                              <ArrowRightLeft size={11} />
-                            </button>
+                            >Move</button>
                           </div>
                         </div>
 
@@ -240,7 +236,7 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                             className="mt-1.5 p-2 bg-[#f5f3ee] border border-[#a8a29e] text-left animate-in fade-in duration-150"
                           >
                             <div className="text-[10px] font-bold text-neutral-700 uppercase mb-1 flex items-center gap-1">
-                              <Shield size={10} className="text-[#23324a]" />
+                              
                               <span>Reassign to Formation:</span>
                             </div>
 

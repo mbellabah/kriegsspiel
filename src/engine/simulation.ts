@@ -1,4 +1,5 @@
 import { Unit, ManeuverOrder, Scenario, TerrainFeature, CombatLogEntry, BattleStateSnapshot, HistoricalEvent, HistoricalDispatch, Vector2D, OperationalGraphic, ActiveEngagement, TargetReferencePoint, SectorForceRatios, WargameSymbology, TacticalObjective, Formation, CampaignEra, OrderCondition, OrderSource, ContactType, SitrepNotification, ERA_WEAPON_PROFILES } from '../types/game';
+import { toMgrs } from './grid';
 import { sounds } from './soundEffects';
 
 export interface SimulationState {
@@ -67,6 +68,8 @@ export class BattleEngine {
   private lastNotifyTime = 0;
   private lastTacticalEvalTime = 0;
   private accumulatedTacticalSeconds = 0;
+  private accumulatedSensorSeconds = 0;
+  private tacticalGroup = 0;
   private accumulatedTacticalMinutes = 0;
   private lastSitrepTimes: Map<string, { timeMinutes: number; contactType: ContactType }> = new Map();
 
@@ -602,7 +605,7 @@ export class BattleEngine {
     this.notify();
   }
 
-  public moveTRP(idOrCode: string, newPosition: Vector2D) {
+  public moveTRP(idOrCode: string, newPosition: Vector2D, announce = true) {
     if (!this.state.targetReferencePoints) return;
     const clean = idOrCode.toLowerCase().replace(/[\s_-]/g, '');
     const trp = this.state.targetReferencePoints.find(
@@ -641,11 +644,9 @@ export class BattleEngine {
       trp.description = `Pre-registered firing point near ${nearestName}`;
     }
 
-    this.addLog(
-      `[TRP RE-SIGHTED] ${trp.code} relocated to (${trp.position.x}, ${trp.position.y}). Artillery fire control updated.`,
-      'french',
-      'highlight'
-    );
+    if (announce) {
+      this.addLog(`${trp.code} relocated to ${toMgrs(trp.position)}. Fire control updated.`, 'french', 'highlight');
+    }
     this.notify();
   }
 
@@ -951,6 +952,11 @@ export class BattleEngine {
   public issueOrder(unitId: string, order: Omit<ManeuverOrder, 'id' | 'status'>) {
     const unit = this.state.units.find((u) => u.id === unitId);
     if (!unit || unit.status === 'shattered' || unit.strength <= 0) return;
+    if (unit.status === 'routing' && order.type !== 'retreat') {
+      this.addLog(`${unit.name} is routing and cannot act on orders until it rallies.`, unit.faction, 'normal');
+      this.notify();
+      return;
+    }
 
     const isPlayerFaction = unit.faction === this.state.playerFaction;
     const incomingSource: OrderSource = order.source ?? (isPlayerFaction ? 'player' : 'subordinate');
@@ -1292,8 +1298,8 @@ export class BattleEngine {
     const flankAngle = parent.heading + Math.PI / 2;
     const offsetDist = 36;
     const newPos: Vector2D = {
-      x: Math.max(40, Math.min(940, parent.position.x + Math.cos(flankAngle) * offsetDist)),
-      y: Math.max(40, Math.min(580, parent.position.y + Math.sin(flankAngle) * offsetDist)),
+      x: Math.max(40, Math.min(2360, parent.position.x + Math.cos(flankAngle) * offsetDist)),
+      y: Math.max(40, Math.min(1460, parent.position.y + Math.sin(flankAngle) * offsetDist)),
     };
 
     let w = 50;
@@ -1340,6 +1346,7 @@ export class BattleEngine {
 
     this.state.units.push(detachedUnit);
     this.state.selectedUnitId = detachedUnit.id;
+    this.state.selectedUnitIds = [detachedUnit.id];
 
     this.addLog(
       `Detached ${detachStrength.toLocaleString()} troops from ${parent.name} to form ${detachedUnit.name}.`,
@@ -1560,26 +1567,35 @@ export class BattleEngine {
     this.updateArtillery(battleMinutesDelta);
     this.updateAIArtillery(battleMinutesDelta);
 
-    // 3.6 Heavy tactical assessments (Logistics, Tactical AI, Engineering, Encirclement, Fog of War, Sector Ratios)
-    // Run at ~10Hz (or when accumulated delta >= 0.1s) to eliminate micro-stutters and keep FPS silky smooth
+    // 3.6 Heavy tactical assessments run on wall-clock time (not sim time, which would make them
+    // fire every frame at high speed), split into two groups on alternate 50 ms slots so no single
+    // frame carries all of them.
     this.accumulatedTacticalSeconds += deltaSeconds * this.state.speedMultiplier;
     this.accumulatedTacticalMinutes += battleMinutesDelta;
+    this.accumulatedSensorSeconds += deltaSeconds * this.state.speedMultiplier;
 
     const now = performance.now();
-    if (this.accumulatedTacticalSeconds >= 0.1 || now - this.lastTacticalEvalTime >= 100) {
-      const evalSeconds = this.accumulatedTacticalSeconds;
-      const evalMinutes = this.accumulatedTacticalMinutes;
-      this.accumulatedTacticalSeconds = 0;
-      this.accumulatedTacticalMinutes = 0;
+    let ranHeavyPass = false;
+    if (now - this.lastTacticalEvalTime >= 50) {
       this.lastTacticalEvalTime = now;
-
-      this.updateLogistics(evalMinutes);
-      this.updateTacticalAI(evalSeconds);
-      this.updatePlayerSubordinateAI(evalSeconds);
-      this.updateEngineering();
-      this.updateEncirclement(evalSeconds);
-      this.updateFogOfWar();
-      this.state.sectorForceRatios = this.computeSectorRatios(this.state.units, this.state.playerFaction);
+      this.tacticalGroup = this.tacticalGroup === 0 ? 1 : 0;
+      ranHeavyPass = true;
+      if (this.tacticalGroup === 0) {
+        const evalSeconds = this.accumulatedTacticalSeconds;
+        const evalMinutes = this.accumulatedTacticalMinutes;
+        this.accumulatedTacticalSeconds = 0;
+        this.accumulatedTacticalMinutes = 0;
+        this.updateLogistics(evalMinutes);
+        this.updateTacticalAI(evalSeconds);
+        this.updatePlayerSubordinateAI(evalSeconds);
+      } else {
+        const evalSeconds = this.accumulatedSensorSeconds;
+        this.accumulatedSensorSeconds = 0;
+        this.updateEngineering();
+        this.updateEncirclement(evalSeconds);
+        this.updateFogOfWar();
+        this.state.sectorForceRatios = this.computeSectorRatios(this.state.units, this.state.playerFaction);
+      }
     }
 
     // 4. Save periodic snapshots (approx every 8 battle minutes)
@@ -1590,7 +1606,8 @@ export class BattleEngine {
 
     // Throttle React UI state notifications to ~10Hz (every 100ms) to keep UI ultra responsive
     // and prevent React re-render thrashing, while canvas RAF runs silky smooth at 60 FPS.
-    if (now - this.lastNotifyTime >= 100) {
+    // UI updates at ~10 Hz, never on the same frame as a heavy tactical pass
+    if (!ranHeavyPass && now - this.lastNotifyTime >= 100) {
       this.lastNotifyTime = now;
       this.notify();
     }
@@ -1611,49 +1628,50 @@ export class BattleEngine {
     }
   }
 
+  // Historical orders are authored in map pixels (2400x1500), the same space as unit positions
   private triggerHistoricalManeuver(event: HistoricalEvent) {
     if (event.timeInMinutes === 0) {
       // 07:00 AM Opening Wheel: Allied left-wing columns descend from Pratzen; Bagration advances north; Davout forced march
       this.issueOrder('al_dokhturov', {
         unitId: 'al_dokhturov',
         type: 'assault',
-        destination: { x: 630, y: 805 }, // Telnitz
-        waypoints: [{ x: 740, y: 760 }, { x: 630, y: 805 }],
+        destination: { x: 945, y: 1208 }, // Telnitz
+        waypoints: [{ x: 1110, y: 1140 }, { x: 945, y: 1208 }],
         plannedTime: 0,
       });
       this.issueOrder('al_langeron', {
         unitId: 'al_langeron',
         type: 'assault',
-        destination: { x: 650, y: 675 }, // Sokolnitz
-        waypoints: [{ x: 770, y: 640 }, { x: 650, y: 675 }],
+        destination: { x: 975, y: 1012 }, // Sokolnitz
+        waypoints: [{ x: 1155, y: 960 }, { x: 975, y: 1012 }],
         plannedTime: 0,
       });
       this.issueOrder('al_przhebishevsky', {
         unitId: 'al_przhebishevsky',
         type: 'assault',
-        destination: { x: 665, y: 585 }, // Castle / Sokolnitz North
-        waypoints: [{ x: 850, y: 500 }, { x: 665, y: 585 }],
+        destination: { x: 998, y: 878 }, // Castle / Sokolnitz North
+        waypoints: [{ x: 1275, y: 750 }, { x: 998, y: 878 }],
         plannedTime: 0,
       });
       this.issueOrder('al_kollowrat', {
         unitId: 'al_kollowrat',
         type: 'assault',
-        destination: { x: 780, y: 505 }, // Lower Pratzen slope
-        waypoints: [{ x: 780, y: 505 }],
+        destination: { x: 1170, y: 758 }, // Lower Pratzen slope
+        waypoints: [{ x: 1170, y: 758 }],
         plannedTime: 0,
       });
       this.issueOrder('al_bagration', {
         unitId: 'al_bagration',
         type: 'assault',
-        destination: { x: 1080, y: 155 },
-        waypoints: [{ x: 1200, y: 150 }, { x: 1080, y: 155 }],
+        destination: { x: 1620, y: 232 },
+        waypoints: [{ x: 1800, y: 225 }, { x: 1620, y: 232 }],
         plannedTime: 0,
       });
       this.issueOrder('al_liechtenstein', {
         unitId: 'al_liechtenstein',
         type: 'flank',
-        destination: { x: 1060, y: 220 },
-        waypoints: [{ x: 1060, y: 220 }],
+        destination: { x: 1590, y: 330 },
+        waypoints: [{ x: 1590, y: 330 }],
         plannedTime: 0,
       });
 
@@ -1663,8 +1681,8 @@ export class BattleEngine {
         this.issueOrder('fr_davout', {
           unitId: 'fr_davout',
           type: 'march',
-          destination: { x: 560, y: 805 }, // Forced march to reinforce Telnitz
-          waypoints: [{ x: 480, y: 830 }, { x: 560, y: 805 }],
+          destination: { x: 840, y: 1208 }, // Forced march to reinforce Telnitz
+          waypoints: [{ x: 720, y: 1245 }, { x: 840, y: 1208 }],
           plannedTime: 0,
           source: 'historical_event',
         });
@@ -1674,22 +1692,22 @@ export class BattleEngine {
       this.issueOrder('al_dokhturov', {
         unitId: 'al_dokhturov',
         type: 'assault',
-        destination: { x: 630, y: 805 }, // Telnitz
-        waypoints: [{ x: 740, y: 760 }, { x: 630, y: 805 }],
+        destination: { x: 945, y: 1208 }, // Telnitz
+        waypoints: [{ x: 1110, y: 1140 }, { x: 945, y: 1208 }],
         plannedTime: 60,
       });
       this.issueOrder('al_langeron', {
         unitId: 'al_langeron',
         type: 'assault',
-        destination: { x: 650, y: 675 }, // Sokolnitz
-        waypoints: [{ x: 770, y: 640 }, { x: 650, y: 675 }],
+        destination: { x: 975, y: 1012 }, // Sokolnitz
+        waypoints: [{ x: 1155, y: 960 }, { x: 975, y: 1012 }],
         plannedTime: 60,
       });
       this.issueOrder('al_przhebishevsky', {
         unitId: 'al_przhebishevsky',
         type: 'assault',
-        destination: { x: 665, y: 585 }, // Castle / Sokolnitz North
-        waypoints: [{ x: 850, y: 500 }, { x: 665, y: 585 }],
+        destination: { x: 998, y: 878 }, // Castle / Sokolnitz North
+        waypoints: [{ x: 1275, y: 750 }, { x: 998, y: 878 }],
         plannedTime: 60,
       });
       if (this.state.isFullHistoricalReplay) {
@@ -1697,8 +1715,8 @@ export class BattleEngine {
         this.issueOrder('fr_friant', {
           unitId: 'fr_friant',
           type: 'assault',
-          destination: { x: 590, y: 805 },
-          waypoints: [{ x: 590, y: 805 }],
+          destination: { x: 885, y: 1208 },
+          waypoints: [{ x: 885, y: 1208 }],
           plannedTime: 60,
           source: 'historical_event',
         });
@@ -1709,18 +1727,18 @@ export class BattleEngine {
         this.issueOrder('fr_sthilaire', {
           unitId: 'fr_sthilaire',
           type: 'assault',
-          destination: { x: 915, y: 520 }, // Pratzen crest
-          waypoints: [{ x: 800, y: 480 }, { x: 915, y: 520 }],
-          curveControl: { x: 810, y: 465 },
+          destination: { x: 1372, y: 780 }, // Pratzen crest
+          waypoints: [{ x: 1200, y: 720 }, { x: 1372, y: 780 }],
+          curveControl: { x: 1215, y: 698 },
           plannedTime: 120,
           source: 'historical_event',
         });
         this.issueOrder('fr_vandamme', {
           unitId: 'fr_vandamme',
           type: 'assault',
-          destination: { x: 995, y: 460 }, // Staré Vinohrady
-          waypoints: [{ x: 830, y: 415 }, { x: 995, y: 460 }],
-          curveControl: { x: 820, y: 400 },
+          destination: { x: 1492, y: 690 }, // Staré Vinohrady
+          waypoints: [{ x: 1245, y: 622 }, { x: 1492, y: 690 }],
+          curveControl: { x: 1230, y: 600 },
           plannedTime: 120,
           source: 'historical_event',
         });
@@ -1731,16 +1749,16 @@ export class BattleEngine {
         this.issueOrder('fr_lannes', {
           unitId: 'fr_lannes',
           type: 'assault',
-          destination: { x: 1200, y: 155 },
-          waypoints: [{ x: 1020, y: 180 }, { x: 1200, y: 155 }],
+          destination: { x: 1800, y: 232 },
+          waypoints: [{ x: 1530, y: 270 }, { x: 1800, y: 232 }],
           plannedTime: 240,
           source: 'historical_event',
         });
         this.issueOrder('fr_murat', {
           unitId: 'fr_murat',
           type: 'assault',
-          destination: { x: 1100, y: 210 },
-          waypoints: [{ x: 840, y: 260 }, { x: 1100, y: 210 }],
+          destination: { x: 1650, y: 315 },
+          waypoints: [{ x: 1260, y: 390 }, { x: 1650, y: 315 }],
           plannedTime: 240,
           source: 'historical_event',
         });
@@ -1748,8 +1766,8 @@ export class BattleEngine {
       this.issueOrder('al_bagration', {
         unitId: 'al_bagration',
         type: 'assault',
-        destination: { x: 1080, y: 170 },
-        waypoints: [{ x: 1250, y: 120 }, { x: 1080, y: 170 }],
+        destination: { x: 1620, y: 255 },
+        waypoints: [{ x: 1875, y: 180 }, { x: 1620, y: 255 }],
         plannedTime: 240,
       });
     } else if (event.timeInMinutes === 330) {
@@ -1757,16 +1775,16 @@ export class BattleEngine {
       this.issueOrder('al_constantine', {
         unitId: 'al_constantine',
         type: 'assault',
-        destination: { x: 1000, y: 470 },
-        waypoints: [{ x: 1100, y: 520 }, { x: 1000, y: 470 }],
+        destination: { x: 1500, y: 705 },
+        waypoints: [{ x: 1650, y: 780 }, { x: 1500, y: 705 }],
         plannedTime: 330,
       });
       if (this.state.isFullHistoricalReplay) {
         this.issueOrder('fr_bessieres', {
           unitId: 'fr_bessieres',
           type: 'assault',
-          destination: { x: 945, y: 465 },
-          waypoints: [{ x: 830, y: 360 }, { x: 945, y: 465 }],
+          destination: { x: 1418, y: 698 },
+          waypoints: [{ x: 1245, y: 540 }, { x: 1418, y: 698 }],
           plannedTime: 330,
           source: 'historical_event',
         });
@@ -1777,17 +1795,17 @@ export class BattleEngine {
         this.issueOrder('fr_vandamme', {
           unitId: 'fr_vandamme',
           type: 'flank',
-          destination: { x: 780, y: 830 },
-          waypoints: [{ x: 910, y: 650 }, { x: 780, y: 830 }],
-          curveControl: { x: 935, y: 725 },
+          destination: { x: 1170, y: 1245 },
+          waypoints: [{ x: 1365, y: 975 }, { x: 1170, y: 1245 }],
+          curveControl: { x: 1402, y: 1088 },
           plannedTime: 420,
           source: 'historical_event',
         });
         this.issueOrder('fr_sthilaire', {
           unitId: 'fr_sthilaire',
           type: 'assault',
-          destination: { x: 715, y: 775 },
-          waypoints: [{ x: 815, y: 635 }, { x: 715, y: 775 }],
+          destination: { x: 1072, y: 1162 },
+          waypoints: [{ x: 1222, y: 952 }, { x: 1072, y: 1162 }],
           plannedTime: 420,
           source: 'historical_event',
         });
@@ -1809,11 +1827,7 @@ export class BattleEngine {
         if (unit.currentOrder) {
           unit.currentOrder = undefined;
         }
-        // Routing units drift backwards
-        if (unit.status === 'routing') {
-          const fleeDir = unit.faction === 'french' ? -1 : 1;
-          unit.position.x += fleeDir * 0.4 * effectiveSpeed;
-        }
+        if (unit.status === 'routing') this.updateRouting(unit, effectiveSpeed);
         continue;
       }
 
@@ -3337,6 +3351,8 @@ export class BattleEngine {
 
       for (const friendly of playerUnits) {
         const dist = Math.hypot(enemy.position.x - friendly.position.x, enemy.position.y - friendly.position.y);
+        // Beyond the best possible spotting range (cavalry, high ground, contact margin): skip the costly LOS trace
+        if (dist > 560) continue;
 
         // 1. Line-of-sight & Reverse Slope Defilade check
         const los = this.checkLineOfSight(friendly.position, enemy.position);
@@ -3797,9 +3813,6 @@ export class BattleEngine {
           if (this.state.playerFaction === 'allies') {
             this.triggerContactSitrep(allied, isFrenchMelee ? 'melee' : 'direct_fire', french);
           }
-          if (allied.morale <= 25) {
-            allied.status = 'routing';
-          }
         }
       } else {
         french.status = 'holding';
@@ -3869,9 +3882,6 @@ export class BattleEngine {
         allied.status = isAlliedMelee ? 'melee' : 'engaging';
         if (this.state.playerFaction === 'french') {
           this.triggerContactSitrep(french, isAlliedMelee ? 'melee' : 'direct_fire', allied);
-        }
-        if (french.morale <= 25) {
-          french.status = 'routing';
         }
       }
     } else {
@@ -4444,6 +4454,37 @@ export class BattleEngine {
     return faction === 'french' ? 0 : Math.PI;
   }
 
+  // Routing: flee away from the nearest enemy; once clear of contact, cohesion recovers and the unit rallies
+  private updateRouting(unit: Unit, effectiveSpeed: number) {
+    let nearest: Unit | null = null;
+    let nearestDist = Infinity;
+    for (const u of this.state.units) {
+      if (u.faction === unit.faction || u.status === 'shattered' || u.strength <= 0) continue;
+      const d = Math.hypot(u.position.x - unit.position.x, u.position.y - unit.position.y);
+      if (d < nearestDist) {
+        nearestDist = d;
+        nearest = u;
+      }
+    }
+
+    const away = nearest
+      ? Math.atan2(unit.position.y - nearest.position.y, unit.position.x - nearest.position.x)
+      : unit.faction === 'french' ? Math.PI : 0;
+    const fleeSpeed = nearestDist < 260 ? 0.9 : 0.3;
+    unit.heading = away;
+    unit.position.x = Math.max(20, Math.min(2380, unit.position.x + Math.cos(away) * fleeSpeed * effectiveSpeed));
+    unit.position.y = Math.max(20, Math.min(1480, unit.position.y + Math.sin(away) * fleeSpeed * effectiveSpeed));
+
+    if (nearestDist > 260) {
+      unit.morale = Math.min(100, unit.morale + 0.8 * effectiveSpeed);
+      if (unit.morale >= 45) {
+        unit.status = 'idle';
+        unit.hasTriggeredWaveringSitrep = false;
+        this.addLog(`[RALLIED] ${unit.name} has rallied and re-formed.`, unit.faction, 'highlight');
+      }
+    }
+  }
+
   private updateMoraleStatus(unit: Unit) {
     const minShatterStrength = unit.type === 'artillery' ? 1 : 80;
     // Units shatter only when fighting headcount is annihilated
@@ -4502,6 +4543,58 @@ export class BattleEngine {
         unit.status = 'idle';
       }
     }
+  }
+
+  /**
+   * Plans a flanking attack on the nearest enemy the unit can see. The unit swings wide on the
+   * requested side and arrives on the enemy's exposed flank, facing it. Returns null when no
+   * enemy is within sight.
+   */
+  public planFlankAttack(unitId: string, side: 'left' | 'right') {
+    const unit = this.state.units.find((u) => u.id === unitId);
+    if (!unit) return null;
+    const sight = this.getUnitVisionRadius(unit);
+
+    let target: Unit | null = null;
+    let best = Infinity;
+    for (const u of this.state.units) {
+      if (u.faction === unit.faction || u.status === 'shattered' || u.strength <= 0) continue;
+      if (this.state.fogOfWarEnabled && u.detectionState === 'hidden') continue;
+      const d = Math.hypot(u.position.x - unit.position.x, u.position.y - unit.position.y);
+      if (d <= sight && d < best) {
+        best = d;
+        target = u;
+      }
+    }
+    if (!target) return null;
+
+    const toTarget = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
+    // Our left/right (screen y points down, so "left" of a heading is heading - 90°)
+    const sideAngle = toTarget + (side === 'left' ? -Math.PI / 2 : Math.PI / 2);
+    const sx = Math.cos(sideAngle);
+    const sy = Math.sin(sideAngle);
+
+    // Of the enemy's two flanks, take the one on our chosen side
+    const f1 = target.heading + Math.PI / 2;
+    const f2 = target.heading - Math.PI / 2;
+    const dot = (a: number) => Math.cos(a) * sx + Math.sin(a) * sy;
+    const flank = dot(f1) >= dot(f2) ? f1 : f2;
+
+    const standoff = Math.max(55, (target.width || 40) / 2 + 40);
+    const clampX = (v: number) => Math.max(30, Math.min(2370, v));
+    const clampY = (v: number) => Math.max(30, Math.min(1470, v));
+    const destination = {
+      x: clampX(target.position.x + Math.cos(flank) * standoff),
+      y: clampY(target.position.y + Math.sin(flank) * standoff),
+    };
+    // Bow the approach outward so the march stays clear of the enemy's front
+    const dist = Math.hypot(destination.x - unit.position.x, destination.y - unit.position.y);
+    const curveControl = {
+      x: clampX((unit.position.x + destination.x) / 2 + sx * dist * 0.45),
+      y: clampY((unit.position.y + destination.y) / 2 + sy * dist * 0.45),
+    };
+    const finalHeading = Math.atan2(target.position.y - destination.y, target.position.x - destination.x);
+    return { target, destination, curveControl, finalHeading };
   }
 
   public getUnitVisionRadius(unit: Unit): number {

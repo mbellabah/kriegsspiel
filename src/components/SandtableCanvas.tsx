@@ -5,7 +5,7 @@ import { BattleEngine, SimulationState } from '../engine/simulation';
 import { SandtableRenderer, Camera, DraftingManeuver } from '../engine/canvasRenderer';
 import { Unit, Vector2D, TroopFilterType, TargetReferencePoint } from '../types/game';
 import { sounds } from '../engine/soundEffects';
-import { ZoomIn, ZoomOut, Crosshair, Copy, X, Navigation, Play } from 'lucide-react';
+import { Play, X } from './glyphs';
 import { TacticalContextMenu } from './TacticalContextMenu';
 import { headingToBearing, getCardinalDirection } from '../engine/tacticalNavigation';
 
@@ -310,8 +310,8 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
       }
       if (e.code === 'Space') {
         e.preventDefault();
+        if (e.repeat) return;
         const willRun = !engine.getState().isRunning;
-        console.log('[TOTAL WAR] Spacebar pressed. Transitioning isRunning to:', willRun);
         engine.setRunning(willRun);
         try {
           if (willRun) {
@@ -342,11 +342,12 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
             sounds.playClick();
           } catch {}
         } else if (lowerKey === 'b') {
-          const currentUnit = state.selectedUnitId 
-            ? state.units.find((u) => u.id === state.selectedUnitId)
+          const live = engine.getState();
+          const currentUnit = live.selectedUnitId
+            ? live.units.find((u) => u.id === live.selectedUnitId)
             : null;
-          if (currentUnit && currentUnit.type === 'artillery') {
-            if (isBombardTargeting) {
+          if (currentUnit && currentUnit.type === 'artillery' && currentUnit.faction === live.playerFaction) {
+            if (isBombardTargetingRef.current) {
               onCancelBombardTargeting?.();
             } else {
               onStartBombardTargeting?.();
@@ -355,14 +356,19 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
             toggleBearingTool();
           }
         } else if (lowerKey === 'f') {
-          const currentUnit = state.selectedUnitId 
-            ? state.units.find((u) => u.id === state.selectedUnitId)
+          const live = engine.getState();
+          const currentUnit = live.selectedUnitId
+            ? live.units.find((u) => u.id === live.selectedUnitId)
             : null;
-          if (currentUnit && (currentUnit.type === 'infantry' || currentUnit.type === 'cavalry')) {
+          if (
+            currentUnit &&
+            currentUnit.faction === live.playerFaction &&
+            (currentUnit.type === 'infantry' || currentUnit.type === 'guard' || currentUnit.type === 'cavalry')
+          ) {
             const enemyFaction = currentUnit.faction === 'french' ? 'allies' : 'french';
             let nearestEnemy: Unit | null = null;
             let minDist = 350;
-            for (const u of state.units) {
+            for (const u of live.units) {
               if (u.faction === enemyFaction && u.status !== 'shattered' && u.strength > 0) {
                 const d = Math.hypot(u.position.x - currentUnit.position.x, u.position.y - currentUnit.position.y);
                 if (d < minDist) {
@@ -382,7 +388,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
               type: 'charge',
               destination: dest,
               waypoints: [],
-              plannedTime: state.timeMinutes,
+              plannedTime: live.timeMinutes,
             });
           }
         }
@@ -395,7 +401,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
           setDrawingOrder(null);
         } else if (isPickingCoordinatesRef.current) {
           onCancelPickCoordinates?.();
-        } else if (isBombardTargeting) {
+        } else if (isBombardTargetingRef.current) {
           onCancelBombardTargeting?.();
         } else if (isDrawingBearingRef.current || bearingArrowRef.current) {
           setIsDrawingBearing(false);
@@ -418,10 +424,6 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
         // Quick toggle hotkeys
         if (lowerKey === 't') {
           engine.toggleTopography();
-        } else if (lowerKey === 'k') {
-          engine.toggleArtilleryKillzones();
-        } else if (lowerKey === 'b') {
-          toggleBearingTool();
         }
       }
     };
@@ -635,21 +637,25 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
     []
   );
 
-  // Find unit under cursor using latest live engine state (calibrated to counter geometry)
+  // Nearest visible unit under the cursor. Pick radius follows the on-screen symbol size,
+  // and enemies hidden by fog of war cannot be picked.
   const getUnitAt = useCallback(
     (worldPos: Vector2D): Unit | null => {
-      const currentUnits = engine.getState().units;
-      for (const unit of currentUnits) {
-        if (unit.status === 'shattered') continue;
-        const dx = Math.abs(worldPos.x - unit.position.x);
-        const dy = Math.abs(worldPos.y - unit.position.y);
-        const halfW = Math.max(24, (unit.width || 48) / 2 + 6);
-        const halfH = Math.max(16, (unit.depth || 20) / 2 + 6);
-        if (dx <= halfW && dy <= halfH) {
-          return unit;
+      const live = engine.getState();
+      const zoom = cameraRef.current.zoom || 1;
+      const pickRadius = Math.max(10, 16 / zoom);
+      let best: Unit | null = null;
+      let bestDist = Infinity;
+      for (const unit of live.units) {
+        if (unit.status === 'shattered' || unit.strength <= 0) continue;
+        if (live.fogOfWarEnabled && unit.faction !== live.playerFaction && unit.detectionState === 'hidden') continue;
+        const d = Math.hypot(worldPos.x - unit.position.x, worldPos.y - unit.position.y);
+        if (d <= pickRadius && d < bestDist) {
+          best = unit;
+          bestDist = d;
         }
       }
-      return null;
+      return best;
     },
     [engine]
   );
@@ -705,7 +711,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
         // Left click to commit fire mission
         const selId = currentState.selectedUnitId;
         const selUnit = currentState.units.find((u) => u.id === selId);
-        if (selUnit && selUnit.type === 'artillery') {
+        if (selUnit && selUnit.type === 'artillery' && selUnit.faction === currentState.playerFaction) {
           engine.issueOrder(selUnit.id, {
             unitId: selUnit.id,
             type: 'bombard',
@@ -828,7 +834,10 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
       const selectedUnitIds = currentState.selectedUnitIds?.length > 0 
         ? currentState.selectedUnitIds 
         : (currentState.selectedUnitId ? [currentState.selectedUnitId] : []);
-      const selectedUnits = currentState.units.filter((u) => selectedUnitIds.includes(u.id) && u.status !== 'shattered');
+      // Only the player's own formations take orders; an enemy can be selected for inspection only
+      const selectedUnits = currentState.units.filter(
+        (u) => selectedUnitIds.includes(u.id) && u.status !== 'shattered' && u.faction === currentState.playerFaction
+      );
 
       if (selectedUnits.length > 0) {
         // If clicked on an enemy, issue attack/bombard order directly to all selected units
@@ -895,7 +904,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
 
     // Live TRP marker dragging
     if (draggingTrpIdRef.current) {
-      engine.moveTRP(draggingTrpIdRef.current, worldPos);
+      engine.moveTRP(draggingTrpIdRef.current, worldPos, false);
       return;
     }
 
@@ -984,6 +993,8 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
     // 0. Release Dragged TRP (Left Click Release)
     if (e.button === 0 && draggingTrpIdRef.current) {
       sounds.playDispatchStamp();
+      const dropped = engine.getState().targetReferencePoints?.find((t) => t.id === draggingTrpIdRef.current);
+      if (dropped) engine.moveTRP(dropped.id, dropped.position);
       setDraggingTrpId(null);
       draggingTrpIdRef.current = null;
       return;
@@ -1132,7 +1143,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
   };
 
   // Wheel handling: Bends maneuver curve while drafting, or zooms camera otherwise
-  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+  const handleWheel = (e: WheelEvent) => {
     e.preventDefault();
 
     // If currently drafting a maneuver arrow, scroll wheel BENDS THE CURVE (Total War Flank Arc)
@@ -1161,6 +1172,31 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
     cameraRef.current.x = Math.max(200, Math.min(2200, newCamX));
     cameraRef.current.y = Math.max(150, Math.min(1350, newCamY));
   };
+
+  // Native, non-passive wheel listener so preventDefault stops browser page zoom (trackpad pinch)
+  const handleWheelRef = useRef(handleWheel);
+  handleWheelRef.current = handleWheel;
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent) => handleWheelRef.current(e);
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // Finish drags released over a panel or outside the window, so pan/draw/box-select never stick
+  const handleMouseUpRef = useRef(handleMouseUp);
+  handleMouseUpRef.current = handleMouseUp;
+  const isDragInteraction = isPanning || !!drawingOrder || isBoxSelecting || !!draggingTrpId;
+  useEffect(() => {
+    if (!isDragInteraction) return;
+    const onUp = (e: MouseEvent) => {
+      if (e.target === canvasRef.current) return; // the canvas handler already ran
+      handleMouseUpRef.current(e as unknown as React.MouseEvent<HTMLCanvasElement>);
+    };
+    window.addEventListener('mouseup', onUp);
+    return () => window.removeEventListener('mouseup', onUp);
+  }, [isDragInteraction]);
 
   const zoomIn = () => {
     targetZoomRef.current = Math.min(4.0, targetZoomRef.current * 1.25);
@@ -1229,7 +1265,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
             top: Math.max(16, cursorToast.screenPos.y - 28),
           }}
         >
-          <Copy size={12} className="text-stone-300" />
+          
           <span>Copied {cursorToast.text}</span>
         </div>
       )}
@@ -1303,7 +1339,6 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
-        onWheel={handleWheel}
         onContextMenu={(e) => e.preventDefault()}
         className="block w-full h-full outline-none focus:outline-none"
       />
@@ -1472,7 +1507,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
           {drawnBearingInfo && (
             <div className={ui.field}>
               <span className={ui.fieldLabel}>
-                <Navigation size={10} className="rotate-45 mr-1" />
+                
                 Brg
               </span>
               <span className={ui.fieldValue}>
@@ -1562,18 +1597,12 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
             title={isDrawingBearing ? 'Cancel bearing tool (B / Esc)' : 'Measure bearing and distance (B)'}
             className={cx(ui.btn, 'h-5', isDrawingBearing && '!bg-[#d97706] !border-[#b45309] !text-white')}
           >
-            <Navigation size={11} />
+            
             <span>Bearing</span>
           </button>
-          <button onClick={zoomIn} title="Zoom in" className={cx(ui.btnIcon, 'h-5 w-5')}>
-            <ZoomIn size={13} />
-          </button>
-          <button onClick={zoomOut} title="Zoom out" className={cx(ui.btnIcon, 'h-5 w-5')}>
-            <ZoomOut size={13} />
-          </button>
-          <button onClick={resetCamera} title="Fit battlefield" className={cx(ui.btnIcon, 'h-5 w-5')}>
-            <Crosshair size={13} />
-          </button>
+          <button onClick={zoomIn} title="Zoom in" className={cx(ui.btnIcon, 'h-5 w-auto min-w-5 px-1 text-[11px] font-medium')}>+</button>
+          <button onClick={zoomOut} title="Zoom out" className={cx(ui.btnIcon, 'h-5 w-auto min-w-5 px-1 text-[11px] font-medium')}>−</button>
+          <button onClick={resetCamera} title="Fit battlefield" className={cx(ui.btnIcon, 'h-5 w-auto min-w-5 px-1 text-[11px] font-medium')}>Fit</button>
         </div>
       </footer>
 

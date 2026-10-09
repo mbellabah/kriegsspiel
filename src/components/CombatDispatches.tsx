@@ -1,6 +1,6 @@
 import React from 'react';
 import { CombatLogEntry } from '../types/game';
-import { X, MessageSquare } from 'lucide-react';
+import { X } from './glyphs';
 
 interface CombatDispatchesProps {
   logs: CombatLogEntry[];
@@ -26,7 +26,7 @@ export const CombatDispatches: React.FC<CombatDispatchesProps> = ({ logs, isOpen
       {!embedded && (
         <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#a8a29e] bg-[#e8e4db]">
           <div className="flex items-center gap-1.5">
-            <MessageSquare size={13} className="text-[#23324a]" />
+            
             <h2 className="font-sans text-xs font-semibold text-black">
               Combat Log & Dispatches
             </h2>

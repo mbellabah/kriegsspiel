@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Unit, ERA_WEAPON_PROFILES } from '../types/game';
 import { BattleEngine } from '../engine/simulation';
-import { X, Scissors } from 'lucide-react';
+import { X } from './glyphs';
 import { ui, cx } from './ui';
 import { UnitSymbol } from './UnitSymbol';
 import { designationFor } from '../engine/natoSymbols';
@@ -169,11 +169,28 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
   };
 
   const handleQuickOrder = (type: 'flank_left' | 'flank_right' | 'advance') => {
+    if (type !== 'advance') {
+      const plan = engine.planFlankAttack(unit.id, type === 'flank_left' ? 'left' : 'right');
+      if (plan) {
+        engine.issueOrder(unit.id, {
+          unitId: unit.id,
+          type: 'flank',
+          destination: plan.destination,
+          waypoints: [],
+          curveControl: plan.curveControl,
+          finalHeading: plan.finalHeading,
+          targetUnitId: plan.target.id,
+          plannedTime: state.timeMinutes,
+        });
+        return;
+      }
+    }
+    // No enemy in sight (or plain advance): wheel forward on the chosen side
     const fwd = 120;
     const fx = Math.cos(unit.heading);
     const fy = Math.sin(unit.heading);
-    const px = -fy;
-    const py = fx;
+    const px = fy;
+    const py = -fx;
     const side = type === 'flank_left' ? 1 : type === 'flank_right' ? -1 : 0;
     const clampX = (v: number) => Math.max(30, Math.min(2370, v));
     const clampY = (v: number) => Math.max(30, Math.min(1470, v));
@@ -181,7 +198,7 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
     const curveControl = side
       ? { x: unit.position.x + fx * 60 + px * 110 * side, y: unit.position.y + fy * 60 + py * 110 * side }
       : undefined;
-    engine.issueOrder(unit.id, { unitId: unit.id, type: 'assault', destination: dest, waypoints: [], curveControl, plannedTime: 0 });
+    engine.issueOrder(unit.id, { unitId: unit.id, type: side ? 'flank' : 'assault', destination: dest, waypoints: [], curveControl, plannedTime: state.timeMinutes });
   };
 
   const handleCounterBattery = () => {
@@ -330,13 +347,13 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
 
             <Section title="Orders">
               <div className="grid grid-cols-3 gap-1">
-                <button className={actionBtn} onClick={() => handleQuickOrder('flank_left')} title="Wheel forward and to the left">
+                <button className={actionBtn} onClick={() => handleQuickOrder('flank_left')} title="Attack the flank of the nearest enemy in sight, swinging left">
                   Flank left
                 </button>
                 <button className={actionBtn} onClick={() => handleQuickOrder('advance')} title="Advance about 600 m">
                   Advance
                 </button>
-                <button className={actionBtn} onClick={() => handleQuickOrder('flank_right')} title="Wheel forward and to the right">
+                <button className={actionBtn} onClick={() => handleQuickOrder('flank_right')} title="Attack the flank of the nearest enemy in sight, swinging right">
                   Flank right
                 </button>
               </div>
@@ -417,7 +434,7 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
               <Section title="Organisation">
                 {!isSplitting ? (
                   <button className={cx(actionBtn, 'w-full')} onClick={() => setIsSplitting(true)}>
-                    <Scissors size={12} />
+                    
                     Detach a sub-unit
                   </button>
                 ) : (

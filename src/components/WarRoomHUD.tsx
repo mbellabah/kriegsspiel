@@ -1,17 +1,6 @@
 import React, { useState } from 'react';
 import { BattleEngine, SimulationState } from '../engine/simulation';
-import {
-  Play,
-  Pause,
-  RotateCcw,
-  Users,
-  MessageSquare,
-  BookOpen,
-  Layers,
-  ChevronDown,
-  ShieldAlert,
-  Send,
-} from 'lucide-react';
+import { ChevronDown, Pause, Play, Reset } from './glyphs';
 import { REALISTIC_AUSTERLITZ_SCENARIO } from '../data/austerlitzScenario';
 import { sounds } from '../engine/soundEffects';
 import { TroopFilterType } from '../types/game';
@@ -163,14 +152,13 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
     </div>
   );
 
-  const staffTab = (tab: StaffTab, icon: React.ReactNode, label: string, badge?: React.ReactNode, title?: string) => (
+  const staffTab = (tab: StaffTab, label: string, badge?: React.ReactNode, title?: string) => (
     <button
       type="button"
       onClick={() => handleTabClick(tab)}
       title={title}
       className={cx(ui.btn, 'relative', isTabActive(tab) && ui.btnActive)}
     >
-      {icon}
       <span>{label}</span>
       {badge}
     </button>
@@ -232,7 +220,7 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
           </div>
 
           <button type="button" onClick={() => engine.resetBattle()} className={ui.btnIcon} title="Restart from 07:00">
-            <RotateCcw size={13} />
+            <Reset size={13} />
           </button>
         </div>
 
@@ -303,7 +291,7 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
               className={cx(ui.btn, isLayersOpen && ui.btnActive)}
               title="Map layers"
             >
-              <Layers size={13} />
+              
               <span>Layers</span>
               <ChevronDown size={11} />
             </button>
@@ -360,7 +348,6 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
 
           {staffTab(
             'sitrep',
-            <ShieldAlert size={13} />,
             'Sitrep',
             unreadContactsCount > 0 ? (
               <span className="ml-0.5 h-4 min-w-[16px] px-1 bg-[#c2272d] text-white text-[10px] font-bold leading-4 text-center">
@@ -378,15 +365,13 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
             ) : null,
             'Contacts and engagements'
           )}
-          {staffTab('dispatch', <Send size={13} />, 'Orders', null, 'Write orders to commanders (`)')}
-          {staffTab('orbat', <Users size={13} />, 'ORBAT', null, 'Order of battle')}
-          {staffTab('log', <MessageSquare size={13} />, 'Log', null, 'Combat log')}
+          {staffTab('dispatch', 'Orders', null, 'Write orders to commanders (`)')}
+          {staffTab('orbat', 'ORBAT', null, 'Order of battle')}
+          {staffTab('log', 'Log', null, 'Combat log')}
 
           <span className={cx(ui.divider, 'mx-1')} />
 
-          <button type="button" onClick={onToggleDoctrine} className={ui.btnIcon} title="Reference: symbols and doctrine">
-            <BookOpen size={14} />
-          </button>
+          <button type="button" onClick={onToggleDoctrine} className={ui.btn} title="Reference: symbols and doctrine">Reference</button>
         </div>
       </div>
     </header>
