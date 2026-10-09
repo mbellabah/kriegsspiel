@@ -1,4 +1,4 @@
-import { Unit, ManeuverOrder, Scenario, TerrainFeature, CombatLogEntry, BattleStateSnapshot, HistoricalEvent, HistoricalDispatch, Vector2D, OperationalGraphic, ActiveEngagement, TargetReferencePoint, SectorForceRatios, WargameSymbology, TacticalObjective, Formation, EnemyIntel, FireKind, IncomingFire, FireSituation, CampaignEra, OrderCondition, OrderSource, ContactType, SitrepNotification, ERA_WEAPON_PROFILES } from '../types/game';
+import { Unit, ManeuverOrder, Scenario, TerrainFeature, CombatLogEntry, BattleStateSnapshot, HistoricalEvent, HistoricalDispatch, Vector2D, OperationalGraphic, ActiveEngagement, TargetReferencePoint, SectorForceRatios, WargameSymbology, TacticalObjective, Formation, EnemyIntel, OrderConduct, FireKind, IncomingFire, FireSituation, CampaignEra, OrderCondition, OrderSource, ContactType, SitrepNotification, ERA_WEAPON_PROFILES } from '../types/game';
 import { toMgrs } from './grid';
 import { AUSTERLITZ_CONTROL_MEASURES } from '../data/controlMeasures';
 import { sounds } from './soundEffects';
@@ -852,6 +852,7 @@ export class BattleEngine {
       durationMinutes?: number;
       condition?: OrderCondition;
       chainedOrder?: Omit<ManeuverOrder, 'id' | 'status'>;
+      conduct?: OrderConduct;
       observerUnitId?: string;
       supportingBatteryId?: string;
       holdFireThreshold?: number;
@@ -883,6 +884,7 @@ export class BattleEngine {
         durationMinutes: order.durationMinutes,
         condition: order.condition,
         chainedOrder: order.chainedOrder,
+        conduct: order.conduct ? { ...order.conduct } : undefined,
         observerUnitId: order.observerUnitId,
         supportingBatteryId: order.supportingBatteryId,
         holdFireThreshold: order.holdFireThreshold,
@@ -962,6 +964,7 @@ export class BattleEngine {
         durationMinutes: order.durationMinutes,
         condition: order.condition,
         chainedOrder: order.chainedOrder,
+        conduct: order.conduct ? { ...order.conduct } : undefined,
         observerUnitId: order.observerUnitId,
         supportingBatteryId: order.supportingBatteryId,
         holdFireThreshold: order.holdFireThreshold,
@@ -1136,6 +1139,8 @@ export class BattleEngine {
 
     const newOrder: ManeuverOrder = {
       ...order,
+      // Each order gets its own conduct record (the engine fills it in as the order runs)
+      conduct: order.conduct ? { ...order.conduct, started: false } : undefined,
       source: incomingSource,
       destination: targetDest,
       finalHeading,
@@ -2146,6 +2151,11 @@ export class BattleEngine {
             continue;
           }
         }
+      }
+
+      // General-level conduct: pursue, press, delay, break off, demonstrate
+      if (order.conduct && order.status === 'executing' && this.updateConduct(unit, order)) {
+        continue;
       }
 
       // Entrench orders do not involve movement
@@ -4980,6 +4990,252 @@ export class BattleEngine {
       if (unit.status === 'wavering') {
         unit.status = 'idle';
       }
+    }
+  }
+
+  /** Nearest enemy the unit can see that satisfies the filter (fog-aware for the player's side). */
+  private findEnemyInSight(unit: Unit, filter: (e: Unit) => boolean = () => true, near?: Vector2D, within?: number): Unit | null {
+    const from = near ?? unit.position;
+    const reach = within ?? this.getUnitVisionRadius(unit);
+    const fogged = this.state.fogOfWarEnabled && unit.faction === this.state.playerFaction;
+    let best: Unit | null = null;
+    let bestDist = Infinity;
+    for (const e of this.state.units) {
+      if (e.faction === unit.faction || e.status === 'shattered' || e.strength <= 0) continue;
+      if (fogged && e.detectionState === 'hidden') continue;
+      if (!filter(e)) continue;
+      const d = Math.hypot(e.position.x - from.x, e.position.y - from.y);
+      if (d <= reach && d < bestDist) {
+        bestDist = d;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  /** A point `distance` px from the unit, away from `threat` and back towards its own army's rear. */
+  private fallBackPoint(unit: Unit, threat: Vector2D, distance: number): Vector2D {
+    const d = Math.max(1, Math.hypot(unit.position.x - threat.x, unit.position.y - threat.y));
+    const fx = (unit.position.x - threat.x) / d + (unit.faction === 'french' ? -0.6 : 0.6);
+    const fy = (unit.position.y - threat.y) / d;
+    const len = Math.hypot(fx, fy) || 1;
+    return {
+      x: Math.max(30, Math.min(2370, unit.position.x + (fx / len) * distance)),
+      y: Math.max(30, Math.min(1470, unit.position.y + (fy / len) * distance)),
+    };
+  }
+
+  /** Ends a conduct and leaves the unit holding where it stands, facing the nearest enemy. */
+  private endConduct(unit: Unit, order: ManeuverOrder, message: string): true {
+    this.addLog(message, unit.faction, 'highlight');
+    const enemy = this.findEnemyInSight(unit);
+    this.issueOrder(unit.id, {
+      unitId: unit.id,
+      type: 'hold',
+      destination: { ...unit.position },
+      waypoints: [],
+      finalHeading: enemy ? Math.atan2(enemy.position.y - unit.position.y, enemy.position.x - unit.position.x) : unit.heading,
+      plannedTime: this.state.timeMinutes,
+      source: order.source,
+    });
+    return true;
+  }
+
+  /**
+   * Applies an order's conduct each tick. Returns true when it has handled the unit this tick (or
+   * replaced its order), so normal movement is skipped.
+   */
+  private updateConduct(unit: Unit, order: ManeuverOrder): boolean {
+    const c = order.conduct!;
+    const isVisible = (e: Unit) =>
+      !(this.state.fogOfWarEnabled && unit.faction === this.state.playerFaction && e.detectionState === 'hidden');
+
+    if (!c.started) {
+      c.started = true;
+      c.origin = { ...unit.position };
+      c.startStrength = unit.strength;
+      switch (c.mode) {
+        case 'pursue': {
+          const target = order.targetUnitId
+            ? this.state.units.find((u) => u.id === order.targetUnitId) ?? null
+            : this.findEnemyInSight(unit, (e) => e.status === 'routing' || e.morale <= 50);
+          if (!target) return this.endConduct(unit, order, `${unit.name}: no broken enemy in sight to pursue. Holding.`);
+          order.targetUnitId = target.id;
+          order.waypoints = [];
+          if (unit.type === 'cavalry') order.type = 'charge';
+          c.leash ??= unit.type === 'cavalry' ? 500 : 300;
+          this.addLog(`[PURSUIT] ${unit.name} pursues ${target.name}.`, unit.faction, 'highlight');
+          break;
+        }
+        case 'press':
+          c.objective = { ...order.destination };
+          c.lossLimit ??= 0.25;
+          break;
+        case 'delay':
+          c.lossLimit ??= 0.1;
+          c.bounds ??= 3;
+          break;
+        case 'break_off': {
+          const threat = this.findEnemyInSight(unit, (e) => e.status !== 'routing', undefined, 400);
+          if (!threat) return this.endConduct(unit, order, `${unit.name}: not in contact, nothing to break off from. Holding.`);
+          const dest = this.fallBackPoint(unit, threat.position, 160);
+          order.type = 'retreat';
+          order.destination = dest;
+          order.waypoints = [];
+          order.finalHeading = Math.atan2(threat.position.y - dest.y, threat.position.x - dest.x);
+          order.chainedOrder = { unitId: unit.id, type: 'hold', destination: dest, waypoints: [], finalHeading: order.finalHeading, plannedTime: this.state.timeMinutes };
+          this.addLog(`[BREAK OFF] ${unit.name} breaks contact and falls back in good order.`, unit.faction, 'highlight');
+          return false;
+        }
+        case 'demonstrate': {
+          const target =
+            (order.targetUnitId ? this.state.units.find((u) => u.id === order.targetUnitId && u.status !== 'shattered') : null) ??
+            this.findEnemyInSight(unit, () => true, order.destination, 300) ??
+            this.findEnemyInSight(unit);
+          if (!target) return this.endConduct(unit, order, `${unit.name}: no enemy in sight to demonstrate against. Holding.`);
+          // Show the formation just beyond the enemy's reach, threatening without closing
+          const standoff = Math.max(target.range || 100, unit.range || 100) * 1.7;
+          const d = Math.max(1, Math.hypot(unit.position.x - target.position.x, unit.position.y - target.position.y));
+          const dest = {
+            x: target.position.x + ((unit.position.x - target.position.x) / d) * standoff,
+            y: target.position.y + ((unit.position.y - target.position.y) / d) * standoff,
+          };
+          order.type = 'march';
+          order.targetUnitId = undefined;
+          order.destination = dest;
+          order.waypoints = [];
+          order.targetFormation = 'line';
+          order.finalHeading = Math.atan2(target.position.y - dest.y, target.position.x - dest.x);
+          order.chainedOrder = { unitId: unit.id, type: 'hold', destination: dest, waypoints: [], finalHeading: order.finalHeading, targetFormation: 'line', plannedTime: this.state.timeMinutes };
+          this.addLog(`[DEMONSTRATION] ${unit.name} demonstrates against ${target.name}.`, unit.faction, 'highlight');
+          return false;
+        }
+      }
+    }
+
+    const lostSinceStart = (c.startStrength ?? unit.strength) > 0 ? ((c.startStrength ?? unit.strength) - unit.strength) / (c.startStrength ?? unit.strength) : 0;
+
+    if (c.mode === 'pursue') {
+      const target = this.state.units.find((u) => u.id === order.targetUnitId);
+      const fromOrigin = c.origin ? Math.hypot(unit.position.x - c.origin.x, unit.position.y - c.origin.y) : 0;
+      let reason: string | null = null;
+      if (!target || target.status === 'shattered') reason = 'the enemy has dispersed';
+      else if (!isVisible(target)) reason = 'contact lost';
+      else if (target.status !== 'routing' && target.morale > 55) reason = 'the enemy has rallied';
+      else if (fromOrigin > (c.leash ?? 300)) reason = 'pursuit limit reached';
+      else if (unit.fatigue > 85) reason = unit.type === 'cavalry' ? 'horses blown' : 'men exhausted';
+      else if (unit.morale < 40) reason = 'pursuers shaken';
+      if (reason) return this.endConduct(unit, order, `[PURSUIT HALTED] ${unit.name}: ${reason}.`);
+      order.destination = { ...target!.position };
+      order.waypoints = [];
+      // In contact: fight rather than walk into the enemy
+      return Math.hypot(target!.position.x - unit.position.x, target!.position.y - unit.position.y) <= 40;
+    }
+
+    if (c.mode === 'press') {
+      if (lostSinceStart >= (c.lossLimit ?? 0.25)) {
+        return this.endConduct(unit, order, `[ATTACK HALTED] ${unit.name} breaks off the attack at ${Math.round(lostSinceStart * 100)}% losses and holds.`);
+      }
+      if (order.targetUnitId) {
+        const target = this.state.units.find((u) => u.id === order.targetUnitId);
+        if (!target || target.status === 'shattered' || target.status === 'routing' || !isVisible(target)) {
+          order.targetUnitId = undefined;
+          order.destination = { ...(c.objective ?? unit.position) };
+          order.waypoints = [];
+        } else {
+          order.destination = { ...target.position };
+          return Math.hypot(target.position.x - unit.position.x, target.position.y - unit.position.y) <= 40;
+        }
+      }
+      const objective = c.objective ?? order.destination;
+      if (order.waypoints.length === 0 && Math.hypot(objective.x - unit.position.x, objective.y - unit.position.y) <= 50) {
+        const next = this.findEnemyInSight(unit, (e) => e.status !== 'routing', undefined, Math.max(150, (unit.range || 100) * 1.5));
+        if (!next) return this.endConduct(unit, order, `[OBJECTIVE TAKEN] ${unit.name} has taken its objective and consolidates.`);
+        order.targetUnitId = next.id;
+        order.destination = { ...next.position };
+        this.addLog(`[PRESSING ON] ${unit.name} presses on against ${next.name}.`, unit.faction, 'highlight');
+      }
+      return false;
+    }
+
+    if (c.mode === 'delay' && order.type === 'hold') {
+      const threat = this.findEnemyInSight(unit, (e) => e.status !== 'routing');
+      const threatDist = threat ? Math.hypot(threat.position.x - unit.position.x, threat.position.y - unit.position.y) : Infinity;
+      if (lostSinceStart < (c.lossLimit ?? 0.1) && threatDist > 45) return false;
+      if ((c.bounds ?? 0) <= 0 || !threat) {
+        order.conduct = undefined;
+        this.addLog(`[DELAY] ${unit.name} has reached its last position and holds.`, unit.faction, 'highlight');
+        return false;
+      }
+      const dest = this.fallBackPoint(unit, threat.position, 130);
+      const facing = Math.atan2(threat.position.y - dest.y, threat.position.x - dest.x);
+      const bounds = (c.bounds ?? 1) - 1;
+      this.addLog(`[DELAY] ${unit.name} falls back a bound${bounds > 0 ? ` (${bounds} left)` : ', last position'}.`, unit.faction, 'highlight');
+      this.issueOrder(unit.id, {
+        unitId: unit.id,
+        type: 'retreat',
+        destination: dest,
+        waypoints: [],
+        finalHeading: facing,
+        plannedTime: this.state.timeMinutes,
+        source: order.source,
+        chainedOrder: {
+          unitId: unit.id,
+          type: 'hold',
+          destination: dest,
+          waypoints: [],
+          finalHeading: facing,
+          plannedTime: this.state.timeMinutes,
+          source: order.source,
+          conduct: { mode: 'delay', lossLimit: c.lossLimit, bounds },
+        },
+      });
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Issues a general-level engagement order from the unit inspector. Returns a short reason when
+   * the order makes no sense right now (nothing to pursue, not in contact), otherwise null.
+   */
+  public issueConductOrder(unitId: string, mode: OrderConduct['mode'], options: { lossLimit?: number } = {}): string | null {
+    const unit = this.state.units.find((u) => u.id === unitId);
+    if (!unit || unit.status === 'shattered') return 'Unit not available';
+    const here = { ...unit.position };
+    const base = { unitId, waypoints: [] as Vector2D[], plannedTime: this.state.timeMinutes };
+    switch (mode) {
+      case 'pursue':
+        if (!this.findEnemyInSight(unit, (e) => e.status === 'routing' || e.morale <= 50)) return 'No broken or wavering enemy in sight';
+        this.issueOrder(unitId, { ...base, type: unit.type === 'cavalry' ? 'charge' : 'assault', destination: here, conduct: { mode } });
+        return null;
+      case 'press': {
+        const target = this.findEnemyInSight(unit, (e) => e.status !== 'routing');
+        if (!target) return 'No enemy in sight to attack';
+        this.issueOrder(unitId, {
+          ...base,
+          type: 'assault',
+          destination: { ...target.position },
+          targetUnitId: target.id,
+          targetFormation: unit.type === 'cavalry' ? undefined : 'column',
+          conduct: { mode, lossLimit: options.lossLimit },
+        });
+        return null;
+      }
+      case 'demonstrate': {
+        const target = this.findEnemyInSight(unit);
+        if (!target) return 'No enemy in sight';
+        this.issueOrder(unitId, { ...base, type: 'march', destination: { ...target.position }, targetUnitId: target.id, conduct: { mode } });
+        return null;
+      }
+      case 'break_off':
+        if (!this.findEnemyInSight(unit, (e) => e.status !== 'routing', undefined, 400)) return 'Not in contact';
+        this.issueOrder(unitId, { ...base, type: 'retreat', destination: here, conduct: { mode } });
+        return null;
+      case 'delay':
+        this.issueOrder(unitId, { ...base, type: 'hold', destination: here, conduct: { mode, lossLimit: options.lossLimit } });
+        return null;
     }
   }
 

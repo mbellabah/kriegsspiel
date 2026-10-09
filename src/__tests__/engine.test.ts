@@ -200,6 +200,104 @@ describe('fire situation (unit inspector)', () => {
   });
 });
 
+describe('order conduct (general-level engagement orders)', () => {
+  const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+  // A quiet corner of the map, well away from both armies
+  const isolate = (engine: ReturnType<typeof createBattle>['engine'], keep: string[]) => {
+    for (const u of engine.getState().units) if (!keep.includes(u.id)) u.position = u.faction === 'french' ? { x: 40, y: 40 } : { x: 2360, y: 1460 };
+  };
+
+  it('pursues a broken enemy and halts when it rallies', () => {
+    const { engine, state, run } = createBattle();
+    const cav = unit(engine, 'fr_walther');
+    const enemy = unit(engine, 'al_kienmayer');
+    isolate(engine, [cav.id, enemy.id]);
+    cav.position = { x: 1200, y: 800 };
+    enemy.position = { x: 1380, y: 800 };
+    enemy.status = 'routing';
+    enemy.morale = 10;
+    engine.issueOrder(cav.id, { unitId: cav.id, type: 'assault', destination: { ...cav.position }, waypoints: [], plannedTime: 0, conduct: { mode: 'pursue' } });
+    engine.setRunning(true);
+    run(3);
+    expect(cav.currentOrder?.targetUnitId).toBe(enemy.id);
+    expect(dist(cav.position, { x: 1200, y: 800 })).toBeGreaterThan(20);
+
+    enemy.status = 'idle';
+    enemy.morale = 80;
+    run(1);
+    expect(cav.currentOrder?.type).toBe('hold');
+    expect(state.combatLogs.some((l) => /PURSUIT HALTED.*rallied/.test(l.message))).toBe(true);
+  });
+
+  it('presses an attack but breaks it off at the loss limit', () => {
+    const { engine, state, run } = createBattle();
+    const inf = unit(engine, 'fr_vandamme');
+    const enemy = unit(engine, 'al_kollowrat');
+    isolate(engine, [inf.id, enemy.id]);
+    inf.position = { x: 1200, y: 800 };
+    enemy.position = { x: 1450, y: 800 };
+    engine.issueOrder(inf.id, { unitId: inf.id, type: 'assault', destination: { ...enemy.position }, targetUnitId: enemy.id, waypoints: [], plannedTime: 0, conduct: { mode: 'press', lossLimit: 0.2 } });
+    engine.setRunning(true);
+    run(0.5);
+    expect(inf.currentOrder?.conduct?.started).toBe(true);
+    inf.strength = inf.currentOrder!.conduct!.startStrength! * 0.75;
+    run(0.5);
+    expect(inf.currentOrder?.type).toBe('hold');
+    expect(state.combatLogs.some((l) => /ATTACK HALTED/.test(l.message))).toBe(true);
+  });
+
+  it('delays: falls back a bound when pressed, then holds again with one bound fewer', () => {
+    const { engine, run } = createBattle();
+    const inf = unit(engine, 'fr_vandamme');
+    const enemy = unit(engine, 'al_kollowrat');
+    isolate(engine, [inf.id, enemy.id]);
+    inf.position = { x: 1200, y: 800 };
+    enemy.position = { x: 1600, y: 800 };
+    engine.issueOrder(inf.id, { unitId: inf.id, type: 'hold', destination: { ...inf.position }, waypoints: [], plannedTime: 0, conduct: { mode: 'delay', bounds: 2 } });
+    engine.setRunning(true);
+    run(0.5);
+    expect(inf.currentOrder?.type).toBe('hold');
+
+    enemy.position = { x: 1235, y: 800 };
+    run(0.5);
+    expect(inf.currentOrder?.type).toBe('retreat');
+    expect(inf.currentOrder?.destination.x).toBeLessThan(1200); // away from the enemy, towards the French rear
+    expect(inf.currentOrder?.chainedOrder?.conduct).toMatchObject({ mode: 'delay', bounds: 1 });
+  });
+
+  it('breaks off in good order, facing the enemy', () => {
+    const { engine, run } = createBattle();
+    const inf = unit(engine, 'fr_vandamme');
+    const enemy = unit(engine, 'al_kollowrat');
+    isolate(engine, [inf.id, enemy.id]);
+    inf.position = { x: 1200, y: 800 };
+    enemy.position = { x: 1290, y: 800 };
+    engine.issueOrder(inf.id, { unitId: inf.id, type: 'retreat', destination: { ...inf.position }, waypoints: [], plannedTime: 0, conduct: { mode: 'break_off' } });
+    engine.setRunning(true);
+    run(0.2);
+    const order = inf.currentOrder!;
+    expect(order.type).toBe('retreat');
+    expect(dist(order.destination, enemy.position)).toBeGreaterThan(dist(inf.position, enemy.position) + 100);
+    expect(Math.cos(order.finalHeading!)).toBeGreaterThan(0.5); // will face east, towards the enemy
+    expect(order.chainedOrder?.type).toBe('hold');
+  });
+
+  it('demonstrates just beyond the enemy’s reach', () => {
+    const { engine, run } = createBattle();
+    const inf = unit(engine, 'fr_vandamme');
+    const enemy = unit(engine, 'al_kollowrat');
+    isolate(engine, [inf.id, enemy.id]);
+    inf.position = { x: 1100, y: 800 };
+    enemy.position = { x: 1400, y: 800 };
+    engine.issueOrder(inf.id, { unitId: inf.id, type: 'march', destination: { ...enemy.position }, waypoints: [], plannedTime: 0, conduct: { mode: 'demonstrate' } });
+    engine.setRunning(true);
+    run(0.2);
+    const standoff = dist(inf.currentOrder!.destination, enemy.position);
+    expect(standoff).toBeGreaterThan(Math.max(enemy.range, inf.range));
+    expect(standoff).toBeLessThan(Math.max(enemy.range, inf.range) * 2);
+  });
+});
+
 describe('contact reports', () => {
   it('does not identify an enemy that fog of war has not identified', () => {
     const { engine, state } = createBattle();

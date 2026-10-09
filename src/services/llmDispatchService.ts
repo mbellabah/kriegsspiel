@@ -1,4 +1,4 @@
-import { Unit, Vector2D, ManeuverOrder, Formation, OrderCondition, TargetReferencePoint } from '../types/game';
+import { Unit, Vector2D, ManeuverOrder, Formation, OrderCondition, OrderConduct, TargetReferencePoint } from '../types/game';
 import { PLACE_NAMES } from '../data/gazetteer';
 import { normalizeGridRefs, parseMgrs } from '../engine/grid';
 import {
@@ -84,6 +84,8 @@ export interface ParsedDispatchResult {
   durationMinutes?: number;
   condition?: OrderCondition;
   chainedOrder?: Omit<ManeuverOrder, 'id' | 'status'>;
+  /** General-level conduct (pursue, press, delay, break off, demonstrate). */
+  conduct?: OrderConduct;
   conditionDescription?: string;
   timingDescription?: string;
   observerUnitId?: string;
@@ -803,7 +805,7 @@ export class LLMDispatchService {
     const actionText = condAt ? primaryText.slice(0, condAt.index) : primaryText;
     const actionLower = actionText.toLowerCase();
     const plainPrimary = stripDiacritics(primaryText);
-    const hasAction = /\b(advance|march|move|go|proceed|push|attack|assault|charge|storm|take|seize|secure|occupy|capture|hold|defend|stand|hang\s+on|stay|remain|entrench|dig|retreat|withdraw|retire|fall\s+back|pull\s+back|reinforce|support|join|relieve|bombard|fire|shell|barrage|smoke|suppress|volley|screen|deploy|cross|wheel|engage|intercept|counter[- ]?battery)\b/i.test(actionText);
+    const hasAction = /\b(pursue|chase|exploit|press|demonstrate|feint|disengage|break\s+off|delay(?:ing)?|advance|march|move|go|proceed|push|attack|assault|charge|storm|take|seize|secure|occupy|capture|hold|defend|stand|hang\s+on|stay|remain|entrench|dig|retreat|withdraw|retire|fall\s+back|pull\s+back|reinforce|support|join|relieve|bombard|fire|shell|barrage|smoke|suppress|volley|screen|deploy|cross|wheel|engage|intercept|counter[- ]?battery)\b/i.test(actionText);
     const conditionInfo = parseConditionAndChaining(normText, context.landmarks);
     // "withdraw to Puntowitz if outflanked": a condition that closes the clause makes the preceding
     // action the response to it, so the unit holds until the condition triggers
@@ -823,7 +825,7 @@ export class LLMDispatchService {
     let targetUnitIds: string[] | undefined = undefined;
 
     // Extract leading addressee (e.g. @Oudinot, @d'Aboville, @V Corps, @Guard Horse Battery, Marshal Davout, General Oudinot, Oudinot,)
-    const leadAtWithDelim = /^@([^,\n;:]+?)(?:,\s*|:\s*|\s+(?:advance|march|attack|assault|bombard|fire|hold|form|deploy|retire|withdraw|halt|fall|engage|support|screen|charge|move|dig|wheel|limber|unlimber|prepare|take|secure|converge|link|remain|stand|counter|double|refuse|shift|smoke|defend|pivot|suppress|volley|call\s+for\s+fire|cff|covering)\b)/i.exec(normText);
+    const leadAtWithDelim = /^@([^,\n;:]+?)(?:,\s*|:\s*|\s+(?:advance|march|attack|assault|bombard|fire|hold|form|deploy|retire|withdraw|halt|fall|engage|support|screen|charge|move|dig|wheel|limber|unlimber|prepare|take|secure|converge|link|remain|stand|counter|double|refuse|shift|smoke|defend|pivot|suppress|volley|call\s+for\s+fire|cff|covering|pursue|chase|exploit|follow|press|push|keep|break|disengage|delay|fight|demonstrate|feint|threaten)\b)/i.exec(normText);
     const leadAtFallback = /^@([a-zA-Z0-9_'\-]+(?:\s+[a-zA-Z0-9_'\-]+)*)/i.exec(normText);
     const leadAt = leadAtWithDelim || leadAtFallback;
 
@@ -1297,6 +1299,10 @@ export class LLMDispatchService {
 
     let orderType: ManeuverOrder['type'] = 'march';
     let formation: Formation | undefined = explicitFormation;
+    let conduct: OrderConduct | undefined = undefined;
+    // "without delay" means at once, not a delaying action
+    const conductText = primaryTextLower.replace(/\b(?:without|no)\s+delay\b/g, '');
+    const lossLimitMatch = /(\d{1,2})\s*%\s*(?:loss(?:es)?|casualt(?:y|ies))/.exec(conductText);
     let actionDesc = '';
 
     let supportingBatteryId: string | undefined = undefined;
@@ -1395,6 +1401,31 @@ export class LLMDispatchService {
           ? `Laying pre-registered artillery fire on ${trpCode} (${destinationName}) with pre-dialed elevation`
           : `Unlimbering guns and laying artillery bombardment on ${destinationName}`;
       }
+    } else if (/\bpress(?:ing)?\s+(?:the\s+attack|home|on|forward|ahead)\b|\bpush\s+on\b|\bkeep\s+(?:attacking|pushing)\b/.test(conductText)) {
+      orderType = 'assault';
+      formation = explicitFormation || 'column';
+      conduct = { mode: 'press', lossLimit: lossLimitMatch ? Number(lossLimitMatch[1]) / 100 : undefined };
+      actionDesc = `Pressing the attack to ${destinationName}, breaking off at ${lossLimitMatch ? lossLimitMatch[1] : 25}% losses`;
+    } else if (/\b(pursue|pursuit|chase|follow\s+up|exploit)\b/.test(conductText)) {
+      orderType = matchedUnit.type === 'cavalry' ? 'charge' : 'assault';
+      formation = explicitFormation || (matchedUnit.type === 'cavalry' ? undefined : 'column');
+      conduct = { mode: 'pursue' };
+      actionDesc = 'Pursuing the broken enemy until he rallies or contact is lost';
+    } else if (/\b(break\s+off|break\s+contact|disengage)\b/.test(conductText)) {
+      orderType = 'retreat';
+      formation = explicitFormation;
+      conduct = { mode: 'break_off' };
+      actionDesc = 'Breaking contact and falling back in good order, facing the enemy';
+    } else if (/\b(delay(?:ing)?|fighting\s+withdrawal)\b/.test(conductText)) {
+      orderType = 'hold';
+      formation = explicitFormation || 'line';
+      conduct = { mode: 'delay', lossLimit: lossLimitMatch ? Number(lossLimitMatch[1]) / 100 : undefined };
+      actionDesc = `Fighting a delaying action from ${destinationName}, falling back by bounds when pressed`;
+    } else if (/\b(demonstrate|demonstration|feint|threaten|make\s+a\s+show)\b/.test(conductText)) {
+      orderType = 'march';
+      formation = explicitFormation || 'line';
+      conduct = { mode: 'demonstrate' };
+      actionDesc = `Demonstrating against ${destinationName} without closing`;
     } else if (/\b(bayonets?|charge|melee|storm)\b/.test(primaryTextLower)) {
       orderType = 'charge';
       formation = explicitFormation || 'column';
@@ -1444,7 +1475,7 @@ export class LLMDispatchService {
     }
 
     // Forced march detection
-    const isForcedMarch = /\b(?:force|forced)\s+march\b|\bat\s+the\s+double\b|\bdouble\s+time\b|\bhaste\b|\bpas\s+de\s+charge\b|\bhurry\b|\bpress\s+on\b/i.test(normText);
+    const isForcedMarch = /\b(?:force|forced)\s+march\b|\bat\s+the\s+double\b|\bdouble\s+time\b|\bhaste\b|\bpas\s+de\s+charge\b|\bhurry\b/i.test(normText);
     if (isForcedMarch) {
       if (orderType === 'march' || orderType === 'assault') {
         actionDesc = `Executing forced march to ${destinationName}`;
@@ -1540,6 +1571,7 @@ export class LLMDispatchService {
       durationMinutes: temporal.durationMinutes,
       condition: conditionInfo.condition,
       chainedOrder,
+      conduct,
       conditionDescription: conditionInfo.conditionDescription,
       timingDescription: temporal.timingDescription,
       observerUnitId,

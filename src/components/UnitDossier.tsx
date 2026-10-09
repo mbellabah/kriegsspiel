@@ -4,7 +4,7 @@ import { BattleEngine } from '../engine/simulation';
 import { X } from './glyphs';
 import { ui, cx } from './ui';
 import { UnitSymbol } from './UnitSymbol';
-import { designationFor } from '../engine/natoSymbols';
+import { designationFor, combatEffectiveness, conditionColor } from '../engine/natoSymbols';
 
 interface UnitDossierProps {
   unit: Unit | null;
@@ -56,18 +56,36 @@ const roughMinutes = (m: number) => {
   return `~${h} h${rest ? ` ${rest} min` : ''}`;
 };
 
-const Meter: React.FC<{ label: string; value: string; ratio: number; tone?: 'normal' | 'warn' | 'bad' }> = ({
+/** How an order with a conduct reads in the inspector. */
+const conductLabel = (c: NonNullable<Unit['currentOrder']>['conduct']): string | null => {
+  if (!c) return null;
+  switch (c.mode) {
+    case 'pursue':
+      return `Pursue, up to ${(((c.leash ?? 300) * 5) / 1000).toFixed(1)} km`;
+    case 'press':
+      return `Press the attack, break off at ${Math.round((c.lossLimit ?? 0.25) * 100)}% losses`;
+    case 'delay':
+      return `Delay, ${c.bounds ?? 3} bound${(c.bounds ?? 3) === 1 ? '' : 's'} left`;
+    case 'break_off':
+      return 'Break off';
+    case 'demonstrate':
+      return 'Demonstrate';
+  }
+};
+
+const Meter: React.FC<{ label: string; value: string; ratio: number; tone?: 'normal' | 'warn' | 'bad'; color?: string }> = ({
   label,
   value,
   ratio,
   tone = 'normal',
+  color,
 }) => (
   <div className="grid grid-cols-[84px_1fr_auto] items-center gap-2 h-5">
     <span className="text-[11px] text-stone-600">{label}</span>
     <div className="h-1.5 bg-[#e3dfd6] overflow-hidden">
       <div
-        className={cx('h-full', tone === 'bad' ? 'bg-[#c2272d]' : tone === 'warn' ? 'bg-[#d97706]' : 'bg-[#3d4f6b]')}
-        style={{ width: `${Math.max(0, Math.min(100, ratio * 100))}%` }}
+        className={cx('h-full', !color && (tone === 'bad' ? 'bg-[#c2272d]' : tone === 'warn' ? 'bg-[#d97706]' : 'bg-[#3d4f6b]'))}
+        style={{ width: `${Math.max(0, Math.min(100, ratio * 100))}%`, background: color }}
       />
     </div>
     <span className={cx(ui.mono, 'text-[11px] text-stone-900 text-right min-w-[58px]')}>{value}</span>
@@ -102,6 +120,8 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
   const [isSplitting, setIsSplitting] = useState(false);
   const [splitPct, setSplitPct] = useState(50);
   const [detachmentName, setDetachmentName] = useState('');
+  const [lossLimit, setLossLimit] = useState(0.25);
+  const [conductError, setConductError] = useState<{ unitId: string; text: string } | null>(null);
 
   if (!unit) return null;
 
@@ -148,9 +168,9 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
   const fatigue = Math.round(unit.fatigue || 0);
   const suppression = Math.round(unit.suppression || 0);
   const ammoRatio = unit.ammo / Math.max(1, unit.maxAmmo);
-  const effectiveness = Math.round(
-    strengthRatio * (unit.morale / 100) * Math.max(0, 1 - (fatigue / 100) * 0.35) * Math.max(0, 1 - (suppression / 100) * 0.4) * 100
-  );
+  // Same figure and colour bands as the condition bar under the unit's map symbol
+  const effectivenessRatio = combatEffectiveness(unit);
+  const effectiveness = Math.round(effectivenessRatio * 100);
   const terrain = engine.getTerrainAt(unit.position);
   const cover = Math.round(engine.getTerrainCover(unit.position) * 100);
   const order = unit.currentOrder;
@@ -262,6 +282,11 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
     setDetachmentName('');
   };
 
+  const conduct = (mode: 'pursue' | 'press' | 'delay' | 'break_off' | 'demonstrate') => {
+    const error = engine.issueConductOrder(unit.id, mode, { lossLimit: mode === 'delay' ? undefined : lossLimit });
+    setConductError(error ? { unitId: unit.id, text: error } : null);
+  };
+
   const isInfantry = unit.type === 'infantry' || unit.type === 'guard';
   const canAssault = isInfantry || unit.type === 'cavalry';
 
@@ -302,7 +327,7 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
           </div>
           {isPlayerUnit && order && (
             <div className="mt-1.5 text-[11px] text-stone-600 leading-relaxed">
-              <span className="text-stone-900">{ORDER_LABEL[order.type] ?? order.type}</span>
+              <span className="text-stone-900">{conductLabel(order.conduct) ?? ORDER_LABEL[order.type] ?? order.type}</span>
               {order.status === 'delivering' && <span> · courier arrives in {minutesToArrival} min</span>}
               {order.status === 'standby' && <span> · starts {engine.formatTime(order.startTime || 0)}</span>}
               {order.status === 'executing' && <span> · executing</span>}
@@ -366,7 +391,7 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
             ratio={strengthRatio}
             tone={strengthRatio < 0.35 ? 'bad' : strengthRatio < 0.6 ? 'warn' : 'normal'}
           />
-          <Meter label="Effectiveness" value={`${effectiveness}%`} ratio={effectiveness / 100} tone={effectiveness < 45 ? 'bad' : effectiveness < 75 ? 'warn' : 'normal'} />
+          <Meter label="Effectiveness" value={`${effectiveness}%`} ratio={effectivenessRatio} color={conditionColor(effectivenessRatio)} />
           <Meter label="Cohesion" value={`${Math.round(unit.morale)}%`} ratio={unit.morale / 100} tone={unit.morale <= 30 ? 'bad' : unit.morale <= 55 ? 'warn' : 'normal'} />
           <Meter label="Fatigue" value={`${fatigue}%`} ratio={fatigue / 100} tone={fatigue > 80 ? 'bad' : fatigue > 55 ? 'warn' : 'normal'} />
           <Meter label="Suppression" value={`${suppression}%`} ratio={suppression / 100} tone={suppression > 60 ? 'bad' : suppression > 30 ? 'warn' : 'normal'} />
@@ -460,6 +485,41 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
                   </button>
                 )}
               </div>
+              {canAssault && (
+                <>
+                  <div className={cx(ui.caption, 'mt-2 mb-1')}>Engagement</div>
+                  <div className="grid grid-cols-3 gap-1">
+                    <button className={actionBtn} onClick={() => conduct('press')} title="Attack the nearest enemy and keep pushing on to the next until none is left in reach; break off at the loss limit">
+                      Press
+                    </button>
+                    <button className={actionBtn} onClick={() => conduct('pursue')} title="Follow up a broken enemy until it rallies, contact is lost, or the pursuit limit is reached">
+                      Pursue
+                    </button>
+                    <button className={actionBtn} onClick={() => conduct('demonstrate')} title="Deploy in line just beyond the enemy's reach to fix him without closing">
+                      Demonstrate
+                    </button>
+                    <button className={actionBtn} onClick={() => conduct('break_off')} title="Break contact and fall back about 800 m in good order, facing the enemy">
+                      Break off
+                    </button>
+                    <button className={actionBtn} onClick={() => conduct('delay')} title="Hold; when pressed or after 10% losses, fall back a bound and hold again (three bounds)">
+                      Delay
+                    </button>
+                    <label className="flex items-center justify-between gap-1 h-6 px-1.5 border border-[#d6d1c6] text-[11px] text-stone-600" title="Losses at which a pressed attack is broken off">
+                      Limit
+                      <select
+                        value={lossLimit}
+                        onChange={(e) => setLossLimit(Number(e.target.value))}
+                        className="bg-transparent text-stone-900 text-[11px] outline-none cursor-pointer"
+                      >
+                        <option value={0.15}>15%</option>
+                        <option value={0.25}>25%</option>
+                        <option value={0.4}>40%</option>
+                      </select>
+                    </label>
+                  </div>
+                  {conductError?.unitId === unit.id && <div className="mt-1 text-[11px] text-[#8f1d22]">{conductError.text}</div>}
+                </>
+              )}
             </Section>
 
             {unit.type === 'artillery' && (

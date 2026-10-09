@@ -82,6 +82,19 @@ const CASES: Case[] = [
     },
   },
   { text: '@Legrand withdraw to Telnitz if outflanked', to: 'fr_legrand', type: 'hold', check: (r) => expect(r.condition?.contingencyDestinationName).toMatch(/Telnitz/) },
+  // General-level engagement orders
+  { text: '@Walther pursue the routed enemy', to: 'fr_walther', type: 'charge', check: (r) => expect(r.conduct?.mode).toBe('pursue') },
+  {
+    text: '@Vandamme press the attack to Pratzen, break off at 30% losses',
+    to: 'fr_vandamme',
+    type: 'assault',
+    at: [1490, 780], // an attack on a place goes in against the enemy holding it (Kollowrat)
+    check: (r) => expect(r.conduct).toMatchObject({ mode: 'press', lossLimit: 0.3 }),
+  },
+  { text: '@Legrand fight a delaying action at Sokolnitz', to: 'fr_legrand', type: 'hold', at: [960, 990], check: (r) => expect(r.conduct?.mode).toBe('delay') },
+  { text: '@St-Hilaire break off', to: 'fr_sthilaire', type: 'retreat', check: (r) => expect(r.conduct?.mode).toBe('break_off') },
+  { text: '@Bernadotte demonstrate against Blasowitz', to: 'fr_bernadotte', type: 'march', check: (r) => expect(r.conduct?.mode).toBe('demonstrate') },
+  { text: '@Davout advance to Telnitz without delay', to: 'fr_davout', type: 'march', at: [915, 1215], check: (r) => expect(r.conduct).toBeUndefined() },
 ];
 
 describe('order parser', () => {

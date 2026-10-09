@@ -75,6 +75,29 @@ export interface ManeuverOrder {
 
   // Chained / Follow-up Order (executed when primary order completes or expires at endTime)
   chainedOrder?: Omit<ManeuverOrder, 'id' | 'status'>;
+
+  /** How the order is to be fought through (pursue, press, delay, break off, demonstrate). */
+  conduct?: OrderConduct;
+}
+
+/**
+ * General-level intent layered on an order. The engine resolves targets when the order starts
+ * executing (so it also works after a courier delay) and applies the limits every tick.
+ */
+export interface OrderConduct {
+  mode: 'pursue' | 'press' | 'delay' | 'break_off' | 'demonstrate';
+  /** Press: break off after losing this fraction of the strength held at the start (default 0.25).
+   *  Delay: fall back a bound after losing this fraction since the bound began (default 0.1). */
+  lossLimit?: number;
+  /** Pursue: stop this far (px) from where the pursuit began (default 1.5 km, cavalry 2.5 km). */
+  leash?: number;
+  /** Delay: bounds still to fall back before holding for good (default 3). */
+  bounds?: number;
+  // Filled in by the engine when the order starts
+  started?: boolean;
+  origin?: Vector2D;
+  startStrength?: number;
+  objective?: Vector2D;
 }
 
 export interface DispatchEntry {

@@ -210,13 +210,16 @@ export function drawUnitSymbol(
 }
 
 /**
- * Combat effectiveness for the operational condition amplifier: strength, discounted as cohesion
- * falls (a full-strength unit at the point of breaking counts as half effective).
+ * Combat effectiveness, shared by the map's operational condition bar and the unit inspector:
+ * strength, discounted as cohesion falls (a full-strength unit at the point of breaking counts as
+ * half effective), as the men tire, and while they are pinned by fire.
  */
 export function combatEffectiveness(unit: Unit): number {
   const strength = Math.max(0, Math.min(1, unit.strength / Math.max(1, unit.initialStrength)));
   const cohesion = Math.max(0, Math.min(1, (unit.morale - 25) / 50));
-  return strength * (0.5 + 0.5 * cohesion);
+  const fatigue = Math.max(0, Math.min(100, unit.fatigue || 0)) / 100;
+  const suppression = Math.max(0, Math.min(100, unit.suppression || 0)) / 100;
+  return strength * (0.5 + 0.5 * cohesion) * (1 - 0.25 * fatigue) * (1 - 0.3 * suppression);
 }
 
 /** Usual NATO effectiveness bands: green 85%+, amber 70-84%, red 50-69%, black below 50%. */
