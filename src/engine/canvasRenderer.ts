@@ -1,5 +1,7 @@
 import { Unit, ManeuverOrder, Vector2D, OperationalGraphic, TroopFilterType, TargetReferencePoint, Faction, ERA_WEAPON_PROFILES } from '../types/game';
 import { SimulationState, BattleEngine } from './simulation';
+import { EffectsSystem } from './effects';
+import { GZD, SQUARE, eastingKm, northingKm } from './grid';
 import {
   MAP,
   FONT,
@@ -15,19 +17,6 @@ import {
   FRAME_W,
   SymbolIdentity,
 } from './natoSymbols';
-
-export interface SmokeParticle {
-  x: number;
-  y: number;
-  radius: number;
-  alpha: number;
-  maxAlpha: number;
-  vx: number;
-  vy: number;
-  life: number;
-  maxLife: number;
-  isBlackpowder?: boolean;
-}
 
 export interface Camera {
   x: number;
@@ -64,7 +53,7 @@ export class SandtableRenderer {
     }
   }
 
-  private smokeParticles: SmokeParticle[] = [];
+  private effects = new EffectsSystem();
   private animFrame: number = 0;
   private zoom: number = 1;
   public showRangeRings: boolean = false;
@@ -208,8 +197,10 @@ export class SandtableRenderer {
     // 12.5 Artillery Impacts (CFF Explosions)
     this.renderArtilleryImpacts(ctx, state);
 
-    // 13. Gunpowder Smoke Drifting with Cold Winter Winds
-    this.updateAndRenderEffects(ctx, state);
+    // 13. Fire, shells, explosions and smoke
+    const now = performance.now();
+    this.effects.update(state, now);
+    this.effects.draw(ctx, now);
 
     ctx.restore();
 
@@ -337,251 +328,67 @@ export class SandtableRenderer {
     isLiveTargeting: boolean = false,
     isSmokeMission: boolean = false
   ) {
-    const metrics = this.computeArtilleryKillzoneMetrics(state, battery, dest, observerUnitId, isSmokeMission);
-    const hasFriendlies = metrics.friendlyThreats.length > 0;
-    const isFrench = battery.faction === 'french';
-    const factionColor = isFrench ? '#1d4ed8' : '#b91c1c';
-    const zoneColor = hasFriendlies ? '#f59e0b' : factionColor; // Amber if friendly hazard, else Blue/Red faction
+    const m = this.computeArtilleryKillzoneMetrics(state, battery, dest, observerUnitId, isSmokeMission);
+    const hazard = m.friendlyThreats.length > 0;
+    const rgb = hazard ? '217, 119, 6' : battery.faction === state.playerFaction ? '11, 94, 168' : '194, 39, 45';
+    const hair = 1 / this.zoom;
+    const ls = this.symbolScale();
 
     ctx.save();
-
-    // 1. Line-of-Fire Trajectory Vector (Battery -> Target)
-    ctx.save();
-    ctx.strokeStyle = hasFriendlies ? 'rgba(245, 158, 11, 0.75)' : 'rgba(234, 88, 12, 0.75)';
-    ctx.lineWidth = 1.2;
-    ctx.setLineDash([4, 4]);
+    // Gun-target line
+    ctx.strokeStyle = `rgba(${rgb}, ${isLiveTargeting ? 0.8 : 0.45})`;
+    ctx.lineWidth = hair;
+    ctx.setLineDash([5 * hair, 4 * hair]);
     ctx.beginPath();
     ctx.moveTo(battery.position.x, battery.position.y);
     ctx.lineTo(dest.x, dest.y);
     ctx.stroke();
 
-    // Flight directional ticks
-    const step = 45;
-    const numTicks = Math.floor(metrics.dist / step);
+    // Target area (dispersion + burst) and burst radius
+    ctx.fillStyle = `rgba(${rgb}, ${isLiveTargeting ? 0.08 : 0.05})`;
+    ctx.beginPath();
+    ctx.arc(dest.x, dest.y, m.totalKillzoneRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
     ctx.setLineDash([]);
-    for (let i = 1; i <= numTicks; i++) {
-      const tx = battery.position.x + Math.cos(metrics.heading) * (i * step);
-      const ty = battery.position.y + Math.sin(metrics.heading) * (i * step);
-      ctx.save();
-      ctx.translate(tx, ty);
-      ctx.rotate(metrics.heading);
-      ctx.fillStyle = hasFriendlies ? '#f59e0b' : '#ea580c';
-      ctx.beginPath();
-      ctx.moveTo(3, 0); ctx.lineTo(-3, -2.5); ctx.lineTo(-1.5, 0); ctx.lineTo(-3, 2.5);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    }
+    ctx.strokeStyle = `rgba(${rgb}, 0.7)`;
+    ctx.beginPath();
+    ctx.arc(dest.x, dest.y, m.blastRadius, 0, Math.PI * 2);
+    ctx.stroke();
 
-    // Midpoint Flight Label
-    const midX = (battery.position.x + dest.x) / 2;
-    const midY = (battery.position.y + dest.y) / 2;
-    const tofSeconds = Math.max(1, Math.round(metrics.dist / 70));
-    const flightText = `BALLISTIC FLIGHT • ${Math.round(metrics.dist * 5)}m • TOF ${tofSeconds}s`;
-    ctx.font = 'bold 7px Arial, sans-serif';
-    const ftw = ctx.measureText(flightText).width;
-    ctx.fillStyle = '#fbfbfa';
-    ctx.fillRect(midX - ftw / 2 - 4, midY - 6, ftw + 8, 12);
-    ctx.strokeStyle = hasFriendlies ? '#d97706' : '#ea580c';
-    ctx.lineWidth = 0.8;
-    ctx.strokeRect(midX - ftw / 2 - 4, midY - 6, ftw + 8, 12);
-    ctx.fillStyle = hasFriendlies ? '#b45309' : '#c2410c';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(flightText, midX, midY);
-    ctx.restore();
+    // Aim point
+    ctx.beginPath();
+    ctx.moveTo(dest.x - 5 * hair, dest.y);
+    ctx.lineTo(dest.x + 5 * hair, dest.y);
+    ctx.moveTo(dest.x, dest.y - 5 * hair);
+    ctx.lineTo(dest.x, dest.y + 5 * hair);
+    ctx.stroke();
 
-    // 2. Grazing Ricochet Danger Corridor (+60px forward downrange)
-    if (metrics.canRicochet) {
+    // Ricochet danger for solid shot on firm ground
+    if (m.canRicochet) {
       ctx.save();
       ctx.translate(dest.x, dest.y);
-      ctx.rotate(metrics.heading);
-
+      ctx.rotate(m.heading);
+      ctx.strokeStyle = `rgba(${rgb}, 0.4)`;
+      ctx.setLineDash([3 * hair, 3 * hair]);
       ctx.beginPath();
-      ctx.moveTo(0, -metrics.blastRadius * 0.65);
-      ctx.lineTo(60, -14);
-      ctx.lineTo(60, 14);
-      ctx.lineTo(0, metrics.blastRadius * 0.65);
-      ctx.closePath();
-
-      ctx.fillStyle = 'rgba(245, 158, 11, 0.08)';
-      ctx.fill();
-
-      ctx.strokeStyle = 'rgba(245, 158, 11, 0.75)';
-      ctx.lineWidth = 1.0;
-      ctx.setLineDash([3, 3]);
+      ctx.moveTo(m.blastRadius * 0.8, -m.blastRadius * 0.5);
+      ctx.lineTo(m.blastRadius + 60, -12);
+      ctx.moveTo(m.blastRadius * 0.8, m.blastRadius * 0.5);
+      ctx.lineTo(m.blastRadius + 60, 12);
       ctx.stroke();
-
-      // Chevrons along bounce axis
-      ctx.fillStyle = 'rgba(217, 119, 6, 0.8)';
-      for (const rx of [20, 38, 52]) {
-        ctx.beginPath();
-        ctx.moveTo(rx + 4, 0); ctx.lineTo(rx - 3, -3); ctx.lineTo(rx - 1, 0); ctx.lineTo(rx - 3, 3);
-        ctx.closePath();
-        ctx.fill();
-      }
-
-      ctx.font = 'bold 6.5px "Courier New", monospace';
-      ctx.fillStyle = '#b45309';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      ctx.fillText('RICOCHET BEATEN AXIS (+300m)', 32, -4);
       ctx.restore();
     }
 
-    // 3. Outer Beaten Zone / Killzone Danger Envelope (totalKillzoneRadius)
-    ctx.save();
-    ctx.translate(dest.x, dest.y);
-
-    // Diagonal NATO Artillery Fire Support Hatching
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(0, 0, metrics.totalKillzoneRadius, 0, Math.PI * 2);
-    ctx.clip();
-
-    ctx.fillStyle = hasFriendlies ? 'rgba(245, 158, 11, 0.08)' : 'rgba(220, 38, 38, 0.06)';
-    ctx.fillRect(-metrics.totalKillzoneRadius, -metrics.totalKillzoneRadius, metrics.totalKillzoneRadius * 2, metrics.totalKillzoneRadius * 2);
-
-    ctx.strokeStyle = hasFriendlies ? 'rgba(245, 158, 11, 0.15)' : 'rgba(220, 38, 38, 0.13)';
-    ctx.lineWidth = 0.9;
-    const hatchStep = 11;
-    for (let hx = -metrics.totalKillzoneRadius * 2; hx < metrics.totalKillzoneRadius * 2; hx += hatchStep) {
-      ctx.beginPath();
-      ctx.moveTo(hx, -metrics.totalKillzoneRadius);
-      ctx.lineTo(hx + metrics.totalKillzoneRadius * 2, metrics.totalKillzoneRadius);
-      ctx.stroke();
+    if (isLiveTargeting || hazard) {
+      ctx.font = font(600, 7 * ls);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      const label = hazard
+        ? `Friendly units in target area (${m.friendlyThreats.length})`
+        : `${isSmokeMission ? 'Smoke' : 'Fire mission'} · ${Math.round(m.dist * 5).toLocaleString()} m · ±${Math.round(m.scatterRadius * 5)} m${m.hasFO ? ' · observed' : ''}`;
+      haloText(ctx, label, dest.x, dest.y - m.totalKillzoneRadius - 3 * hair, `rgb(${rgb})`, 2.6 * ls);
     }
-    ctx.restore();
-
-    // Outer Dashed Perimeter Ring
-    ctx.strokeStyle = zoneColor;
-    ctx.lineWidth = 1.3;
-    ctx.setLineDash([5, 4]);
-    ctx.beginPath();
-    ctx.arc(0, 0, metrics.totalKillzoneRadius, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Cardinal tick marks
-    ctx.setLineDash([]);
-    ctx.lineWidth = 1.1;
-    const otLen = 6;
-    ctx.beginPath();
-    ctx.moveTo(0, -metrics.totalKillzoneRadius - otLen); ctx.lineTo(0, -metrics.totalKillzoneRadius + 2);
-    ctx.moveTo(0, metrics.totalKillzoneRadius - 2); ctx.lineTo(0, metrics.totalKillzoneRadius + otLen);
-    ctx.moveTo(-metrics.totalKillzoneRadius - otLen, 0); ctx.lineTo(-metrics.totalKillzoneRadius + 2, 0);
-    ctx.moveTo(metrics.totalKillzoneRadius - 2, 0); ctx.lineTo(metrics.totalKillzoneRadius + otLen, 0);
-    ctx.stroke();
-
-    // 4. Shell Dispersion Circle (Where rounds strike)
-    ctx.strokeStyle = 'rgba(245, 158, 11, 0.75)';
-    ctx.lineWidth = 0.9;
-    ctx.setLineDash([2, 3]);
-    ctx.beginPath();
-    ctx.arc(0, 0, metrics.scatterRadius, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // 5. Inner Primary Lethal Burst Core (blastRadius)
-    ctx.strokeStyle = '#ef4444';
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([3, 3]);
-    ctx.beginPath();
-    ctx.arc(0, 0, metrics.blastRadius, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.fillStyle = 'rgba(239, 68, 68, 0.16)';
-    ctx.fill();
-
-    // NATO 4 Corner Brackets around lethal core
-    ctx.setLineDash([]);
-    ctx.lineWidth = 1.4;
-    ctx.strokeStyle = '#ef4444';
-    const bLen = 6;
-    const bDist = metrics.blastRadius * 0.78;
-    ctx.beginPath(); ctx.moveTo(-bDist, -bDist + bLen); ctx.lineTo(-bDist, -bDist); ctx.lineTo(-bDist + bLen, -bDist); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(bDist - bLen, -bDist); ctx.lineTo(bDist, -bDist); ctx.lineTo(bDist, -bDist + bLen); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(-bDist, bDist - bLen); ctx.lineTo(-bDist, bDist); ctx.lineTo(-bDist + bLen, bDist); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(bDist - bLen, bDist); ctx.lineTo(bDist, bDist); ctx.lineTo(bDist, bDist - bLen); ctx.stroke();
-
-    // Center Crosshairs & Bullseye
-    ctx.lineWidth = 1.0;
-    ctx.strokeStyle = '#ef4444';
-    ctx.beginPath();
-    ctx.moveTo(-8, 0); ctx.lineTo(-2, 0);
-    ctx.moveTo(2, 0); ctx.lineTo(8, 0);
-    ctx.moveTo(0, -8); ctx.lineTo(0, -2);
-    ctx.moveTo(0, 2); ctx.lineTo(0, 8);
-    ctx.stroke();
-
-    ctx.fillStyle = '#ef4444';
-    ctx.beginPath();
-    ctx.arc(0, 0, 2, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 6. Tactical Metrics Badge (Unified Below Killzone, Solid & Crisp)
-    const totalDiameterMeters = Math.round(metrics.totalKillzoneRadius * 10);
-    const burstMeters = Math.round(metrics.blastRadius * 5);
-    const scatterMeters = Math.round(metrics.scatterRadius * 5);
-
-    const titlePrefix = isLiveTargeting ? '[CFF TARGET PREVIEW]' : '[ARTILLERY KILLZONE]';
-    let targetAlert = '';
-    if (hasFriendlies) {
-      const threatNames = metrics.friendlyThreats.map((u) => u.name.split('(')[0].trim()).join(', ');
-      targetAlert = ` • ⚠️ FRIENDLY IN ZONE (${threatNames.toUpperCase()})`;
-    } else if (metrics.enemyTargets.length > 0) {
-      const count = metrics.enemyTargets.length;
-      targetAlert = ` • ${count} HOSTILE IN ZONE`;
-    }
-
-    const titleText = `${titlePrefix} • ${battery.name.split('(')[0].trim().toUpperCase()}${targetAlert}`;
-    const subText = `ZONE: Ø ${totalDiameterMeters}m | BURST: ${burstMeters}m | SCATTER: ±${scatterMeters}m${metrics.hasFO ? ' [FO: -75%]' : metrics.hasTRP ? ' [TRP: -65%]' : ''}`;
-
-    ctx.font = 'bold 8px Arial, sans-serif';
-    const tw1 = ctx.measureText(titleText).width;
-    ctx.font = 'bold 7px Arial, sans-serif';
-    const tw2 = ctx.measureText(subText).width;
-    const badgeW = Math.max(tw1, tw2) + 16;
-    const badgeH = 24;
-    const badgeY = metrics.totalKillzoneRadius + 6;
-
-    ctx.fillStyle = '#fbfbfa';
-    ctx.fillRect(-badgeW / 2, badgeY, badgeW, badgeH);
-    ctx.strokeStyle = hasFriendlies ? '#d97706' : zoneColor;
-    ctx.lineWidth = 1.0;
-    ctx.strokeRect(-badgeW / 2, badgeY, badgeW, badgeH);
-
-    ctx.fillStyle = hasFriendlies ? '#d97706' : zoneColor;
-    ctx.fillRect(-badgeW / 2, badgeY, 3, badgeH);
-
-    ctx.font = 'bold 7.5px Arial, sans-serif';
-    ctx.fillStyle = hasFriendlies ? '#92400e' : '#0f172a';
-    ctx.textAlign = 'left';
-    ctx.fillText(titleText, -badgeW / 2 + 7, badgeY + 9);
-
-    ctx.font = 'bold 6.5px Arial, sans-serif';
-    ctx.fillStyle = '#475569';
-    ctx.fillText(subText, -badgeW / 2 + 7, badgeY + 19);
-
-    ctx.restore();
-
-    // Friendly unit hazard rings
-    if (hasFriendlies) {
-      for (const threat of metrics.friendlyThreats) {
-        ctx.save();
-        ctx.strokeStyle = '#f59e0b';
-        ctx.lineWidth = 1.8;
-        ctx.setLineDash([3, 3]);
-        ctx.beginPath();
-        ctx.arc(threat.position.x, threat.position.y, 22, 0, Math.PI * 2);
-        ctx.stroke();
-
-        ctx.font = 'bold 7px Arial, sans-serif';
-        ctx.fillStyle = '#d97706';
-        ctx.textAlign = 'center';
-        ctx.fillText('IN KILLZONE', threat.position.x, threat.position.y - 25);
-        ctx.restore();
-      }
-    }
-
     ctx.restore();
   }
 
@@ -598,7 +405,7 @@ export class SandtableRenderer {
 
       for (const order of activeBombards) {
         const battery = state.units.find((u) => u.id === order.unitId);
-        if (!battery) continue;
+        if (!battery || battery.faction !== state.playerFaction) continue;
         this.renderArtilleryKillzoneFootprint(
           ctx,
           state,
@@ -611,236 +418,37 @@ export class SandtableRenderer {
       }
     }
 
-    // 2. CLEAN NATO BALLISTIC ARTILLERY IMPACT SYMBOLOGY & PERSISTENT CRATERS
+    // 2. Craters and ricochet furrows left by landed rounds (the blast itself is animated by EffectsSystem)
     for (const impact of state.artilleryImpacts) {
+      if (impact.isSmoke || this.effects.isInFlight(impact.id)) continue;
       const age = state.timeMinutes - impact.timeMinutes;
-      if (age > 1.2 || age < 0) continue;
+      if (age > 8 || age < 0) continue;
+      const fade = 1 - age / 8;
 
       ctx.save();
       ctx.translate(impact.x, impact.y);
-
-      // Phase 1: Active Detonation (first 0.25 battle minutes / 15 seconds)
-      if (age <= 0.25) {
-        const progress = age / 0.25; // 0 to 1
-
-        if (impact.isSmoke) {
-          // Tactical Smoke Screen Billow
-          const smokeRadius = impact.radius * (0.35 + progress * 0.75);
-          ctx.fillStyle = `rgba(226, 232, 240, ${Math.max(0, 0.40 * (1 - progress * 0.6))})`;
-          ctx.beginPath();
-          ctx.arc(0, 0, smokeRadius, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.strokeStyle = `rgba(148, 163, 184, ${Math.max(0, 0.65 * (1 - progress))})`;
-          ctx.lineWidth = 1.0;
-          ctx.setLineDash([3, 3]);
-          ctx.beginPath();
-          ctx.arc(0, 0, smokeRadius, 0, Math.PI * 2);
-          ctx.stroke();
-
-          ctx.font = 'bold 7px Arial, sans-serif';
-          ctx.fillStyle = '#475569';
-          ctx.textAlign = 'center';
-          ctx.fillText('SMOKE SCREEN', 0, -smokeRadius - 3);
-          ctx.restore();
-          continue;
-        }
-
-        if (impact.isRicochet) {
-          // Grazing ricochet impact (solid shot skipping across plateau)
-          if (impact.velocityHeading !== undefined) {
-            ctx.save();
-            ctx.rotate(impact.velocityHeading);
-            ctx.fillStyle = `rgba(180, 83, 9, ${Math.max(0, 0.50 * (1 - progress))})`;
-            ctx.beginPath();
-            ctx.ellipse(0, 0, impact.radius * 0.9, impact.radius * 0.35, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
-          }
-
-          const skipRadius = impact.radius * (0.3 + progress * 0.7);
-          ctx.strokeStyle = `rgba(245, 158, 11, ${Math.max(0, 0.85 * (1 - progress))})`;
-          ctx.lineWidth = Math.max(0.6, 1.4 * (1 - progress));
-          ctx.beginPath();
-          ctx.arc(0, 0, skipRadius, 0, Math.PI * 2);
-          ctx.stroke();
-
-          // Dust spray
-          ctx.fillStyle = `rgba(217, 119, 6, ${Math.max(0, 0.75 * (1 - progress))})`;
-          for (let s = 0; s < 8; s++) {
-            const spAng = (impact.velocityHeading || 0) + (s - 3.5) * 0.22;
-            const spDist = skipRadius * (0.5 + (s % 3) * 0.25);
-            ctx.beginPath();
-            ctx.arc(Math.cos(spAng) * spDist, Math.sin(spAng) * spDist, 1.1, 0, Math.PI * 2);
-            ctx.fill();
-          }
-
-          if (progress < 0.5) {
-            const tagAlpha = 1 - progress / 0.5;
-            ctx.font = 'bold 6px "Courier New", monospace';
-            ctx.fillStyle = `rgba(217, 119, 6, ${0.9 * tagAlpha})`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
-            ctx.fillText(`RICOCHET #${impact.skipCount || 1} (GRAZE)`, 0, -skipRadius - 2);
-          }
-
-          ctx.restore();
-          continue;
-        }
-
-        // Primary Expanding Shockwave
-        const shockRadius = impact.radius * (0.2 + progress * 0.9);
-        ctx.strokeStyle = `rgba(239, 68, 68, ${Math.max(0, 0.85 * (1 - progress))})`;
-        ctx.lineWidth = Math.max(0.8, 1.8 * (1 - progress));
-        ctx.setLineDash([]);
+      if (impact.isRicochet) {
+        ctx.rotate(impact.velocityHeading ?? 0);
+        ctx.fillStyle = `rgba(78, 52, 40, ${0.28 * fade})`;
         ctx.beginPath();
-        ctx.arc(0, 0, shockRadius, 0, Math.PI * 2);
-        ctx.stroke();
-
-        // Secondary Concentric Echo Ring
-        const innerEchoRadius = shockRadius * 0.55;
-        ctx.strokeStyle = `rgba(245, 158, 11, ${Math.max(0, 0.65 * (1 - progress))})`;
-        ctx.lineWidth = 0.8;
-        ctx.setLineDash([2, 3]);
-        ctx.beginPath();
-        ctx.arc(0, 0, innerEchoRadius, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // Epicenter Flash
-        if (progress < 0.3) {
-          const flashAlpha = 1 - progress / 0.3;
-          ctx.strokeStyle = `rgba(255, 255, 255, ${flashAlpha})`;
-          ctx.lineWidth = 1.2;
-          const crossLen = 6;
-          ctx.beginPath();
-          ctx.moveTo(-crossLen, 0); ctx.lineTo(crossLen, 0);
-          ctx.moveTo(0, -crossLen); ctx.lineTo(0, crossLen);
-          ctx.stroke();
-
-          ctx.fillStyle = `rgba(254, 240, 138, ${flashAlpha})`;
-          ctx.beginPath();
-          ctx.arc(0, 0, 2.0, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Shrapnel Dispersion Dots
-        ctx.fillStyle = `rgba(180, 83, 9, ${Math.max(0, 0.75 * (1 - progress))})`;
-        for (let s = 0; s < 12; s++) {
-          const ang = s * 2.39996;
-          const d = shockRadius * (0.3 + (s % 4) * 0.16);
-          ctx.beginPath();
-          ctx.arc(Math.cos(ang) * d, Math.sin(ang) * d, 1.0, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Caisson Detonation Violent Fiery Ring
-        if (impact.isCaissonDetonation) {
-          ctx.save();
-          ctx.strokeStyle = `rgba(234, 88, 12, ${Math.max(0, 0.9 * (1 - progress))})`;
-          ctx.lineWidth = 2.5;
-          ctx.beginPath();
-          ctx.arc(0, 0, shockRadius * 1.35, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.restore();
-        }
-
-        // Micro Tag
-        if (progress < 0.5) {
-          const tagAlpha = 1 - progress / 0.5;
-          ctx.font = 'bold 6.5px "Courier New", monospace';
-          ctx.fillStyle = impact.isCaissonDetonation
-            ? `rgba(234, 88, 12, ${tagAlpha})`
-            : impact.isGrandBattery
-            ? `rgba(185, 28, 28, ${tagAlpha})`
-            : `rgba(220, 38, 38, ${0.9 * tagAlpha})`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'bottom';
-          const label = impact.isCaissonDetonation
-            ? '⚡ CAISSON DETONATION'
-            : impact.isGrandBattery
-            ? 'MASSED TOT BARRAGE'
-            : impact.isCounterBattery
-            ? 'COUNTER-BATTERY HIT'
-            : 'IMP SALVO';
-          ctx.fillText(label, 0, -shockRadius - 3);
-        }
-
-        // Blackpowder cordite mist
-        if (progress > 0.1) {
-          const mistProgress = (progress - 0.1) / 0.9;
-          const mistAlpha = Math.max(0, 0.16 * (1 - mistProgress));
-          const mistRadius = impact.radius * (0.35 + mistProgress * 0.45);
-          ctx.fillStyle = `rgba(240, 240, 245, ${mistAlpha})`;
-          ctx.beginPath();
-          ctx.arc(0, -mistProgress * 4, mistRadius, 0, Math.PI * 2);
-          ctx.fill();
-        }
+        ctx.ellipse(0, 0, impact.radius * 0.45, impact.radius * 0.14, 0, 0, Math.PI * 2);
+        ctx.fill();
       } else {
-        // Phase 2: Persistent Scorched Crater & Churned Ground (0.25 to 1.2 minutes)
-        // Visually reveals where artillery shells and explosives have been landing!
-        const fade = Math.max(0, 1 - (age - 0.25) / 0.95);
-
-        if (impact.isSmoke) {
-          // Dissipating smoke haze
-          const smokeRadius = impact.radius * (0.75 + (1 - fade) * 0.35);
-          ctx.fillStyle = `rgba(226, 232, 240, ${0.12 * fade})`;
-          ctx.beginPath();
-          ctx.arc(0, 0, smokeRadius, 0, Math.PI * 2);
-          ctx.fill();
-        } else if (impact.isRicochet) {
-          // Skid furrow gouge
-          if (impact.velocityHeading !== undefined) {
-            ctx.save();
-            ctx.rotate(impact.velocityHeading);
-            ctx.fillStyle = `rgba(78, 52, 46, ${0.35 * fade})`;
-            ctx.beginPath();
-            ctx.ellipse(0, 0, impact.radius * 0.7, impact.radius * 0.25, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
-          }
-        } else {
-          // Blackened explosive crater pit
-          const craterRadius = Math.max(2.5, impact.radius * 0.26);
-
-          // Outer scorched dirt halo
-          ctx.fillStyle = `rgba(24, 18, 12, ${0.35 * fade})`;
-          ctx.beginPath();
-          ctx.arc(0, 0, craterRadius * 1.5, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Dark crater pit
-          ctx.fillStyle = `rgba(12, 10, 8, ${0.55 * fade})`;
-          ctx.beginPath();
-          ctx.arc(0, 0, craterRadius, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Jagged crater lip
-          ctx.strokeStyle = `rgba(55, 40, 25, ${0.40 * fade})`;
-          ctx.lineWidth = 0.8;
-          ctx.stroke();
-
-          // Faint ember speckle during early crater phase
-          if (age < 0.6) {
-            const emberFade = (1 - (age - 0.25) / 0.35);
-            ctx.fillStyle = `rgba(217, 119, 6, ${0.45 * emberFade})`;
-            ctx.beginPath();
-            ctx.arc(0, 0, 1.2, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
+        const r = Math.max(2.5, impact.radius * 0.18) * (impact.isCaissonDetonation ? 1.8 : 1);
+        ctx.fillStyle = `rgba(60, 45, 32, ${0.16 * fade})`;
+        ctx.beginPath();
+        ctx.arc(0, 0, r * 1.9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(30, 22, 16, ${0.5 * fade})`;
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
+        ctx.fill();
       }
-
       ctx.restore();
     }
     ctx.restore();
   }
 
-  // =========================================================================
-  // 1. BASE TERRAIN (MILITARY TOPO AESTHETIC)
-  // =========================================================================
-  // 1. BASE TERRAIN (MILITARY TOPO AESTHETIC)
-  // =========================================================================
   // =========================================================================
   // DYNAMIC ARTILLERY SHATTERED ICE CRACKS
   // =========================================================================
@@ -904,25 +512,28 @@ export class SandtableRenderer {
     }
     ctx.stroke();
 
-    // Grid numbers just inside the neatline
-    ctx.font = font(500, 10, FONT.mono);
-    ctx.fillStyle = MAP.gridLabel;
+    // Two-digit kilometre values just inside the neatline (MGRS 33U XQ)
+    ctx.font = font(600, 10, FONT.mono);
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
     for (let x = step; x < 2400; x += step) {
-      const label = String(x).padStart(4, '0');
-      haloText(ctx, label, x + 4, 6, MAP.gridLabel, 3);
+      const label = eastingKm(x);
+      haloText(ctx, label, x + 3, 5, MAP.gridLabel, 3);
       ctx.textBaseline = 'bottom';
-      haloText(ctx, label, x + 4, 1494, MAP.gridLabel, 3);
+      haloText(ctx, label, x + 3, 1495, MAP.gridLabel, 3);
       ctx.textBaseline = 'top';
     }
     for (let y = step; y < 1500; y += step) {
-      const label = String(y).padStart(4, '0');
+      const label = northingKm(y);
       ctx.textAlign = 'left';
-      haloText(ctx, label, 6, y + 4, MAP.gridLabel, 3);
+      haloText(ctx, label, 5, y + 3, MAP.gridLabel, 3);
       ctx.textAlign = 'right';
-      haloText(ctx, label, 2394, y + 4, MAP.gridLabel, 3);
+      haloText(ctx, label, 2395, y + 3, MAP.gridLabel, 3);
     }
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = font(600, 9, FONT.mono);
+    haloText(ctx, `${GZD} ${SQUARE}`, 5, 5, MAP.gridLabel, 3);
 
     // Neatline
     ctx.strokeStyle = MAP.ink;
@@ -987,15 +598,15 @@ export class SandtableRenderer {
     const raw = new Float32Array(W * H);
     for (let j = 0; j < H; j++) {
       for (let i = 0; i < W; i++) {
-        raw[j * W + i] = engine.getElevationRaw({ x: i * dx * 1.5, y: j * dy * 1.5 });
+        raw[j * W + i] = engine.getElevationSmooth({ x: i * dx * 1.5, y: j * dy * 1.5 });
       }
     }
 
-    // Separable box blur (two passes ≈ gaussian, ~8px) softens the seams where analytic landforms blend
+    // Light separable box blur softens seams where the analytic landforms blend
     const z = raw.slice();
     const tmp = new Float32Array(W * H);
-    const R = 4;
-    for (let pass = 0; pass < 2; pass++) {
+    const R = 2;
+    for (let pass = 0; pass < 1; pass++) {
       for (let j = 0; j < H; j++) {
         for (let i = 0; i < W; i++) {
           let sum = 0, n = 0;
@@ -1188,7 +799,7 @@ export class SandtableRenderer {
 
       ctx.textAlign = 'left';
       ctx.textBaseline = 'alphabetic';
-      ctx.font = font(500, 7.5, FONT.carto, true);
+      ctx.font = font(500, 6.5, FONT.carto, true);
       haloText(ctx, sp.name, sp.x + 5, sp.y - 1, '#44403c', 2.4);
       ctx.font = font(500, 6.5);
       haloText(ctx, String(sp.elev), sp.x + 5, sp.y + 7, MAP.contourLabel, 2.2);
@@ -2051,7 +1662,7 @@ export class SandtableRenderer {
         ctx.fillRect(-4, -4, 8, 8); // Central citadel
 
         // 5. Crisp Military Label with Drop-Halo
-        ctx.font = font(700, 11);
+        ctx.font = font(700, 9.5);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
         haloText(ctx, s.name, 0, -bh / 2 - 3, MAP.ink, 3);
@@ -2106,7 +1717,7 @@ export class SandtableRenderer {
         }
 
         // 5. Village Name Label with White Halo
-        ctx.font = font(600, isTacticalGarrison ? 8 : 7.5);
+        ctx.font = font(600, isTacticalGarrison ? 7 : 6.5);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
         haloText(ctx, s.name.toUpperCase(), 0, -vh / 2 - 2, isTacticalGarrison ? MAP.ink : '#44403c', 2.6);
@@ -2178,36 +1789,19 @@ export class SandtableRenderer {
     const distMeters = Math.round(totalDist * 5);
     const marchMins = Math.max(1, Math.round(distMeters / 60));
 
-    // 2. Translucent outer ribbon glow (subtle and sleek)
+    // 2. Direction of movement: solid when executing, dashed while the order is still with the courier
+    const hair = 1 / this.zoom;
     ctx.save();
     ctx.strokeStyle = color;
-    ctx.globalAlpha = isDelivering ? 0.08 : 0.14;
-    ctx.lineWidth = 2.6;
+    ctx.lineWidth = 1.6 * hair;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) {
-      ctx.lineTo(points[i].x, points[i].y);
-    }
-    ctx.stroke();
-    ctx.restore();
-
-    // 3. Main core tactical arrow path (crisp, precise dashed vector)
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.6;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
     if (isDelivering) {
-      ctx.setLineDash([3, 5]);
-      ctx.globalAlpha = 0.55;
-    } else if (isExecuting) {
-      ctx.setLineDash([7, 4]);
-      ctx.lineDashOffset = -this.animFrame * 0.5;
+      ctx.setLineDash([5 * hair, 4 * hair]);
+      ctx.globalAlpha = 0.6;
+    } else if (!isExecuting) {
+      ctx.setLineDash([8 * hair, 4 * hair]);
     }
-
     ctx.beginPath();
     ctx.moveTo(points[0].x, points[0].y);
     for (let i = 1; i < points.length; i++) {
@@ -2215,46 +1809,12 @@ export class SandtableRenderer {
     }
     ctx.stroke();
     ctx.restore();
-
-    // 4. Animated Total War Marching Chevrons (>> >> >>) along the curve (neat, thin pips)
-    const chevronInterval = 32;
-    const animOffset = (this.animFrame * 0.6) % chevronInterval;
-    let accum = animOffset;
-
-    for (let i = 0; i < points.length - 1; i++) {
-      const p1 = points[i];
-      const p2 = points[i + 1];
-      const segLen = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-      if (segLen < 1) continue;
-      const segAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-
-      while (accum < segLen) {
-        const t = accum / segLen;
-        const cx = p1.x + (p2.x - p1.x) * t;
-        const cy = p1.y + (p2.y - p1.y) * t;
-
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.rotate(segAngle);
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 0.9;
-        ctx.beginPath();
-        ctx.moveTo(-2.2, -2.5);
-        ctx.lineTo(1.2, 0);
-        ctx.lineTo(-2.2, 2.5);
-        ctx.stroke();
-        ctx.restore();
-
-        accum += chevronInterval;
-      }
-      accum -= segLen;
-    }
 
     // 5. Military Arrowhead at Destination (proportional, neat dart)
     const lastP = points[points.length - 1];
     const prevP = points[points.length - 2];
     const finalAngle = Math.atan2(lastP.y - prevP.y, lastP.x - prevP.x);
-    const arrowLen = 8.5;
+    const arrowLen = 9 * hair * Math.max(1, this.zoom * 0.8);
 
     ctx.save();
     ctx.fillStyle = color;
@@ -2286,10 +1846,10 @@ export class SandtableRenderer {
       ctx.translate(lastP.x, lastP.y);
       ctx.rotate(heading);
 
-      ctx.fillStyle = ghostUnit.faction === 'french' ? 'rgba(0, 51, 204, 0.12)' : 'rgba(204, 17, 17, 0.12)';
+      ctx.fillStyle = 'rgba(11, 94, 168, 0.08)';
       ctx.strokeStyle = color;
-      ctx.lineWidth = 0.9;
-      ctx.setLineDash([2, 2]);
+      ctx.lineWidth = hair;
+      ctx.setLineDash([3 * hair, 2 * hair]);
       ctx.beginPath();
       ctx.rect(-gw / 2, -gh / 2, gw, gh);
       ctx.fill();
@@ -2313,20 +1873,11 @@ export class SandtableRenderer {
       const midPt = points[midIdx];
 
       ctx.save();
-      const tag = `${distMeters.toLocaleString()}m • ~${marchMins} min`;
-      ctx.font = 'bold 9px Arial, sans-serif';
-      const tw = ctx.measureText(tag).width;
-
-      ctx.fillStyle = 'rgba(250, 245, 235, 0.95)';
-      ctx.fillRect(midPt.x - tw / 2 - 4, midPt.y - 18, tw + 8, 14);
-      ctx.strokeStyle = '#554433';
-      ctx.lineWidth = 0.8;
-      ctx.strokeRect(midPt.x - tw / 2 - 4, midPt.y - 18, tw + 8, 14);
-
-      ctx.fillStyle = '#111111';
+      const tag = `${distMeters.toLocaleString()} m · ~${marchMins} min`;
+      ctx.font = font(600, 7.5 * this.symbolScale());
       ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(tag, midPt.x, midPt.y - 11);
+      ctx.textBaseline = 'bottom';
+      haloText(ctx, tag, midPt.x, midPt.y - 4 * hair, MAP.ink, 2.6 * this.symbolScale());
       ctx.restore();
     }
 
@@ -2462,7 +2013,7 @@ export class SandtableRenderer {
         continue;
       }
 
-      const color = unit.faction === 'french' ? '#0033cc' : '#cc1111';
+      const color = MAP.friendLine;
 
       this.renderTotalWarArrow(
         ctx,
@@ -2485,42 +2036,30 @@ export class SandtableRenderer {
         const badgeY = order.destination.y - 20;
 
         let badgeText = '';
-        let badgeBg = 'rgba(250, 245, 235, 0.95)';
         let badgeColor = '#111111';
 
         if (order.source === 'subordinate') {
-          badgeText = `SUBORDINATE: ${order.type.toUpperCase()}`;
-          badgeBg = 'rgba(254, 243, 199, 0.95)';
+          badgeText = `Initiative: ${order.type}`;
           badgeColor = '#92400e';
         } else if (order.status === 'standby') {
           const h = Math.floor((order.startTime || 0) / 60) + 7;
           const m = Math.floor((order.startTime || 0) % 60);
-          badgeText = `WAIT T-${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-          badgeBg = 'rgba(254, 243, 199, 0.95)';
+          badgeText = `At ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
           badgeColor = '#92400e';
         } else if (order.endTime !== undefined) {
           const h = Math.floor(order.endTime / 60) + 7;
           const m = Math.floor(order.endTime % 60);
-          badgeText = `UNTIL ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-          badgeBg = 'rgba(239, 246, 255, 0.95)';
+          badgeText = `Until ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
           badgeColor = '#1e40af';
         } else if (order.condition) {
-          badgeText = `COND: ${order.condition.description.toUpperCase()}`;
-          badgeBg = 'rgba(243, 232, 255, 0.95)';
+          badgeText = `If ${order.condition.description.toLowerCase()}`;
           badgeColor = '#6b21a8';
         }
 
-        ctx.font = 'bold 8.5px monospace';
-        const bw = ctx.measureText(badgeText).width + 8;
-        ctx.fillStyle = badgeBg;
-        ctx.fillRect(badgeX - bw / 2, badgeY - 6, bw, 13);
-        ctx.strokeStyle = badgeColor;
-        ctx.lineWidth = 0.8;
-        ctx.strokeRect(badgeX - bw / 2, badgeY - 6, bw, 13);
-        ctx.fillStyle = badgeColor;
+        ctx.font = font(600, 7 * this.symbolScale());
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(badgeText, badgeX, badgeY + 1);
+        haloText(ctx, badgeText, badgeX, badgeY + 1, badgeColor, 2.6 * this.symbolScale());
         ctx.restore();
       }
     }
@@ -2569,7 +2108,7 @@ export class SandtableRenderer {
 
   private renderDraftingArrow(ctx: CanvasRenderingContext2D, drawingOrder: DraftingManeuver) {
     const { startUnit, currentTarget, waypoints, curveOffset, curveControl, finalHeading, dragStartPoint, selectedUnits, isFreehandPath } = drawingOrder;
-    const color = startUnit.faction === 'french' ? '#0033cc' : '#cc1111';
+    const color = MAP.friendLine;
 
     // FREEHAND CUSTOM MARCH PATH (Option/Alt + Drag)
     if (isFreehandPath && waypoints && waypoints.length > 0) {
@@ -2611,18 +2150,11 @@ export class SandtableRenderer {
       }
       totalDist += Math.hypot(currentTarget.x - lastPt.x, currentTarget.y - lastPt.y);
 
-      const badgeText = `CUSTOM MARCH ROUTE • ${Math.round(totalDist * 5)}m • ${waypoints.length} WAYPOINTS`;
-      ctx.font = 'bold 8px Arial, sans-serif';
-      const tw = ctx.measureText(badgeText).width;
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-      ctx.fillRect(currentTarget.x - tw / 2 - 4, currentTarget.y - 24, tw + 8, 14);
-      ctx.strokeStyle = pathColor;
-      ctx.lineWidth = 0.8;
-      ctx.strokeRect(currentTarget.x - tw / 2 - 4, currentTarget.y - 24, tw + 8, 14);
-      ctx.fillStyle = '#ffffff';
+      const badgeText = `Route · ${Math.round(totalDist * 5).toLocaleString()} m · ${waypoints.length} waypoints`;
+      ctx.font = font(600, 7.5 * this.symbolScale());
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(badgeText, currentTarget.x, currentTarget.y - 17);
+      haloText(ctx, badgeText, currentTarget.x, currentTarget.y - 17 / this.zoom, MAP.ink, 2.6 * this.symbolScale());
 
       // Ghost unit at endpoint
       const endHeadingFinal = finalHeading !== undefined ? finalHeading : endHeading;
@@ -2723,18 +2255,11 @@ export class SandtableRenderer {
 
       // Metrics badge
       const deg = Math.round((heading * 180 / Math.PI + 360) % 360);
-      const metricsText = `FORMATION LINE • ${Math.round(lineLen * 2.5)}m FRONT • ${n} UNITS • FACING ${deg}°`;
-      ctx.font = 'bold 8.5px Arial, sans-serif';
-      const tw = ctx.measureText(metricsText).width;
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-      ctx.fillRect(midX - tw / 2 - 5, midY - 24, tw + 10, 16);
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 0.8;
-      ctx.strokeRect(midX - tw / 2 - 5, midY - 24, tw + 10, 16);
-      ctx.fillStyle = '#38bdf8';
+      const metricsText = `Line · ${Math.round(lineLen * 5).toLocaleString()} m front · ${n} units · facing ${String(deg).padStart(3, '0')}°`;
+      ctx.font = font(600, 7.5 * this.symbolScale());
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(metricsText, midX, midY - 16);
+      haloText(ctx, metricsText, midX, midY - 16 / this.zoom, MAP.ink, 2.6 * this.symbolScale());
       ctx.restore();
       return;
     }
@@ -2784,18 +2309,11 @@ export class SandtableRenderer {
 
         // Orientation tag
         const deg = Math.round(((heading * 180) / Math.PI + 360) % 360);
-        const tag = `FACING ${deg}°`;
-        ctx.font = 'bold 8.5px Arial, sans-serif';
-        const tw = ctx.measureText(tag).width;
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-        ctx.fillRect(destination.x - tw / 2 - 4, destination.y - 30, tw + 8, 14);
-        ctx.strokeStyle = '#f59e0b';
-        ctx.lineWidth = 0.8;
-        ctx.strokeRect(destination.x - tw / 2 - 4, destination.y - 30, tw + 8, 14);
-        ctx.fillStyle = '#f59e0b';
+        const tag = `Facing ${String(deg).padStart(3, '0')}°`;
+        ctx.font = font(600, 7.5 * this.symbolScale());
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(tag, destination.x, destination.y - 23);
+        haloText(ctx, tag, destination.x, destination.y - 24 / this.zoom, MAP.ink, 2.6 * this.symbolScale());
       }
       ctx.restore();
 
@@ -3040,7 +2558,7 @@ export class SandtableRenderer {
         ctx.setLineDash([]);
 
         // Label at both ends, just beyond the line, kept upright
-        ctx.font = font(700, 8 * ls);
+        ctx.font = font(700, 7 * ls);
         const ends = [
           { p: g.points[0], q: g.points[1] },
           { p: g.points[g.points.length - 1], q: g.points[g.points.length - 2] },
@@ -3073,7 +2591,7 @@ export class SandtableRenderer {
         ctx.closePath();
         ctx.stroke();
 
-        ctx.font = font(700, 8 * ls);
+        ctx.font = font(700, 7 * ls);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         haloText(ctx, g.name, pt.x, pt.y - r + 12 * ls, MAP.ink, 3 * ls);
@@ -3123,7 +2641,7 @@ export class SandtableRenderer {
 
       ctx.textAlign = 'left';
       ctx.textBaseline = 'alphabetic';
-      ctx.font = font(700, 7.5);
+      ctx.font = font(700, 6.5);
       haloText(ctx, trp.code, 8, -5, color);
       if (isHovered || isDragging) {
         ctx.font = font(500, 6.5);
@@ -3582,8 +3100,8 @@ export class SandtableRenderer {
       const fx = lw / 2 + 1;
       const rng = Math.min(85, unit.range || 100);
       const half = 0.3;
-      ctx.fillStyle = 'rgba(234, 88, 12, 0.07)';
-      ctx.strokeStyle = 'rgba(234, 88, 12, 0.45)';
+      ctx.fillStyle = 'rgba(234, 88, 12, 0.045)';
+      ctx.strokeStyle = 'rgba(234, 88, 12, 0.3)';
       ctx.lineWidth = hair;
       ctx.beginPath();
       ctx.moveTo(fx, -lh / 4);
@@ -3591,15 +3109,6 @@ export class SandtableRenderer {
       ctx.lineTo(fx, lh / 4);
       ctx.closePath();
       ctx.fill();
-      ctx.stroke();
-
-      // Volley flicker along the front
-      const pulse = 0.5 + 0.5 * Math.sin((now + unit.id.charCodeAt(0) * 120) / 140);
-      ctx.strokeStyle = `rgba(234, 88, 12, ${0.25 + 0.6 * pulse})`;
-      ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      ctx.moveTo(fx + 1, -lh / 2);
-      ctx.lineTo(fx + 1, lh / 2);
       ctx.stroke();
     }
 
@@ -3724,27 +3233,27 @@ export class SandtableRenderer {
       const lx = hw + 3;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'alphabetic';
-      ctx.font = font(600, 8.5);
-      haloText(ctx, designationFor(unit), lx, showDetail ? -0.5 : 3, isFriendly ? MAP.ink : '#7f1d1d');
+      ctx.font = font(600, 7.5);
+      haloText(ctx, designationFor(unit), lx, showDetail ? -0.5 : 2.5, MAP.ink);
       if (showDetail) {
-        ctx.font = font(500, 6.5);
-        haloText(ctx, higherFormationFor(unit), lx, 7, MAP.inkMuted, 2.2);
+        ctx.font = font(500, 5.8);
+        haloText(ctx, higherFormationFor(unit), lx, 6.3, MAP.inkMuted, 2.2);
       }
     }
 
     // Single highest-priority status chip
     const chip = showLabels ? this.unitStatusChip(unit) : null;
     if (chip) {
-      ctx.font = font(700, 6);
+      ctx.font = font(700, 5.3);
       const tw = ctx.measureText(chip.text).width;
       const cy = y + 1;
       ctx.fillStyle = chip.color;
-      this.roundRect(ctx, -tw / 2 - 3, cy, tw + 6, 8, 2);
+      this.roundRect(ctx, -tw / 2 - 2.5, cy, tw + 5, 7, 1.5);
       ctx.fill();
       ctx.fillStyle = '#ffffff';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(chip.text, 0, cy + 4.3);
+      ctx.fillText(chip.text, 0, cy + 3.8);
     }
 
     // SITREP [LOCATE] beacon
@@ -3784,212 +3293,6 @@ export class SandtableRenderer {
   // 13. VISUAL EFFECTS (GENERIC NATO TACTICAL TRACERS, BALLISTIC ORDNANCE & IMPACTS)
   // Clean, military symbology adapted per scenario era (Napoleonic solid roundshot & musket smoke vs Modern NATO ordnance & tracers)
   // =========================================================================
-  private visualProjectiles: {
-    x: number;
-    y: number;
-    vx: number;
-    vy: number;
-    life: number;
-    maxLife: number;
-    isArtillery?: boolean;
-    isCanister?: boolean;
-  }[] = [];
-
-  private muzzleFlashes: {
-    x: number;
-    y: number;
-    heading: number;
-    life: number;
-    maxLife: number;
-  }[] = [];
-
-  public spawnSmoke(x: number, y: number, count: number = 2, isHeavy = false) {
-    for (let i = 0; i < count; i++) {
-      const maxLife = (isHeavy ? 26 : 16) + Math.random() * 8;
-      const radius = (isHeavy ? 2.8 : 1.8) + Math.random() * 1.2;
-      const alpha = isHeavy ? 0.25 : 0.16;
-
-      this.smokeParticles.push({
-        x: x + (Math.random() - 0.5) * (isHeavy ? 6 : 3),
-        y: y + (Math.random() - 0.5) * (isHeavy ? 6 : 3),
-        radius,
-        alpha,
-        maxAlpha: alpha,
-        vx: 0.02 + (Math.random() - 0.5) * 0.04,
-        vy: -0.015 - Math.random() * 0.03,
-        life: 0,
-        maxLife,
-      });
-    }
-  }
-
-  private updateAndRenderEffects(ctx: CanvasRenderingContext2D, state: SimulationState) {
-    if (state.isRunning) {
-      for (const unit of state.units) {
-        const isEngaging = unit.status === 'engaging' && unit.ammo !== undefined && unit.ammo > 0;
-        const isBombarding = unit.type === 'artillery' && unit.currentOrder?.status === 'executing' && unit.currentOrder.type === 'bombard' && unit.ammo !== undefined && unit.ammo > 0;
-
-        if (isEngaging || isBombarding) {
-          const isArtillery = unit.type === 'artillery';
-          const fireChance = isBombarding ? 0.08 : isArtillery ? 0.05 : 0.15;
-          
-          if (Math.random() < fireChance) {
-            // Weapon station coordinates along the unit's front rank
-            const w = (unit.width || 50) * 0.6;
-            const h = (unit.depth || 16) * 0.6;
-            const spread = (Math.random() - 0.5) * w;
-            const frontDist = h / 2 + 3;
-            
-            const px = unit.position.x + Math.cos(unit.heading) * frontDist - Math.sin(unit.heading) * spread;
-            const py = unit.position.y + Math.sin(unit.heading) * frontDist + Math.cos(unit.heading) * spread;
-
-            // 1. Realistic small muzzle smoke discharge
-            this.spawnSmoke(px, py, isArtillery ? 2 : 1, isArtillery);
-
-            // 2. Subtle micro muzzle flash spark (1-2 frames)
-            this.muzzleFlashes.push({
-              x: px,
-              y: py,
-              heading: unit.heading,
-              life: 0,
-              maxLife: 2,
-            });
-
-            // 3. Direct fire: Realistic small micro-tracers (no cartoon balls or parabolic arcs)
-            // (Bombardment is visualized cleanly at destination via renderArtilleryImpacts)
-            if (!isBombarding) {
-              if (isArtillery && unit.canisterActive) {
-                // Canister close defense: small fan of subtle micro-flechettes
-                for (let k = 0; k < 5; k++) {
-                  const spreadAngle = unit.heading + (Math.random() - 0.5) * 0.35;
-                  const speed = 9.5 + Math.random() * 2.0;
-                  this.visualProjectiles.push({
-                    x: px,
-                    y: py,
-                    vx: Math.cos(spreadAngle) * speed,
-                    vy: Math.sin(spreadAngle) * speed,
-                    life: 0,
-                    maxLife: 6,
-                    isArtillery: true,
-                    isCanister: true,
-                  });
-                }
-              } else if (isArtillery) {
-                // Artillery direct roundshot fire: solid, high-velocity cannon projectile (never musket bullets!)
-                const spreadAngle = unit.heading + (Math.random() - 0.5) * 0.04;
-                const speed = 12.0 + Math.random() * 2.0;
-                this.visualProjectiles.push({
-                  x: px,
-                  y: py,
-                  vx: Math.cos(spreadAngle) * speed,
-                  vy: Math.sin(spreadAngle) * speed,
-                  life: 0,
-                  maxLife: 9,
-                  isArtillery: true,
-                  isCanister: false,
-                });
-              } else {
-                // Musket volley / direct small arms fire: subtle, razor-thin micro-tracer line
-                const spreadAngle = unit.heading + (Math.random() - 0.5) * 0.10;
-                const speed = 8.5 + Math.random() * 2.0;
-                this.visualProjectiles.push({
-                  x: px,
-                  y: py,
-                  vx: Math.cos(spreadAngle) * speed,
-                  vy: Math.sin(spreadAngle) * speed,
-                  life: 0,
-                  maxLife: 8,
-                });
-              }
-            }
-          }
-        }
-      }
-    }
-
-    ctx.save();
-
-    // 1. Subtle, realistic micro muzzle flash sparks
-    for (let i = this.muzzleFlashes.length - 1; i >= 0; i--) {
-      const mf = this.muzzleFlashes[i];
-      mf.life++;
-      if (mf.life >= mf.maxLife) {
-        this.muzzleFlashes.splice(i, 1);
-        continue;
-      }
-      const alpha = 1 - mf.life / mf.maxLife;
-      ctx.save();
-      ctx.translate(mf.x, mf.y);
-      ctx.rotate(mf.heading);
-      ctx.strokeStyle = `rgba(254, 240, 138, ${0.85 * alpha})`;
-      ctx.lineWidth = 0.9;
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(3.5, 0);
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    // 2. Realistic small direct-fire micro-tracers (razor-thin, fast line ticks - no large balls or circles!)
-    for (let i = this.visualProjectiles.length - 1; i >= 0; i--) {
-      const p = this.visualProjectiles[i];
-      p.life++;
-      p.x += p.vx;
-      p.y += p.vy;
-
-      if (p.life >= p.maxLife) {
-        this.visualProjectiles.splice(i, 1);
-        continue;
-      }
-
-      const alpha = Math.max(0, 0.75 * (1 - p.life / p.maxLife));
-      ctx.beginPath();
-      if (p.isArtillery && !p.isCanister) {
-        // Solid cannon roundshot tracer: longer, heavier stroke
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(p.x - p.vx * 0.65, p.y - p.vy * 0.65);
-        ctx.strokeStyle = `rgba(254, 215, 170, ${alpha * 1.1})`;
-        ctx.lineWidth = 2.0;
-      } else if (p.isCanister) {
-        // Canister flechette / pellet spark
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(p.x - p.vx * 0.35, p.y - p.vy * 0.35);
-        ctx.strokeStyle = `rgba(251, 191, 36, ${alpha})`;
-        ctx.lineWidth = 1.1;
-      } else {
-        // Musket bullet line
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(p.x - p.vx * 0.4, p.y - p.vy * 0.4);
-        ctx.strokeStyle = `rgba(254, 240, 138, ${alpha})`;
-        ctx.lineWidth = 0.75;
-      }
-      ctx.stroke();
-    }
-
-    // 3. Gunpowder Smoke Puffs Drifting with Wind
-    for (let i = this.smokeParticles.length - 1; i >= 0; i--) {
-      const p = this.smokeParticles[i];
-      p.life++;
-      p.x += p.vx;
-      p.y += p.vy;
-      p.radius += 0.06;
-      p.alpha = p.maxAlpha * (1 - p.life / p.maxLife);
-
-      if (p.life >= p.maxLife) {
-        this.smokeParticles.splice(i, 1);
-        continue;
-      }
-
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(212, 212, 216, ${p.alpha})`;
-      ctx.fill();
-    }
-
-    ctx.restore();
-  }
-
-  // =========================================================================
   // 14. AUTHENTIC WEST POINT ATLAS CARTOUCHE & MAP LEGEND
   // Exact layout from media_1789975155849.png
   // Screen-space map furniture: north arrow and a scale bar that tracks zoom (1px = 5m)
@@ -4006,7 +3309,7 @@ export class SandtableRenderer {
     ctx.fillStyle = 'rgba(250, 248, 242, 0.88)';
     ctx.strokeStyle = 'rgba(28, 25, 23, 0.18)';
     ctx.lineWidth = 1;
-    this.roundRect(ctx, x0 - 8, y0 - 22, len + 64, 40, 6);
+    this.roundRect(ctx, x0 - 8, y0 - 22, Math.max(len + 64, 196), 40, 2);
     ctx.fill();
     ctx.stroke();
 
@@ -4047,7 +3350,7 @@ export class SandtableRenderer {
     ctx.textBaseline = 'top';
     ctx.fillStyle = MAP.inkMuted;
     ctx.font = font(500, 8);
-    ctx.fillText('GRID 1 KM · CI 10 M', sx, y0 + 5);
+    ctx.fillText(`${GZD} ${SQUARE} · 1 km grid · 10 m contours`, sx, y0 + 5);
     ctx.restore();
   }
 

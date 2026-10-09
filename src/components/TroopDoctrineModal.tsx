@@ -105,7 +105,7 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
                 <p className="text-neutral-700 mb-2">
                   The backbone of the battle line. Armed with smoothbore flintlock muskets, delivering massed volleys and fixing bayonets for shock assaults.
                 </p>
-                <div className="grid grid-cols-2 gap-2 text-[11px] bg-[#fbfaf7] p-2 border border-[#e8e4db]">
+                <div className="grid grid-cols-2 gap-2 text-[10.5px] bg-[#fbfaf7] p-2 border border-[#e8e4db]">
                   <div><strong>Volley Range:</strong> 80m – 120m</div>
                   <div><strong>Shock Factor:</strong> High in Bayonet Assault</div>
                   <div><strong>Imperial Guard:</strong> Unshakeable morale, devastating volley density</div>
@@ -114,7 +114,7 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
               </div>
 
               <div className="space-y-2">
-                <h4 className="font-semibold text-neutral-800 text-[11px]">
+                <h4 className="font-semibold text-neutral-800 text-[10.5px]">
                   Battle formations & tactical usage
                 </h4>
                 <div className="grid grid-cols-3 gap-2">
@@ -151,7 +151,7 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
                 <p className="text-neutral-700 mb-2">
                   Cuirassiers, Dragoons, and Hussars deployed for decisive shock charges, tactical pursuit, and exploitation.
                 </p>
-                <div className="grid grid-cols-2 gap-2 text-[11px] bg-[#fbfaf7] p-2 border border-[#e8e4db]">
+                <div className="grid grid-cols-2 gap-2 text-[10.5px] bg-[#fbfaf7] p-2 border border-[#e8e4db]">
                   <div><strong>Top Speed:</strong> ~3.0 map units/sec (Fastest arm)</div>
                   <div><strong>Shock Impact:</strong> Devastating on Line flank/rear</div>
                   <div><strong>Canister Danger:</strong> Highly vulnerable to artillery</div>
@@ -159,7 +159,7 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
                 </div>
               </div>
 
-              <div className="bg-amber-50 p-3 border border-amber-200 text-[11px] text-amber-900">
+              <div className="bg-amber-50 p-3 border border-amber-200 text-[10.5px] text-amber-900">
                 <strong>Tactical advice:</strong> Never charge unbroken infantry squares directly. Instead, maneuver around exposed flanks or wait until infantry is pinned down in a firefight before initiating a charge.
               </div>
             </div>
@@ -175,7 +175,7 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
                 <p className="text-neutral-700 mb-2">
                   Heavy indirect and direct fire batteries capable of breaking enemy concentrations from high elevation.
                 </p>
-                <div className="grid grid-cols-2 gap-2 text-[11px] bg-[#fbfaf7] p-2 border border-[#e8e4db]">
+                <div className="grid grid-cols-2 gap-2 text-[10.5px] bg-[#fbfaf7] p-2 border border-[#e8e4db]">
                   <div><strong>Max CFF Range:</strong> 350m (Extreme reach)</div>
                   <div><strong>Canister Defense:</strong> 120m (Automatic close defense)</div>
                   <div><strong>Fire Cadence:</strong> Salvo every ~2.5 real seconds</div>
@@ -184,10 +184,10 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
               </div>
 
               <div className="space-y-2">
-                <h4 className="font-semibold text-neutral-800 text-[11px]">
+                <h4 className="font-semibold text-neutral-800 text-[10.5px]">
                   How to call for fire
                 </h4>
-                <div className="bg-white p-3 border border-[#d9d3c7] space-y-2 text-[11px]">
+                <div className="bg-white p-3 border border-[#d9d3c7] space-y-2 text-[10.5px]">
                   <p>
                     1. <strong>Select an Artillery Battery</strong> (e.g. <em>Senarmont Grande Batterie</em> on Žuráň Hill).
                   </p>
@@ -215,7 +215,7 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
                 <p className="text-neutral-700 mb-2">
                   Supreme Commander staff (Napoleon Bonaparte at Žuráň / Kutusov & Alexander at Krzanowitz).
                 </p>
-                <div className="grid grid-cols-2 gap-2 text-[11px] bg-[#fbfaf7] p-2 border border-[#e8e4db]">
+                <div className="grid grid-cols-2 gap-2 text-[10.5px] bg-[#fbfaf7] p-2 border border-[#e8e4db]">
                   <div><strong>Command Radius:</strong> 180m aura</div>
                   <div><strong>Morale Boost:</strong> Prevents nearby units from wavering</div>
                   <div><strong>Dispatch Hub:</strong> Couriers gallop from HQ to subordinate corps</div>
@@ -236,47 +236,47 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
 
           {activeTab === 'symbology' && (
             <div className="space-y-3">
-              <h4 className="font-semibold text-neutral-800 text-[11px]">
+              <h4 className="font-semibold text-neutral-800 text-[10.5px]">
                 NATO APP-6 standard map symbols
               </h4>
               <div className="grid grid-cols-2 gap-2">
                 <div className="flex items-center gap-2 bg-white p-2 border border-[#d9d3c7]">
                   <span className="font-sans bg-[#23324a] text-white px-2 py-1 text-xs">[ X ]</span>
                   <div>
-                    <strong className="block text-[11px]">Infantry</strong>
+                    <strong className="block text-[10.5px]">Infantry</strong>
                     <span className="text-[10px] text-neutral-600">Crossed bandoliers / musketry</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 bg-white p-2 border border-[#d9d3c7]">
                   <span className="font-sans bg-[#23324a] text-white px-2 py-1 text-xs">[ / ]</span>
                   <div>
-                    <strong className="block text-[11px]">Cavalry</strong>
+                    <strong className="block text-[10.5px]">Cavalry</strong>
                     <span className="text-[10px] text-neutral-600">Diagonal sabre slash / mobility</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 bg-white p-2 border border-[#d9d3c7]">
                   <span className="font-sans bg-[#23324a] text-white px-2 py-1 text-xs">[ ART ]</span>
                   <div>
-                    <strong className="block text-[11px]">Artillery</strong>
+                    <strong className="block text-[10.5px]">Artillery</strong>
                     <span className="text-[10px] text-neutral-600">Solid projectile with carriage wheels</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 bg-white p-2 border border-[#d9d3c7]">
                   <span className="font-sans bg-[#23324a] text-white px-2 py-1 text-xs">[ HQ ]</span>
                   <div>
-                    <strong className="block text-[11px]">Headquarters</strong>
+                    <strong className="block text-[10.5px]">Headquarters</strong>
                     <span className="text-[10px] text-neutral-600">Command standard / pennant</span>
                   </div>
                 </div>
               </div>
 
-              <div className="bg-white p-3 border border-[#d9d3c7] space-y-1 text-[11px]">
+              <div className="bg-white p-3 border border-[#d9d3c7] space-y-1 text-[10.5px]">
                 <strong className="block text-neutral-800 mb-1">Echelon designators</strong>
                 <div className="grid grid-cols-4 gap-2 text-center">
-                  <div className="bg-[#f5f3ee] p-1 border"><strong>XXXX</strong><div className="text-[11px]">Field Army</div></div>
-                  <div className="bg-[#f5f3ee] p-1 border"><strong>XXX</strong><div className="text-[11px]">Army Corps</div></div>
-                  <div className="bg-[#f5f3ee] p-1 border"><strong>XX</strong><div className="text-[11px]">Division</div></div>
-                  <div className="bg-[#f5f3ee] p-1 border"><strong>II [BTY]</strong><div className="text-[11px]">Battery</div></div>
+                  <div className="bg-[#f5f3ee] p-1 border"><strong>XXXX</strong><div className="text-[10.5px]">Field Army</div></div>
+                  <div className="bg-[#f5f3ee] p-1 border"><strong>XXX</strong><div className="text-[10.5px]">Army Corps</div></div>
+                  <div className="bg-[#f5f3ee] p-1 border"><strong>XX</strong><div className="text-[10.5px]">Division</div></div>
+                  <div className="bg-[#f5f3ee] p-1 border"><strong>II [BTY]</strong><div className="text-[10.5px]">Battery</div></div>
                 </div>
               </div>
             </div>

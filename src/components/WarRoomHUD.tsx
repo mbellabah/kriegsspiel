@@ -133,7 +133,7 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
     return (
       <span className="inline-flex items-baseline gap-1 px-1.5">
         <span className="text-[9px] font-semibold text-stone-500">{label}</span>
-        <span className={cx(ui.mono, 'text-[12px] font-semibold', tone)}>{r.ratio.toFixed(1)}</span>
+        <span className={cx(ui.mono, 'text-[11px] font-semibold', tone)}>{r.ratio.toFixed(1)}</span>
       </span>
     );
   };
@@ -187,8 +187,8 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
         {/* Left: scenario & time control */}
         <div className="flex items-center gap-2 flex-shrink-0">
           <div className="pl-1 pr-1.5 flex items-baseline gap-1.5 leading-none">
-            <span className="text-[13px] font-semibold text-stone-900">Austerlitz</span>
-            <span className="text-[11px] text-stone-500">2 Dec 1805</span>
+            <span className="text-[12px] font-semibold text-stone-900">Austerlitz</span>
+            <span className="text-[10.5px] text-stone-500">2 Dec 1805</span>
           </div>
 
           <span className={ui.divider} />
@@ -197,7 +197,7 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
             type="button"
             onClick={handleTogglePlay}
             className={cx(
-              'inline-flex items-center justify-center gap-1.5 h-6 w-[70px] border text-[12px] font-semibold cursor-pointer transition-colors',
+              'inline-flex items-center justify-center gap-1.5 h-6 w-[70px] border text-[11px] font-semibold cursor-pointer transition-colors',
               state.isRunning
                 ? 'bg-[#f7f5f0] border-[#8f897e] text-stone-900 hover:bg-white'
                 : 'bg-[#23324a] border-[#23324a] text-white hover:bg-[#2e4160]'
@@ -209,7 +209,7 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
           </button>
 
           <div className={ui.field} title={currentFormattedTime}>
-            <span className={cx(ui.fieldValue, 'text-[13px] font-semibold px-2')}>{clock}</span>
+            <span className={cx(ui.fieldValue, 'text-[12px] font-semibold px-2')}>{clock}</span>
           </div>
 
           <div className={ui.group} title="Simulation speed">
@@ -257,7 +257,7 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setIsRatiosOpen(false)} />
                   <div className={cx(ui.popover, 'absolute left-0 top-full mt-1 z-50 w-72')}>
-                    <table className="w-full text-[12px]">
+                    <table className="w-full text-[11px]">
                       <tbody>
                         {([
                           ['North', state.sectorForceRatios.north],
@@ -272,7 +272,7 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
                         ))}
                       </tbody>
                     </table>
-                    <p className="px-2 py-1.5 text-[11px] leading-snug text-stone-500">
+                    <p className="px-2 py-1.5 text-[10.5px] leading-snug text-stone-500">
                       An attack generally needs 3:1. Below 1:1, defend or delay.
                     </p>
                   </div>
@@ -285,11 +285,11 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
             <span className={ui.fieldLabel}>Losses</span>
             <span className="inline-flex items-center gap-1.5 px-2">
               <span className="h-2 w-3 bg-[#80e0ff] border border-stone-800" />
-              <span className={cx(ui.mono, 'text-[12px] font-semibold')}>{Math.floor(state.frenchLosses).toLocaleString()}</span>
+              <span className={cx(ui.mono, 'text-[11px] font-semibold')}>{Math.floor(state.frenchLosses).toLocaleString()}</span>
             </span>
             <span className="inline-flex items-center gap-1.5 px-2 border-l border-[#d6d1c6]">
               <span className="h-2.5 w-2.5 rotate-45 scale-75 bg-[#ff8080] border border-stone-800" />
-              <span className={cx(ui.mono, 'text-[12px] font-semibold')}>{Math.floor(state.alliedLosses).toLocaleString()}</span>
+              <span className={cx(ui.mono, 'text-[11px] font-semibold')}>{Math.floor(state.alliedLosses).toLocaleString()}</span>
             </span>
           </div>
         </div>

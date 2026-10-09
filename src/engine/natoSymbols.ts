@@ -199,7 +199,7 @@ export function drawUnitSymbol(
   // Echelon amplifier above the frame
   if (opts.showEchelon !== false) {
     const ech = echelonFor(unit);
-    ctx.font = font(700, 6.5);
+    ctx.font = font(700, 5.8);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = line;

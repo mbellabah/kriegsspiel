@@ -45,6 +45,7 @@ export interface SimulationState {
     isGrandBattery?: boolean; // Converged Grand Battery / TOT barrage
     isCounterBattery?: boolean; // Counter-battery fire mission
     isCaissonDetonation?: boolean; // Ammunition caisson explosion
+    sourceUnitId?: string; // Battery that fired the round (drives the shell-flight animation)
   }[];
   iceCracks?: {
     x: number;
@@ -2459,6 +2460,7 @@ export class BattleEngine {
           observerUnitId: activeObserver?.id,
           isGrandBattery: isGrandBatteryConvergence,
           isCounterBattery: isExplicitCounterBattery,
+          sourceUnitId: arty.id,
         });
 
         if (isSmoke) {
@@ -4182,8 +4184,69 @@ export class BattleEngine {
     };
   }
 
+  // Elevation is sampled from a cached 4 px grid (bilinear); the analytic model is expensive and
+  // is queried thousands of times per second by movement, fatigue and line-of-sight checks.
+  private elevationGrid: Float32Array | null = null;
+  private static readonly ELEV_STEP = 4;
+  private static readonly ELEV_W = 2400 / 4 + 1;
+  private static readonly ELEV_H = 1500 / 4 + 1;
+
+  private buildElevationGrid(): Float32Array {
+    const { ELEV_STEP, ELEV_W, ELEV_H } = BattleEngine;
+    const grid = new Float32Array(ELEV_W * ELEV_H);
+    for (let j = 0; j < ELEV_H; j++) {
+      for (let i = 0; i < ELEV_W; i++) {
+        grid[j * ELEV_W + i] = this.getElevationRaw({ x: i * ELEV_STEP, y: j * ELEV_STEP });
+      }
+    }
+    return grid;
+  }
+
+  /** Continuous terrain height in metres (bilinear from the cached grid). */
+  public getElevationSmooth(pos: { x: number; y: number }): number {
+    if (!this.elevationGrid) this.elevationGrid = this.buildElevationGrid();
+    const { ELEV_STEP, ELEV_W, ELEV_H } = BattleEngine;
+    const gx = Math.max(0, Math.min(ELEV_W - 1.001, pos.x / ELEV_STEP));
+    const gy = Math.max(0, Math.min(ELEV_H - 1.001, pos.y / ELEV_STEP));
+    const i = Math.floor(gx);
+    const j = Math.floor(gy);
+    const fx = gx - i;
+    const fy = gy - j;
+    const g = this.elevationGrid;
+    const a = g[j * ELEV_W + i];
+    const b = g[j * ELEV_W + i + 1];
+    const c = g[(j + 1) * ELEV_W + i];
+    const d = g[(j + 1) * ELEV_W + i + 1];
+    return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+  }
+
   public getElevation(pos: { x: number; y: number }): number {
-    return Math.round(this.getElevationRaw(pos));
+    return Math.round(this.getElevationSmooth(pos));
+  }
+
+  // Deterministic value noise for natural micro-relief (so contours aren't perfect rings)
+  private static hash2(ix: number, iy: number): number {
+    let h = (ix * 374761393 + iy * 668265263) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+  }
+
+  private static valueNoise(x: number, y: number): number {
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    const fx = x - ix;
+    const fy = y - iy;
+    const sx = fx * fx * (3 - 2 * fx);
+    const sy = fy * fy * (3 - 2 * fy);
+    const h = BattleEngine.hash2;
+    const top = h(ix, iy) + (h(ix + 1, iy) - h(ix, iy)) * sx;
+    const bot = h(ix, iy + 1) + (h(ix + 1, iy + 1) - h(ix, iy + 1)) * sx;
+    return (top + (bot - top) * sy) * 2 - 1;
+  }
+
+  private static microRelief(bx: number, by: number): number {
+    const n = BattleEngine.valueNoise;
+    return n(bx / 150, by / 150) * 4.5 + n(bx / 62 + 17.3, by / 62 + 5.1) * 2 + n(bx / 26 + 41.7, by / 26 + 9.9) * 0.7;
   }
 
   // Continuous (unrounded) terrain height — used for cartography so slopes don't terrace
@@ -4329,7 +4392,7 @@ export class BattleEngine {
     // Mask stream depression on highest peaks
     const peakMask = Math.max(0, 1 - Math.max(deltaSanton, deltaZuran) / 80);
 
-    elev += (drainage * peakMask) + upland + organicTerrain;
+    elev += (drainage * peakMask) + upland + organicTerrain + BattleEngine.microRelief(bx, by);
 
     return elev;
   }

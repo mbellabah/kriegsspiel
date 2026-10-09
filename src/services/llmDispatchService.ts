@@ -1,4 +1,5 @@
 import { Unit, Vector2D, ManeuverOrder, Formation, OrderCondition, TargetReferencePoint } from '../types/game';
+import { normalizeGridRefs, parseMgrs } from '../engine/grid';
 import { useState, useEffect } from 'react';
 import {
   parseCompassDirection,
@@ -100,6 +101,9 @@ export function escapeRegex(str: string): string {
  * - coords 1420, 680, grid 1420 680, target 1420, 680
  */
 export function extractCoordinates(text: string, trps?: TargetReferencePoint[]): Vector2D | null {
+  const gridRef = parseMgrs(text);
+  if (gridRef) return gridRef;
+
   if (!text) return null;
 
   // 0. Pre-planned Target Reference Points (TRP 01, TRP 1, TRP-02, TRP 3, etc.)
@@ -671,9 +675,11 @@ export class LLMDispatchService {
    * Main dispatch entry point with tactical awareness of places, landmarks, friendly units and enemy contacts
    */
   public async processDispatch(
-    rawText: string,
+    originalText: string,
     context: TacticalDispatchContext
   ): Promise<ParsedDispatchResult> {
+    // MGRS references ("XQ 1834 5172") become map coordinates before any parsing
+    const rawText = normalizeGridRefs(originalText);
     const isOnline = await this.checkConnection();
 
     if (isOnline) {

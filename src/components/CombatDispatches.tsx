@@ -55,7 +55,7 @@ export const CombatDispatches: React.FC<CombatDispatchesProps> = ({ logs, isOpen
       {/* Log Feed */}
       <div className="overflow-y-auto p-2 space-y-1.5 flex-1 pr-1.5">
         {displayedLogs.length === 0 ? (
-          <p className="text-[11px] text-neutral-500 italic p-3 text-center">Awaiting tactical combat events...</p>
+          <p className="text-[10.5px] text-neutral-500 italic p-3 text-center">Awaiting tactical combat events...</p>
         ) : (
           displayedLogs.map((log) => {
             const isFrench = log.faction === 'french';
@@ -74,7 +74,7 @@ export const CombatDispatches: React.FC<CombatDispatchesProps> = ({ logs, isOpen
                   </span>
                   <span className="text-[10px] font-sans text-neutral-500 font-semibold">{log.timeFormatted}</span>
                 </div>
-                <p className="text-[11px] text-neutral-800 font-sans">{log.message}</p>
+                <p className="text-[10.5px] text-neutral-800 font-sans">{log.message}</p>
               </div>
             );
           })
@@ -82,7 +82,7 @@ export const CombatDispatches: React.FC<CombatDispatchesProps> = ({ logs, isOpen
       </div>
 
       {/* Footer */}
-      <div className="px-2 py-1 bg-[#e8e4db] border-t border-[#a8a29e] text-[11px] text-neutral-600 text-center font-semibold">
+      <div className="px-2 py-1 bg-[#e8e4db] border-t border-[#a8a29e] text-[10.5px] text-neutral-600 text-center font-semibold">
         Chronological Signal & Engagement Ledger
       </div>
     </ContainerTag>

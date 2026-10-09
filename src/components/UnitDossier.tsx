@@ -47,21 +47,21 @@ const Meter: React.FC<{ label: string; value: string; ratio: number; tone?: 'nor
   tone = 'normal',
 }) => (
   <div className="grid grid-cols-[84px_1fr_auto] items-center gap-2 h-5">
-    <span className="text-[12px] text-stone-600">{label}</span>
+    <span className="text-[11px] text-stone-600">{label}</span>
     <div className="h-1.5 bg-[#e3dfd6] overflow-hidden">
       <div
         className={cx('h-full', tone === 'bad' ? 'bg-[#c2272d]' : tone === 'warn' ? 'bg-[#d97706]' : 'bg-[#3d4f6b]')}
         style={{ width: `${Math.max(0, Math.min(100, ratio * 100))}%` }}
       />
     </div>
-    <span className={cx(ui.mono, 'text-[12px] text-stone-900 text-right min-w-[58px]')}>{value}</span>
+    <span className={cx(ui.mono, 'text-[11px] text-stone-900 text-right min-w-[58px]')}>{value}</span>
   </div>
 );
 
 const Row: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
   <div className="flex items-baseline justify-between gap-3 py-[2px]">
-    <span className="text-[12px] text-stone-500 flex-shrink-0">{label}</span>
-    <span className="text-[12px] text-stone-900 text-right truncate">{children}</span>
+    <span className="text-[11px] text-stone-500 flex-shrink-0">{label}</span>
+    <span className="text-[11px] text-stone-900 text-right truncate">{children}</span>
   </div>
 );
 
@@ -73,7 +73,7 @@ const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title
 );
 
 const actionBtn =
-  'inline-flex items-center justify-center gap-1.5 h-6 px-1.5 border border-[#b3ada2] bg-[#fbfaf7] text-[12px] text-stone-800 hover:bg-white hover:border-[#8f897e] cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
+  'inline-flex items-center justify-center gap-1.5 h-6 px-1.5 border border-[#b3ada2] bg-[#fbfaf7] text-[11px] text-stone-800 hover:bg-white hover:border-[#8f897e] cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
 const actionBtnOn = '!bg-[#23324a] !border-[#23324a] !text-white';
 
 export const UnitDossier: React.FC<UnitDossierProps> = ({
@@ -114,13 +114,13 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
       <aside className={panelClass}>
         {header}
         <div className="px-3 py-3">
-          <div className="text-[14px] font-semibold text-stone-900">Unidentified contact</div>
-          <div className="text-[12px] text-stone-500 mt-0.5">Outside direct observation</div>
+          <div className="text-[12px] font-semibold text-stone-900">Unidentified contact</div>
+          <div className="text-[11px] text-stone-500 mt-0.5">Outside direct observation</div>
           <div className="mt-2">
             <Row label="Estimated strength">{unit.estimatedStrength || '3,000 – 6,000'}</Row>
             <Row label="Confidence">Low</Row>
           </div>
-          <p className="mt-2 text-[12px] leading-snug text-stone-500">
+          <p className="mt-2 text-[11px] leading-snug text-stone-500">
             Move cavalry or forward infantry within observation range to identify this formation.
           </p>
         </div>
@@ -228,15 +228,15 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
         <div className="flex items-start gap-2.5 px-2.5 pt-2.5 pb-2">
           <UnitSymbol unit={unit} hostile={isHostileFrame} size={34} />
           <div className="min-w-0">
-            <div className="text-[15px] font-semibold leading-tight text-stone-900 truncate">{designationFor(unit)}</div>
-            <div className="text-[12px] text-stone-600 truncate">{unit.name.match(/\(([^)]*)\)/)?.[1] ?? unit.corps}</div>
-            <div className="text-[11px] text-stone-500 truncate">{unit.commander}</div>
+            <div className="text-[13px] font-semibold leading-tight text-stone-900 truncate">{designationFor(unit)}</div>
+            <div className="text-[11px] text-stone-600 truncate">{unit.name.match(/\(([^)]*)\)/)?.[1] ?? unit.corps}</div>
+            <div className="text-[10.5px] text-stone-500 truncate">{unit.commander}</div>
           </div>
         </div>
 
         {/* Current status & order */}
         <div className="px-2.5 pb-2">
-          <div className="flex items-center gap-2 text-[12px]">
+          <div className="flex items-center gap-2 text-[11px]">
             <span
               className={cx(
                 'h-2 w-2',
@@ -255,7 +255,7 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
             {unit.isForcedMarch && <span className="text-stone-600">· forced march</span>}
           </div>
           {isPlayerUnit && order && (
-            <div className="mt-1.5 text-[12px] text-stone-600 leading-relaxed">
+            <div className="mt-1.5 text-[11px] text-stone-600 leading-relaxed">
               <span className="text-stone-900">{ORDER_LABEL[order.type] ?? order.type}</span>
               {order.status === 'delivering' && <span> · courier arrives in {minutesToArrival} min</span>}
               {order.status === 'standby' && <span> · starts {engine.formatTime(order.startTime || 0)}</span>}
@@ -275,7 +275,7 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
             <div
               key={a.text}
               className={cx(
-                'mt-1.5 px-2 py-1 text-[12px] border-l-2',
+                'mt-1.5 px-2 py-1 text-[11px] border-l-2',
                 a.tone === 'bad' ? 'border-[#c2272d] bg-[#c2272d]/[0.06] text-[#8f1d22]' : 'border-[#d97706] bg-[#d97706]/[0.07] text-[#92400e]'
               )}
             >
@@ -319,7 +319,7 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
                       key={f}
                       type="button"
                       onClick={() => engine.setUnitFormation(unit.id, f)}
-                      className={cx(ui.groupItem, 'flex-1 capitalize text-[12px] font-medium', unit.formation === f && ui.groupItemActive)}
+                      className={cx(ui.groupItem, 'flex-1 capitalize text-[11px] font-medium', unit.formation === f && ui.groupItemActive)}
                     >
                       {f}
                     </button>
@@ -422,7 +422,7 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
                   </button>
                 ) : (
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between text-[12px]">
+                    <div className="flex items-center justify-between text-[11px]">
                       <span className="text-stone-600">Detach</span>
                       <span className={cx(ui.mono, 'text-stone-900')}>
                         {detachCount.toLocaleString()} ({splitPct}%)
@@ -442,7 +442,7 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
                       placeholder={`${unit.name} (Det)`}
                       value={detachmentName}
                       onChange={(e) => setDetachmentName(e.target.value)}
-                      className="w-full h-7 px-2 bg-white border border-[#b3ada2] text-[12px] text-stone-900 focus:outline-none focus:border-[#23324a]"
+                      className="w-full h-7 px-2 bg-white border border-[#b3ada2] text-[11px] text-stone-900 focus:outline-none focus:border-[#23324a]"
                     />
                     <div className="grid grid-cols-2 gap-1">
                       <button className={actionBtn} onClick={() => setIsSplitting(false)}>
@@ -458,7 +458,7 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
             )}
           </>
         ) : (
-          <div className="px-3 py-2.5 border-t border-[#dedad1] text-[12px] text-stone-500">
+          <div className="px-3 py-2.5 border-t border-[#dedad1] text-[11px] text-stone-500">
             Enemy formation. Orders can only be given to your own units.
           </div>
         )}

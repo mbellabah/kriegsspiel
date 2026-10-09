@@ -853,7 +853,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
       className={containerClasses}
     >
       {!embedded && (
-        <div className="flex items-center justify-between h-8 pl-2 pr-0.5 border-b border-[#b3ada2] bg-[#e6e3dc] text-[12px] font-semibold text-stone-900">
+        <div className="flex items-center justify-between h-8 pl-2 pr-0.5 border-b border-[#b3ada2] bg-[#e6e3dc] text-[11px] font-semibold text-stone-900">
           <span>Orders</span>
           <button
             type="button"
@@ -871,7 +871,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
         <button
           type="button"
           onClick={() => setActiveTab('queue')}
-          className={`flex-1 h-8 px-2 text-[12px] font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+          className={`flex-1 h-8 px-2 text-[11px] font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
  activeTab === 'queue'
  ? 'bg-[#f5f3ee] text-[#23324a] border-b-2 border-b-[#23324a]'
  : 'text-neutral-700 hover:bg-[#ebe7df]'
@@ -889,7 +889,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
         <button
           type="button"
           onClick={() => setActiveTab('history')}
-          className={`flex-1 h-8 px-2 text-[12px] font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+          className={`flex-1 h-8 px-2 text-[11px] font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
  activeTab === 'history'
  ? 'bg-[#f5f3ee] text-[#23324a] border-b-2 border-b-[#23324a]'
  : 'text-neutral-700 hover:bg-[#ebe7df]'
@@ -907,7 +907,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
         <button
           type="button"
           onClick={() => setActiveTab('auto_general')}
-          className={`flex-1 h-8 px-2 text-[12px] font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+          className={`flex-1 h-8 px-2 text-[11px] font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
  activeTab === 'auto_general'
  ? 'bg-[#f5f3ee] text-[#23324a] border-b-2 border-b-[#23324a]'
  : 'text-neutral-700 hover:bg-[#ebe7df]'
@@ -926,8 +926,8 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
           <>
             {queuedDispatches.length === 0 ? (
               <div className="p-4 text-center text-neutral-500 text-xs">
-                <p className="text-[13px] font-semibold text-neutral-800 mb-1">No orders queued</p>
-                <p className="text-[12px] leading-relaxed max-w-sm mx-auto text-neutral-600 mb-3">
+                <p className="text-[12px] font-semibold text-neutral-800 mb-1">No orders queued</p>
+                <p className="text-[11px] leading-relaxed max-w-sm mx-auto text-neutral-600 mb-3">
                   Write an order below and press <strong>Enter</strong> to queue it. Queue several, then send them together.
                 </p>
 
@@ -956,7 +956,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                       type="button"
                       onClick={() => setQueuedDispatches([])}
                       disabled={isProcessing}
-                      className="px-2 py-1 text-[11px] font-sans font-semibold text-neutral-600 hover:text-red-700 hover:bg-neutral-200 cursor-pointer"
+                      className="px-2 py-1 text-[10.5px] font-sans font-semibold text-neutral-600 hover:text-red-700 hover:bg-neutral-200 cursor-pointer"
                     >
                       Clear
                     </button>
@@ -992,10 +992,10 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                           </span>
                           <span className="font-semibold text-[#23324a] truncate max-w-[170px]">{q.recipientHint}</span>
                         </div>
-                        <span className="text-neutral-500 text-[11px]">{q.formattedTime}</span>
+                        <span className="text-neutral-500 text-[10.5px]">{q.formattedTime}</span>
                       </div>
 
-                      <p className="text-neutral-900 font-sans text-[11px] bg-[#f8fafc] px-2 py-1 border border-[#e2e8f0] mb-2 leading-relaxed">
+                      <p className="text-neutral-900 font-sans text-[10.5px] bg-[#f8fafc] px-2 py-1 border border-[#e2e8f0] mb-2 leading-relaxed">
                         "{q.rawText}"
                       </p>
 
@@ -1016,7 +1016,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                         </div>
                       )}
 
-                      <div className="flex items-center justify-between pt-1 border-t border-neutral-100 text-[11px] font-sans">
+                      <div className="flex items-center justify-between pt-1 border-t border-neutral-100 text-[10.5px] font-sans">
                         <span className="text-amber-800 font-semibold flex items-center gap-1">
                           <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                           <span>Queued</span>
@@ -1066,7 +1066,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
           <>
             {dispatches.length === 0 ? (
               <div className="p-4 text-center text-neutral-500 text-xs">
-                <p className="font-sans text-[11px] font-semibold text-neutral-800 mb-1">No orders sent</p>
+                <p className="font-sans text-[10.5px] font-semibold text-neutral-800 mb-1">No orders sent</p>
                 <p className="text-[10px] leading-relaxed">
                   Dispatches that have been sent out will be displayed here with their acknowledgments and courier arrival status.
                 </p>
@@ -1098,11 +1098,11 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                           </span>
                         )}
                       </div>
-                      <span className="text-neutral-500 font-semibold text-[11px]">{d.formattedTime}</span>
+                      <span className="text-neutral-500 font-semibold text-[10.5px]">{d.formattedTime}</span>
                     </div>
 
                     {/* Order Quote */}
-                    <div className="text-neutral-800 font-sans text-[11px] pl-2 border-l-2 border-neutral-300 italic py-0.5 leading-snug">
+                    <div className="text-neutral-800 font-sans text-[10.5px] pl-2 border-l-2 border-neutral-300 italic py-0.5 leading-snug">
                       "{d.rawText}"
                     </div>
 
@@ -1137,13 +1137,13 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                     <ScrollText size={16} />
                   </div>
                   <div>
-                    <div className="text-[11px] font-sans font-semibold text-neutral-900 flex items-center gap-1.5 ">
+                    <div className="text-[10.5px] font-sans font-semibold text-neutral-900 flex items-center gap-1.5 ">
                       <span>Napoleon Bonaparte</span>
                       <span className="text-[10px] px-1.5 py-0.2 bg-amber-200/80 text-amber-950 font-semibold border border-amber-300">
                         Supreme HQ
                       </span>
                     </div>
-                    <div className="text-[11px] font-sans text-neutral-500">
+                    <div className="text-[10.5px] font-sans text-neutral-500">
                       Grande Armée Imperial Staff • Battle of Austerlitz (December 2, 1805)
                     </div>
                   </div>
@@ -1153,7 +1153,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                 <button
                   type="button"
                   onClick={() => engine.toggleAutoGeneral()}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-sans font-semibold border transition-all cursor-pointer ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1 text-[10.5px] font-sans font-semibold border transition-all cursor-pointer ${
  state.autoGeneralEnabled
  ? 'bg-emerald-600 border-emerald-700 text-white shadow-emerald-200'
  : 'bg-white border-neutral-300 hover:border-neutral-400 text-neutral-700'
@@ -1191,7 +1191,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
 
             {/* Historical Dispatches List */}
             <div className="space-y-2">
-              <div className="flex items-center justify-between text-[11px] font-sans font-semibold text-neutral-600 px-1">
+              <div className="flex items-center justify-between text-[10.5px] font-sans font-semibold text-neutral-600 px-1">
                 <span>Chronological battle directives</span>
                 <span>{historicalDispatches.length} HISTORICAL ORDERS</span>
               </div>
@@ -1222,7 +1222,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <span className="text-[11px] font-sans font-semibold px-1.5 py-0.5 bg-neutral-100 border border-neutral-300 text-neutral-700 flex items-center gap-1">
+                        <span className="text-[10.5px] font-sans font-semibold px-1.5 py-0.5 bg-neutral-100 border border-neutral-300 text-neutral-700 flex items-center gap-1">
                           <Clock size={9} />
                           <span>{d.timeFormatted}</span>
                         </span>
@@ -1245,17 +1245,17 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                     </div>
 
                     {/* Dispatch Text */}
-                    <div className="text-neutral-900 font-sans text-[11px] bg-[#f8fafc] px-2 py-1.5 border border-[#e2e8f0] mb-1.5 leading-relaxed font-semibold">
+                    <div className="text-neutral-900 font-sans text-[10.5px] bg-[#f8fafc] px-2 py-1.5 border border-[#e2e8f0] mb-1.5 leading-relaxed font-semibold">
                       "{d.rawText}"
                     </div>
 
                     {/* Historical Context / Quote */}
-                    <div className="text-[11px] font-serif italic text-neutral-600 bg-amber-50/40 border-l-2 border-amber-400 pl-2 py-1 mb-2 leading-snug">
+                    <div className="text-[10.5px] font-serif italic text-neutral-600 bg-amber-50/40 border-l-2 border-amber-400 pl-2 py-1 mb-2 leading-snug">
                       "{d.historicalQuote}"
                     </div>
 
                     {/* Action Footer */}
-                    <div className="flex items-center justify-between pt-1 border-t border-neutral-100 text-[11px] font-sans">
+                    <div className="flex items-center justify-between pt-1 border-t border-neutral-100 text-[10.5px] font-sans">
                       <span className="text-neutral-500 font-semibold">
                         {d.timingHint || 'Standard deployment'}
                       </span>
@@ -1306,7 +1306,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
         {/* Autocomplete Dropdown Popover */}
         {isMentionOpen && filteredMentions.length > 0 && (
           <div className="absolute bottom-full left-2 right-2 mb-1 z-50 bg-white border border-[#a8a29e] shadow-[0_4px_16px_rgba(28,25,23,0.16)] rounded-t overflow-hidden flex flex-col">
-            <div className="px-2.5 py-1 bg-[#e8e4db] border-b border-[#a8a29e] flex items-center justify-between text-[11px] font-sans font-semibold text-neutral-700">
+            <div className="px-2.5 py-1 bg-[#e8e4db] border-b border-[#a8a29e] flex items-center justify-between text-[10.5px] font-sans font-semibold text-neutral-700">
               <span className=" text-[#23324a]">Tactical Reference Catalog</span>
               <span>{filteredMentions.length} matches</span>
             </div>
@@ -1335,7 +1335,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                         {item.badge}
                       </span>
                       <div className="flex flex-col truncate">
-                        <span className="font-sans text-[11px] font-semibold text-black flex items-center gap-1.5">
+                        <span className="font-sans text-[10.5px] font-semibold text-black flex items-center gap-1.5">
                           {item.category === 'commander' ? (
                             <User size={11} className="text-amber-700 shrink-0" />
                           ) : item.category === 'location' ? (
@@ -1346,7 +1346,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                           <span className="text-neutral-900 font-semibold truncate">{item.name}</span>
                           <span className="text-[#23324a] text-[10px] font-sans font-normal shrink-0">({item.token})</span>
                         </span>
-                        <span className="text-[11px] font-sans text-neutral-500 truncate">{item.subtitle}</span>
+                        <span className="text-[10.5px] font-sans text-neutral-500 truncate">{item.subtitle}</span>
                       </div>
                     </div>
                   </div>
@@ -1364,7 +1364,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
 
         {/* Selected Unit Quick Addressee Bar (if a friendly unit is selected on map) */}
         {selectedUnit && (
-          <div className="flex items-center gap-1.5 mb-1.5 px-2 py-1 bg-blue-50/70 border border-blue-200 text-[11px] font-sans select-none ">
+          <div className="flex items-center gap-1.5 mb-1.5 px-2 py-1 bg-blue-50/70 border border-blue-200 text-[10.5px] font-sans select-none ">
             <span className="text-neutral-500 font-semibold text-[10px] flex items-center gap-1 shrink-0">
               <User size={10} className="text-[#23324a]" />
               <span>Target:</span>
@@ -1417,7 +1417,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
         {/* Sleek Command Helpers Ribbon (Single row with category tabs, zero ugly scrollbars) */}
         <div className="flex flex-col gap-1 mb-2 select-none">
           {/* Category Selector Tabs */}
-          <div className="flex items-center justify-between text-[11px] font-sans">
+          <div className="flex items-center justify-between text-[10.5px] font-sans">
             <div className="flex items-center gap-1">
               <span className="text-neutral-500 font-semibold text-[10px] mr-0.5">Insert</span>
               {[
@@ -1453,7 +1453,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
 
           {/* Active Category Chips */}
           {activeHelperCategory !== 'none' && (
-            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 text-[11px] font-sans">
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 text-[10.5px] font-sans">
               {activeHelperCategory === 'actions' && [
                 { label: 'Advance', text: 'advance to ' },
                 { label: 'Force March', text: 'force march to ' },
@@ -1661,7 +1661,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                 onClick={handleQueueDispatch}
                 disabled={!inputText.trim() || isProcessing}
                 title="Queue dispatch to Staged Orders (Enter)"
-                className="px-2.5 py-1 bg-white hover:bg-neutral-100 disabled:opacity-40 text-[#23324a] border border-[#23324a] text-[11px] font-semibold font-sans flex items-center justify-center gap-1 transition-colors cursor-pointer h-[25px]"
+                className="px-2.5 py-1 bg-white hover:bg-neutral-100 disabled:opacity-40 text-[#23324a] border border-[#23324a] text-[10.5px] font-semibold font-sans flex items-center justify-center gap-1 transition-colors cursor-pointer h-[25px]"
               >
                 <Layers size={11} />
                 <span>Queue</span>
@@ -1672,7 +1672,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                 onClick={() => handleSendImmediate()}
                 disabled={!inputText.trim() || isProcessing}
                 title="Transmit immediately (Shift+Enter)"
-                className="px-3 py-1 bg-[#23324a] hover:bg-[#2e4160] disabled:opacity-40 text-white text-[11px] font-semibold font-sans flex items-center justify-center gap-1 transition-colors cursor-pointer h-[26px]"
+                className="px-3 py-1 bg-[#23324a] hover:bg-[#2e4160] disabled:opacity-40 text-white text-[10.5px] font-semibold font-sans flex items-center justify-center gap-1 transition-colors cursor-pointer h-[26px]"
               >
                 <Send size={11} />
                 <span>{isProcessing ? 'Sending…' : 'Send'}</span>
@@ -1681,7 +1681,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
           </div>
 
           {/* Compact Bottom Toolbar with Map Pinpoint & Keyboard Shortcuts */}
-          <div className="flex items-center justify-between text-[11px] font-sans text-neutral-500 px-0.5">
+          <div className="flex items-center justify-between text-[10.5px] font-sans text-neutral-500 px-0.5">
             <div className="flex items-center gap-2">
               {onTogglePickCoordinates && (
                 <button

@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { ui, cx } from './ui';
+import { toMgrs } from '../engine/grid';
 import { BattleEngine, SimulationState } from '../engine/simulation';
 import { SandtableRenderer, Camera, DraftingManeuver } from '../engine/canvasRenderer';
 import { Unit, Vector2D, TroopFilterType, TargetReferencePoint } from '../types/game';
@@ -566,9 +567,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
   // Instant copy coordinates or bearing to clipboard & Dispatch Desk
   const handleQuickCopy = useCallback(
     (coords: Vector2D, screenPos: { x: number; y: number } | null, includeBearing: boolean = false) => {
-      const roundedX = Math.round(coords.x);
-      const roundedY = Math.round(coords.y);
-      const coordStr = `(${roundedX}, ${roundedY})`;
+      const coordStr = toMgrs(coords);
       let fullText = coordStr;
 
       const curState = engine.getState();
@@ -1198,7 +1197,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
     >
       {/* Mode banners (call for fire / pick coordinates) */}
       {(isBombardTargeting || isPickingCoordinates) && (
-        <div className={cx(ui.panel, 'absolute top-[44px] left-1/2 -translate-x-1/2 z-40 flex items-stretch font-sans text-[12px]')}>
+        <div className={cx(ui.panel, 'absolute top-[44px] left-1/2 -translate-x-1/2 z-40 flex items-stretch font-sans text-[11px]')}>
           <span
             className={`flex items-center px-2.5 text-[10px] font-bold uppercase tracking-[0.1em] text-white ${
               isBombardTargeting ? 'bg-[#c2272d]' : 'bg-[#23324a]'
@@ -1224,7 +1223,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
       {/* Floating Quick Copy Toast Confirmation */}
       {cursorToast && (
         <div
-          className="fixed z-50 pointer-events-none bg-[#23324a] text-white px-2 py-1 text-[11px] font-mono shadow-lg flex items-center gap-1.5"
+          className="fixed z-50 pointer-events-none bg-[#23324a] text-white px-2 py-1 text-[10.5px] font-mono shadow-lg flex items-center gap-1.5"
           style={{
             left: Math.min(cursorToast.screenPos.x + 16, window.innerWidth - 240),
             top: Math.max(16, cursorToast.screenPos.y - 28),
@@ -1238,7 +1237,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
       {/* Hover tooltip for units, TRPs and landmarks */}
       {hoverCoords && hoverScreenPos && !isBoxSelecting && !isPanning && (nearbyTRP || hoveredUnit || nearbyLandmark) && (
         <div
-          className="fixed pointer-events-none z-30 bg-[#f7f5f0] border border-[#8f897e] shadow-[0_2px_8px_rgba(28,25,23,0.15)] text-stone-900 text-[11px] font-sans select-none"
+          className="fixed pointer-events-none z-30 bg-[#f7f5f0] border border-[#8f897e] shadow-[0_2px_8px_rgba(28,25,23,0.15)] text-stone-900 text-[10.5px] font-sans select-none"
           style={{
             left: Math.min(hoverScreenPos.x + 16, window.innerWidth - 280),
             top: Math.min(hoverScreenPos.y + 16, window.innerHeight - 60),
@@ -1272,12 +1271,12 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
       {/* Start card */}
       {!state.isRunning && state.timeMinutes === 0 && !isBombardTargeting && !isPickingCoordinates && (
         <div className={cx(ui.panel, 'absolute top-[46px] left-1/2 -translate-x-1/2 z-30 w-[380px] font-sans select-none')}>
-          <div className="px-3 pt-2.5 pb-1 text-[13px] font-semibold text-stone-900">2 December 1805, 07:00</div>
-          <div className="px-3 pb-2.5 text-[12px] leading-relaxed text-stone-600">
+          <div className="px-3 pt-2.5 pb-1 text-[12px] font-semibold text-stone-900">2 December 1805, 07:00</div>
+          <div className="px-3 pb-2.5 text-[11px] leading-relaxed text-stone-600">
             French forces hold the Goldbach line. Allied columns occupy the Pratzen Heights. Select units to give orders.
           </div>
           <div className="flex items-center justify-between px-3 pb-3">
-            <span className="text-[11px] text-stone-500">
+            <span className="text-[10.5px] text-stone-500">
               <kbd className="px-1 border border-[#b3ada2] bg-white font-mono text-[10px]">Space</kbd> start / pause
             </span>
             <button
@@ -1288,7 +1287,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
                   sounds.playDrum();
                 } catch {}
               }}
-              className="inline-flex items-center gap-2 h-8 px-4 bg-[#23324a] hover:bg-[#2e4160] text-white text-[12px] font-semibold cursor-pointer"
+              className="inline-flex items-center gap-2 h-8 px-4 bg-[#23324a] hover:bg-[#2e4160] text-white text-[11px] font-semibold cursor-pointer"
             >
               <Play size={12} fill="currentColor" />
               Start
@@ -1445,7 +1444,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
       })()}
 
       {/* Consolidated Bottom Tactical Status Bar (Full Width Docked Strip) */}
-      <footer className="fixed bottom-0 left-0 right-0 z-30 h-6 bg-[#e6e3dc] border-t border-[#9c968b] pl-2 pr-1 flex items-center justify-between gap-2 text-stone-800 font-sans text-[11px] select-none pointer-events-auto">
+      <footer className="fixed bottom-0 left-0 right-0 z-30 h-6 bg-[#e6e3dc] border-t border-[#9c968b] pl-2 pr-1 flex items-center justify-between gap-2 text-stone-800 font-sans text-[10.5px] select-none pointer-events-auto">
         {/* Left: context hint */}
         <div className="flex items-center gap-2 min-w-0">
           <span
@@ -1522,16 +1521,14 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
           {hoverCoords && (
             <div className={cx(ui.field, 'hidden lg:flex h-5')}>
               <span className={ui.fieldLabel}>Elev</span>
-              <span className={cx(ui.fieldValue, 'text-[11px]')}>{Math.round(engine.getElevation(hoverCoords))} m</span>
+              <span className={cx(ui.fieldValue, 'text-[10.5px]')}>{Math.round(engine.getElevation(hoverCoords))} m</span>
             </div>
           )}
 
           <div className={cx(ui.field, 'h-5')}>
             <span className={ui.fieldLabel}>Grid</span>
-            <span className={cx(ui.fieldValue, 'text-[11px] min-w-[86px]')}>
-              {hoverCoords
-                ? `${String(Math.round(hoverCoords.x)).padStart(4, '0')} ${String(Math.round(hoverCoords.y)).padStart(4, '0')}`
-                : '---- ----'}
+            <span className={cx(ui.fieldValue, 'text-[10.5px] min-w-[96px]')}>
+              {hoverCoords ? toMgrs(hoverCoords) : 'XQ ---- ----'}
             </span>
             {hoverCoords && onPickCoordinates && isDispatchDeskOpen && (
               <button

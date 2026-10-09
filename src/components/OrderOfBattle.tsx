@@ -83,7 +83,7 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
   return (
     <ContainerTag className={containerClasses}>
       {!embedded && (
-        <div className="flex items-center justify-between h-8 pl-2 pr-0.5 border-b border-[#b3ada2] bg-[#e6e3dc] text-[12px] font-semibold text-stone-900">
+        <div className="flex items-center justify-between h-8 pl-2 pr-0.5 border-b border-[#b3ada2] bg-[#e6e3dc] text-[11px] font-semibold text-stone-900">
           <span>Order of battle</span>
           <button type="button" onClick={onClose} className="h-6 w-6 inline-flex items-center justify-center text-neutral-600 hover:text-black hover:bg-white cursor-pointer" title="Close">
             <X size={14} />
@@ -101,13 +101,13 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                 setActiveTab(f);
                 setTransferringUnitId(null);
               }}
-              className={cx(ui.groupItem, 'flex-1 text-[12px] font-medium', activeTab === f && ui.groupItemActive)}
+              className={cx(ui.groupItem, 'flex-1 text-[11px] font-medium', activeTab === f && ui.groupItemActive)}
             >
               {f === 'french' ? 'French' : 'Allied'}
             </button>
           ))}
         </div>
-        <span className={cx(ui.mono, 'text-[11px] text-stone-500')}>
+        <span className={cx(ui.mono, 'text-[10.5px] text-stone-500')}>
           {totalMen.toLocaleString()} men · {totalGuns} guns
         </span>
       </div>
@@ -139,8 +139,8 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                     <ChevronDown size={13} className="text-neutral-500" />
                   )}
                   <div className="flex flex-col">
-                    <span className="truncate max-w-[200px] text-[12px] font-semibold">{corpsName}</span>
-                    <span className="text-[11px] text-neutral-500 font-normal">
+                    <span className="truncate max-w-[200px] text-[11px] font-semibold">{corpsName}</span>
+                    <span className="text-[10.5px] text-neutral-500 font-normal">
                       {corpsUnits.length} units · {corpsMen.toLocaleString()} men{corpsGuns > 0 ? ` · ${corpsGuns} guns` : ''}
                     </span>
                   </div>
@@ -195,8 +195,8 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                           <div className="flex items-center gap-2 min-w-0">
                             <UnitSymbol unit={u} hostile={u.faction !== 'french'} size={26} />
                             <div className="flex flex-col min-w-0">
-                              <span className="text-[12px] font-medium text-neutral-900 truncate">{u.name}</span>
-                              <span className="text-[11px] text-neutral-500 truncate capitalize">
+                              <span className="text-[11px] font-medium text-neutral-900 truncate">{u.name}</span>
+                              <span className="text-[10.5px] text-neutral-500 truncate capitalize">
                                 {u.formation} · {u.status === 'idle' ? 'ready' : u.status}
                               </span>
                             </div>
@@ -204,7 +204,7 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
 
                           <div className="flex items-center gap-2">
                             <div className="text-right">
-                              <div className="font-mono text-[12px] text-neutral-900">
+                              <div className="font-mono text-[11px] text-neutral-900">
                                 {u.type === 'artillery' ? `${u.strength} guns` : u.strength.toLocaleString()}
                               </div>
                               <div className="mt-0.5 ml-auto h-1 w-14 bg-[#e3dfd6]">
