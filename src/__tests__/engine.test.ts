@@ -138,6 +138,23 @@ describe('rewind', () => {
   });
 });
 
+describe('historical replay', () => {
+  // 1805: about 9,000 French against about 15,000 Allied killed and wounded (plus ~12,000 prisoners,
+  // which the simulation does not model). Before the balance pass the French lost 23-29k to 7-11k.
+  it('reproduces the shape of the battle: the French lose fewer men and no division is destroyed', () => {
+    const { engine, state, runUntil } = createBattle();
+    engine.setFullHistoricalReplay(true);
+    engine.setSpeedMultiplier(2);
+    engine.setRunning(true);
+    runUntil(470);
+    expect(state.frenchLosses).toBeLessThan(state.alliedLosses);
+    expect(state.frenchLosses).toBeGreaterThan(5000);
+    expect(state.frenchLosses).toBeLessThan(14000);
+    const destroyed = state.units.filter((u) => u.faction === 'french' && u.status === 'shattered' && (u.type === 'infantry' || u.type === 'guard'));
+    expect(destroyed.map((u) => u.id)).toEqual([]);
+  });
+});
+
 describe('contact reports', () => {
   it('does not identify an enemy that fog of war has not identified', () => {
     const { engine, state } = createBattle();

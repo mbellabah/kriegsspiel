@@ -1563,6 +1563,9 @@ export class BattleEngine {
    */
   public scrubToTime(targetMinutes: number) {
     if (targetMinutes >= this.state.timeMinutes) return; // the future has not been played yet
+    this.squareFrom.clear();
+    this.columnFireSince.clear();
+    this.awaitingAmmo.clear();
     const restorable = this.state.snapshots.filter((snap) => snap.timeMinutes <= targetMinutes);
     if (restorable.length === 0) {
       this.resetBattle();
@@ -1680,7 +1683,9 @@ export class BattleEngine {
         this.accumulatedSensorSeconds = 0;
         this.updateEngineering();
         this.updateEncirclement(evalSeconds);
+        this.applyDrillReflexes();
         this.updateFogOfWar();
+        this.updateObjectiveControl();
         this.state.sectorForceRatios = this.computeSectorRatios(this.state.units, this.state.playerFaction);
       }
     }
@@ -1737,15 +1742,18 @@ export class BattleEngine {
         unitId: 'al_przhebishevsky',
         type: 'assault',
         destination: { x: 998, y: 878 }, // Castle / Sokolnitz North
-        waypoints: [{ x: 1275, y: 750 }, { x: 998, y: 878 }],
+        waypoints: [{ x: 1150, y: 870 }, { x: 998, y: 878 }],
         plannedTime: 0,
       });
+      // 4th Column (Kollowrat) stays on the plateau until ~08:45, then descends through Pratzen
+      // village towards Kobelnitz; historically it was caught there by Soult's attack.
       this.issueOrder('al_kollowrat', {
         unitId: 'al_kollowrat',
-        type: 'assault',
-        destination: { x: 1170, y: 758 }, // Lower Pratzen slope
-        waypoints: [{ x: 1170, y: 758 }],
+        type: 'march',
+        destination: { x: 1370, y: 780 }, // Pratzen village
+        waypoints: [{ x: 1370, y: 780 }],
         plannedTime: 0,
+        startTime: 105,
       });
       this.issueOrder('al_bagration', {
         unitId: 'al_bagration',
@@ -1768,8 +1776,8 @@ export class BattleEngine {
         this.issueOrder('fr_davout', {
           unitId: 'fr_davout',
           type: 'march',
-          destination: { x: 840, y: 1208 }, // Forced march to reinforce Telnitz
-          waypoints: [{ x: 720, y: 1245 }, { x: 840, y: 1208 }],
+          destination: { x: 760, y: 1240 }, // Forced march; corps staff halts behind Telnitz
+          waypoints: [{ x: 700, y: 1260 }, { x: 760, y: 1240 }],
           plannedTime: 0,
           source: 'historical_event',
         });
@@ -1794,7 +1802,7 @@ export class BattleEngine {
         unitId: 'al_przhebishevsky',
         type: 'assault',
         destination: { x: 998, y: 878 }, // Castle / Sokolnitz North
-        waypoints: [{ x: 1275, y: 750 }, { x: 998, y: 878 }],
+        waypoints: [{ x: 1150, y: 870 }, { x: 998, y: 878 }],
         plannedTime: 60,
       });
       if (this.state.isFullHistoricalReplay) {
@@ -1823,9 +1831,9 @@ export class BattleEngine {
         this.issueOrder('fr_vandamme', {
           unitId: 'fr_vandamme',
           type: 'assault',
-          destination: { x: 1492, y: 690 }, // Staré Vinohrady
-          waypoints: [{ x: 1245, y: 622 }, { x: 1492, y: 690 }],
-          curveControl: { x: 1230, y: 600 },
+          destination: { x: 1590, y: 585 }, // Staré Vinohrady
+          waypoints: [{ x: 1330, y: 560 }, { x: 1590, y: 585 }],
+          curveControl: { x: 1320, y: 540 },
           plannedTime: 120,
           source: 'historical_event',
         });
@@ -1833,19 +1841,81 @@ export class BattleEngine {
     } else if (event.timeInMinutes === 240) {
       // 10:45 Northern battle along Olmütz Highway
       if (this.state.isFullHistoricalReplay) {
+        // Lannes's V Corps pushes up the Olmütz road against Bagration: Suchet north of the road,
+        // Caffarelli south of it, the corps staff following
+        this.issueOrder('fr_suchet', {
+          unitId: 'fr_suchet',
+          type: 'assault',
+          destination: { x: 1780, y: 200 },
+          waypoints: [{ x: 1520, y: 215 }, { x: 1780, y: 200 }],
+          plannedTime: 240,
+          source: 'historical_event',
+        });
+        this.issueOrder('fr_caffarelli', {
+          unitId: 'fr_caffarelli',
+          type: 'assault',
+          destination: { x: 1790, y: 290 },
+          waypoints: [{ x: 1530, y: 300 }, { x: 1790, y: 290 }],
+          plannedTime: 240,
+          source: 'historical_event',
+        });
         this.issueOrder('fr_lannes', {
           unitId: 'fr_lannes',
+          type: 'march',
+          destination: { x: 1450, y: 250 },
+          waypoints: [{ x: 1450, y: 250 }],
+          plannedTime: 240,
+          source: 'historical_event',
+        });
+        // Murat's reserve cavalry meets Liechtenstein and Uvarov north of Blasowitz: the cuirassier
+        // divisions of Nansouty and d'Hautpoul charge, Walther's dragoons and the staff in support
+        this.issueOrder('fr_walther', {
+          unitId: 'fr_walther',
+          type: 'march',
+          destination: { x: 1460, y: 370 },
+          waypoints: [{ x: 1460, y: 370 }],
+          plannedTime: 240,
+          source: 'historical_event',
+        });
+        this.issueOrder('fr_nansouty', {
+          unitId: 'fr_nansouty',
           type: 'assault',
-          destination: { x: 1800, y: 232 },
-          waypoints: [{ x: 1530, y: 270 }, { x: 1800, y: 232 }],
+          destination: { x: 1650, y: 290 },
+          waypoints: [{ x: 1400, y: 310 }, { x: 1650, y: 290 }],
+          plannedTime: 240,
+          source: 'historical_event',
+        });
+        this.issueOrder('fr_hautpoul', {
+          unitId: 'fr_hautpoul',
+          type: 'assault',
+          destination: { x: 1640, y: 260 },
+          waypoints: [{ x: 1380, y: 280 }, { x: 1640, y: 260 }],
           plannedTime: 240,
           source: 'historical_event',
         });
         this.issueOrder('fr_murat', {
           unitId: 'fr_murat',
+          type: 'march',
+          destination: { x: 1360, y: 350 },
+          waypoints: [{ x: 1360, y: 350 }],
+          plannedTime: 240,
+          source: 'historical_event',
+        });
+        // Bernadotte's I Corps crosses the Goldbach between Lannes and Soult: Rivaud on Blasowitz,
+        // Drouet up behind Vandamme on the northern Pratzen
+        this.issueOrder('fr_rivaud', {
+          unitId: 'fr_rivaud',
           type: 'assault',
-          destination: { x: 1650, y: 315 },
-          waypoints: [{ x: 1260, y: 390 }, { x: 1650, y: 315 }],
+          destination: { x: 1620, y: 420 }, // Blasowitz
+          waypoints: [{ x: 1380, y: 440 }, { x: 1620, y: 420 }],
+          plannedTime: 240,
+          source: 'historical_event',
+        });
+        this.issueOrder('fr_drouet', {
+          unitId: 'fr_drouet',
+          type: 'march',
+          destination: { x: 1470, y: 610 },
+          waypoints: [{ x: 1300, y: 560 }, { x: 1470, y: 610 }],
           plannedTime: 240,
           source: 'historical_event',
         });
@@ -2585,7 +2655,9 @@ export class BattleEngine {
             const d = Math.hypot(target.position.x - impactX, target.position.y - impactY);
             if (d <= blastRadius) {
               const distRatio = Math.min(1, d / blastRadius);
-              let damage = (arty.firepower * 0.65) * Math.pow(1 - distRatio, 1.8);
+              // A salvo every ~0.35 battle minutes: an 18-gun battery firing on a dense target
+              // costs it several hundred men an hour, not thousands
+              let damage = arty.firepower * 0.08 * Math.max(0.25, arty.strength / 18) * Math.pow(1 - distRatio, 1.8);
               // Columns take extra damage from primary direct artillery blast
               if (target.formation === 'column') {
                 damage *= 1.35;
@@ -2606,14 +2678,15 @@ export class BattleEngine {
               const isTargetArtillery = target.type === 'artillery';
               if (isTargetArtillery && (isExplicitCounterBattery || target.currentOrder?.type === 'bombard')) {
                 const gunKnockoutRatio = isExplicitCounterBattery ? 0.30 : 0.15;
-                const gunsKnockedOut = Math.max(1, Math.round(finalDamage * gunKnockoutRatio));
+                // Round shot rarely dismounted a gun: a few guns an hour under sustained counter-battery
+                const gunsKnockedOut = Math.floor(finalDamage * gunKnockoutRatio * 0.03 + Math.random());
                 target.gunsDisabled = (target.gunsDisabled || 0) + gunsKnockedOut;
                 target.strength = Math.max(0, target.strength - gunsKnockedOut);
                 target.firepower = Math.max(10, Math.round(target.firepower * (1 - gunsKnockedOut / Math.max(1, target.initialStrength))));
                 target.suppression = Math.min(100, (target.suppression || 0) + (isExplicitCounterBattery ? 50 : 25));
 
                 // Catastrophic Caisson Explosion (ammunition detonation)
-                const caissonChance = isExplicitCounterBattery ? 0.08 : 0.03;
+                const caissonChance = isExplicitCounterBattery ? 0.01 : 0.004;
                 if (!triggeredCaissonExplosion && Math.random() < caissonChance) {
                   triggeredCaissonExplosion = true;
                   const caissonLosses = Math.min(target.strength, Math.round(target.strength * 0.30 + 2));
@@ -2871,6 +2944,7 @@ export class BattleEngine {
       }
 
       if (bestTarget) {
+        const isNewTarget = arty.currentOrder?.targetUnitId !== bestTarget.id;
         this.issueOrder(arty.id, {
           unitId: arty.id,
           type: 'bombard',
@@ -2879,7 +2953,7 @@ export class BattleEngine {
           targetUnitId: bestTarget.id,
           plannedTime: this.state.timeMinutes,
         });
-        this.addLog(`[ALLIED CFF] ${arty.name} commences counter-bombardment against ${bestTarget.name}!`, aiFaction, 'highlight');
+        if (isNewTarget) this.addLog(`[ALLIED CFF] ${arty.name} commences counter-bombardment against ${bestTarget.name}!`, aiFaction, 'highlight');
       }
     }
   }
@@ -2960,7 +3034,8 @@ export class BattleEngine {
           if (unit.type === 'cavalry' && (closestEnemy.status === 'wavering' || closestEnemy.morale <= 50 || closestEnemy.formation !== 'square')) {
             unit.status = 'charging';
           } else {
-            unit.status = 'engaging';
+            // A unit without cartridges stands its ground (combat owns the status once it can fire)
+            unit.status = this.isOutOfAmmo(unit) ? 'holding' : 'engaging';
           }
           continue;
         } else {
@@ -3005,12 +3080,31 @@ export class BattleEngine {
         continue;
       }
 
+      // Army and wing headquarters stay with their staffs; they are not manoeuvre units
+      if (unit.type === 'headquarters') {
+        continue;
+      }
+
+      // Screening cavalry watches its wing and charges only on opportunity (handled above); it does
+      // not ride against fortified objectives
+      if (unit.aiRole === 'screen') {
+        continue;
+      }
+
+      // A unit standing by for a scheduled order keeps its post until then
+      if (unit.currentOrder?.startTime !== undefined && unit.currentOrder.startTime > this.state.timeMinutes) {
+        continue;
+      }
+
       // 3. OPERATIONAL OBJECTIVE-DRIVEN MANEUVERS (Generic & Scenario-Agnostic)
       const unitSector = unit.position.y < 450 ? 'north' : unit.position.y >= 850 ? 'south' : 'center';
 
       // 3A. Strategic Reserves (e.g. Imperial Guard, Reserve Corps)
       if (unit.aiRole === 'reserve') {
-        const shouldReleaseReserve = criticalSector !== null || this.state.timeMinutes >= 45 || this.state.alliedLosses > 2200;
+        // In the historical battle the reserves are committed by the timeline (Russian Guard at 12:30)
+        const releaseTime = this.state.isHistoricalMode ? 330 : 45;
+        const shouldReleaseReserve =
+          (criticalSector !== null && criticalSector === unitSector) || this.state.timeMinutes >= releaseTime || (!this.state.isHistoricalMode && this.state.alliedLosses > 2200);
         if (!shouldReleaseReserve) {
           // Hold position in reserve defilade behind ridge (combat status is owned by resolveCombat)
           unit.formation = 'line';
@@ -3025,6 +3119,9 @@ export class BattleEngine {
 
       for (const obj of availableObjectives) {
         const dist = Math.hypot(obj.position.x - unit.position.x, obj.position.y - unit.position.y);
+        // Defending formations hold their own ground; they do not march across the field to another sector
+        if (unit.aiRole === 'defend' && dist > 320) continue;
+
         let score = (obj.strategicValue || 50) - (dist / 20);
 
         // Preference objectives in same sector
@@ -3080,7 +3177,7 @@ export class BattleEngine {
             unit.heading = this.getNearestEnemyHeading(unit.position, unit.faction);
           }
         }
-      } else if (opponentUnits.length > 0) {
+      } else if (opponentUnits.length > 0 && unit.aiRole !== 'defend') {
         // Fallback: If no explicit objectives defined, advance towards enemy mass centroid
         const avgEnemyPos = opponentUnits.reduce(
           (acc, u) => ({ x: acc.x + u.position.x / opponentUnits.length, y: acc.y + u.position.y / opponentUnits.length }),
@@ -3753,13 +3850,83 @@ export class BattleEngine {
     if (!current || dist < current.dist) this.primaryTargets.set(unit.id, { target: enemy, dist });
   }
 
+  // Units that ran dry stay out of the firefight until resupply brings real ammunition up; the
+  // logistics trickle otherwise had them fire one round and fall silent again every pass
+  private awaitingAmmo = new Set<string>();
+
+  private isOutOfAmmo(u: Unit) {
+    if (u.ammo <= 0) this.awaitingAmmo.add(u.id);
+    else if (u.ammo >= 15) this.awaitingAmmo.delete(u.id);
+    return this.awaitingAmmo.has(u.id);
+  }
+
+  /** How hard losses and strain bite: veterans and the Guard stand longer, recruits break sooner. */
+  private moraleResilience(u: Unit) {
+    switch (u.experience) {
+      case 'Elite Guard': return 0.7;
+      case 'Veteran': return 0.85;
+      case 'Militia': return 1.3;
+      default: return 1;
+    }
+  }
+
+  // Formation each infantry unit was in before it formed square against cavalry
+  private squareFrom = new Map<string, Formation>();
+
+  /**
+   * Battalion drill that needs no order from the army commander: infantry forms square when enemy
+   * cavalry closes, and resumes its previous formation once the horsemen draw off. Units in a
+   * village fight from the houses instead.
+   */
+  private applyDrillReflexes() {
+    const cavalry = this.state.units.filter((u) => u.type === 'cavalry' && u.status !== 'shattered' && u.status !== 'routing');
+    for (const u of this.state.units) {
+      if (u.type !== 'infantry' && u.type !== 'guard') continue;
+      if (u.status === 'shattered' || u.status === 'routing') {
+        this.squareFrom.delete(u.id);
+        continue;
+      }
+      let nearest = Infinity;
+      for (const c of cavalry) {
+        if (c.faction === u.faction) continue;
+        nearest = Math.min(nearest, Math.hypot(c.position.x - u.position.x, c.position.y - u.position.y));
+      }
+      if (nearest <= 110 && u.formation !== 'square' && !u.isGarrisoned && u.morale > 25) {
+        this.squareFrom.set(u.id, u.formation);
+        u.formation = 'square';
+      } else if (nearest > 200 && u.formation === 'square' && this.squareFrom.has(u.id)) {
+        u.formation = this.squareFrom.get(u.id)!;
+        this.squareFrom.delete(u.id);
+      }
+    }
+  }
+
+  // Battle time at which each infantry unit started a firefight in column
+  private columnFireSince = new Map<string, number>();
+
   // Turn towards the primary target only. Facing every enemy pair in turn made units oscillate
   // between targets, which also shook their (heading-dependent) collision footprint.
   private faceCombatTargets(effectiveSpeed: number) {
+    const now = this.state.timeMinutes;
     for (const u of this.state.units) {
       const t = this.primaryTargets.get(u.id);
-      if (!t) continue;
+      if (!t) {
+        this.columnFireSince.delete(u.id);
+        continue;
+      }
       if (u.formation === 'square' || u.status === 'routing' || u.status === 'shattered') continue;
+      // Battalions that stopped to trade fire in column deployed into line within a few minutes;
+      // a column brings only its leading companies' muskets to bear and is a deep target
+      if (u.formation === 'column' && u.status === 'engaging' && (u.type === 'infantry' || u.type === 'guard') && u.currentOrder?.type !== 'charge') {
+        const since = this.columnFireSince.get(u.id);
+        if (since === undefined || since > now) this.columnFireSince.set(u.id, now);
+        else if (now - since >= 3) {
+          u.formation = 'line';
+          this.columnFireSince.delete(u.id);
+        }
+      } else {
+        this.columnFireSince.delete(u.id);
+      }
       if (u.currentOrder && u.currentOrder.status === 'executing') continue;
       const targetAngle = Math.atan2(t.target.position.y - u.position.y, t.target.position.x - u.position.x);
       let diff = targetAngle - u.heading;
@@ -3818,7 +3985,7 @@ export class BattleEngine {
 
         const frenchCanFire = french.status !== 'routing' && dist <= frenchDirectRange &&
           (!french.volleyReady || dist <= (french.currentOrder?.holdFireThreshold || 65));
-        if (frenchCanFire) {
+        if (frenchCanFire && french.type !== 'headquarters') {
           const angle = Math.atan2(french.position.y - allied.position.y, french.position.x - allied.position.x);
           const list = incomingAngles.get(allied.id) || [];
           list.push(angle);
@@ -3827,7 +3994,7 @@ export class BattleEngine {
 
         const alliedCanFire = allied.status !== 'routing' && dist <= alliedDirectRange &&
           (!allied.volleyReady || dist <= (allied.currentOrder?.holdFireThreshold || 65));
-        if (alliedCanFire) {
+        if (alliedCanFire && allied.type !== 'headquarters') {
           const angle = Math.atan2(allied.position.y - french.position.y, allied.position.x - french.position.x);
           const list = incomingAngles.get(french.id) || [];
           list.push(angle);
@@ -3843,7 +4010,9 @@ export class BattleEngine {
           for (let j = i + 1; j < angles.length; j++) {
             let diff = Math.abs(angles[i] - angles[j]);
             while (diff > Math.PI) diff = Math.abs(diff - 2 * Math.PI);
-            if (diff >= (40 * Math.PI) / 180) { // >= 40 deg
+            // Real crossfire needs fire converging from well apart (a division's own frontage
+            // already spans 40 degrees of a neighbouring enemy's view)
+            if (diff >= (90 * Math.PI) / 180) {
               u.isEnfiladed = true;
               break;
             }
@@ -3901,7 +4070,7 @@ export class BattleEngine {
       const isHoldingVolley = french.volleyReady && dist > (french.currentOrder?.holdFireThreshold || 65);
 
       if (!isHoldingVolley) {
-        if (french.ammo <= 0 && !isFrenchMelee) {
+        if (this.isOutOfAmmo(french) && !isFrenchMelee) {
           french.status = 'holding';
         } else {
           const isDischargingVolley = french.volleyReady && dist <= (french.currentOrder?.holdFireThreshold || 65);
@@ -3915,16 +4084,20 @@ export class BattleEngine {
           allied.casualtiesTaken += damage;
           this.state.alliedLosses += damage;
 
-          // Continuous combat morale drain (rate scaled per second by effectiveSpeed)
-          const continuousMeleeShock = isFrenchMelee ? 2.5 * effectiveSpeed : 0.4 * effectiveSpeed;
-          const continuousFlankShock = (isRear ? 4.5 : isFlanking ? 2.0 : 0) * effectiveSpeed;
-          const continuousEnfiladeShock = allied.isEnfiladed ? 2.5 * effectiveSpeed : 0;
-          const casualtyMoraleShock = (effectiveDamage / Math.max(1, allied.initialStrength)) * 80;
+          // Units break mainly on losses (a battalion rarely stood past a quarter of its men down);
+          // the continuous drain only models the strain of close action, flanks and crossfire
+          const continuousMeleeShock = isFrenchMelee ? 1.0 * effectiveSpeed : 0.12 * effectiveSpeed;
+          const continuousFlankShock = (isRear ? 1.5 : isFlanking ? 0.6 : 0) * effectiveSpeed;
+          const continuousEnfiladeShock = allied.isEnfiladed ? 0.6 * effectiveSpeed : 0;
+          const casualtyMoraleShock = (effectiveDamage / Math.max(1, allied.initialStrength)) * 140;
 
           // Discrete one-time shock: point-blank battalion volley delivers a sharp 8-point shock burst once
           const discreteVolleyShock = isDischargingVolley ? 8.0 : 0;
 
-          const moraleLoss = casualtyMoraleShock + continuousMeleeShock + continuousFlankShock + continuousEnfiladeShock + discreteVolleyShock + 0.04 * effectiveSpeed;
+          // The strain of close action scales with the weight of the enemy: a staff escort or a lone
+          // squadron behind a division is not a brigade on its flank
+          const pressure = french.type === 'artillery' ? 0.5 : Math.min(1, Math.max(0.05, french.strength / 3000));
+          const moraleLoss = (casualtyMoraleShock + (continuousMeleeShock + continuousFlankShock + continuousEnfiladeShock) * pressure + discreteVolleyShock + 0.04 * effectiveSpeed) * this.moraleResilience(allied);
           allied.morale = Math.max(0, allied.morale - moraleLoss);
 
           // Suppression buildup under fire, melee press, suppressive mission, and enfilade crossfire
@@ -3971,7 +4144,7 @@ export class BattleEngine {
       const isHoldingVolley = allied.volleyReady && dist > (allied.currentOrder?.holdFireThreshold || 65);
 
       if (!isHoldingVolley) {
-        if (allied.ammo <= 0 && !isAlliedMelee) {
+        if (this.isOutOfAmmo(allied) && !isAlliedMelee) {
           allied.status = 'holding';
         } else {
         const isDischargingVolley = allied.volleyReady && dist <= (allied.currentOrder?.holdFireThreshold || 65);
@@ -3985,16 +4158,19 @@ export class BattleEngine {
         french.casualtiesTaken += damage;
         this.state.frenchLosses += damage;
 
-        // Continuous combat morale drain (rate scaled per second by effectiveSpeed)
-        const continuousMeleeShock = isAlliedMelee ? 2.5 * effectiveSpeed : 0.4 * effectiveSpeed;
-        const continuousFlankShock = (isRear ? 4.5 : isFlanking ? 2.0 : 0) * effectiveSpeed;
-        const continuousEnfiladeShock = french.isEnfiladed ? 2.5 * effectiveSpeed : 0;
-        const casualtyMoraleShock = (effectiveDamage / Math.max(1, french.initialStrength)) * 80;
+        // Same morale model as above: losses dominate, the continuous drain is the strain of close action
+        const continuousMeleeShock = isAlliedMelee ? 1.0 * effectiveSpeed : 0.12 * effectiveSpeed;
+        const continuousFlankShock = (isRear ? 1.5 : isFlanking ? 0.6 : 0) * effectiveSpeed;
+        const continuousEnfiladeShock = french.isEnfiladed ? 0.6 * effectiveSpeed : 0;
+        const casualtyMoraleShock = (effectiveDamage / Math.max(1, french.initialStrength)) * 140;
 
         // Discrete one-time shock: point-blank battalion volley delivers a sharp 8-point shock burst once
         const discreteVolleyShock = isDischargingVolley ? 8.0 : 0;
 
-        const moraleLoss = casualtyMoraleShock + continuousMeleeShock + continuousFlankShock + continuousEnfiladeShock + discreteVolleyShock + 0.04 * effectiveSpeed;
+        // The strain of close action scales with the weight of the enemy: a staff escort or a lone
+        // squadron behind a division is not a brigade on its flank
+        const pressure = allied.type === 'artillery' ? 0.5 : Math.min(1, Math.max(0.05, allied.strength / 3000));
+        const moraleLoss = (casualtyMoraleShock + (continuousMeleeShock + continuousFlankShock + continuousEnfiladeShock) * pressure + discreteVolleyShock + 0.04 * effectiveSpeed) * this.moraleResilience(french);
         french.morale = Math.max(0, french.morale - moraleLoss);
 
         // Suppression buildup
@@ -4190,12 +4366,15 @@ export class BattleEngine {
           // Concentrated infantry bayonet charge against a static square has superior concentrated shock
           power *= 1.35;
         }
+      } else if (attacker.type === 'cavalry' && defender.type === 'cavalry') {
+        // Cavalry melees were decided by shock and who broke first; few men fell in the clash itself
+        power *= 0.4;
       } else if (attacker.type === 'cavalry' && defender.formation === 'line') {
         power *= 2.2;
       }
     } else {
       // Logistics: Out of ammo = unit cannot fire ranged weapons! (Restricted to cold steel / melee only)
-      if (attacker.ammo <= 0) {
+      if (this.isOutOfAmmo(attacker)) {
         return { damage: 0, isFlanking: false, isRear: false };
       }
 
@@ -4268,8 +4447,16 @@ export class BattleEngine {
     let isFlanking = false;
     let isRear = false;
 
-    // Defend posture / square has 360-degree security (immune to flank bonuses)
-    if (defender.formation !== 'square') {
+    // Defend posture / square has 360-degree security (immune to flank bonuses). A routing mob has
+    // no front to turn: its flight already shows its back, which the rout modifier below accounts for
+    const isBroken = defender.status === 'routing';
+    // A flank attack needs the defender pinned to its front by someone else, or caught on the march;
+    // a formation whose only enemy is off its axis simply wheels to face it
+    const defenderTarget = this.previousTargets.get(defender.id);
+    const canBeFlanked = defenderTarget !== undefined
+      ? defenderTarget !== attacker.id
+      : defender.status === 'marching' || defender.status === 'charging';
+    if (defender.formation !== 'square' && !isBroken && canBeFlanked) {
       if (angleDiff >= (3 * Math.PI) / 4) {
         // Attack from behind (> 135 deg)
         power *= 2.0;
@@ -4282,7 +4469,7 @@ export class BattleEngine {
     }
 
     // Concentrated Enfilade Crossfire: defender caught in converging angles (>= 40 deg split) takes +50% damage
-    if (defender.isEnfiladed) {
+    if (defender.isEnfiladed && !isBroken) {
       power *= 1.50;
     }
 
@@ -4316,9 +4503,26 @@ export class BattleEngine {
     // Experience bonus
     if (attacker.experience === 'Elite Guard') power *= 1.35;
     else if (attacker.experience === 'Veteran') power *= 1.15;
+    else if (attacker.experience === 'Militia') power *= 0.85;
+
+    // Only the men who can bring muskets (or bayonets) to bear count: a line's frontage tops out
+    // at about a brigade, a column or square fires from its leading companies only
+    let engaged = attacker.strength;
+    if (attacker.type !== 'artillery') {
+      // Cavalry charged by regiments in successive lines, a few thousand sabres at the point of contact
+      if (isMelee) engaged = Math.min(engaged, attacker.type === 'cavalry' ? 2500 : 6000);
+      else if (attacker.formation === 'line') engaged = Math.min(engaged, 4000);
+      else {
+        engaged = Math.min(engaged, 1500);
+        if (attacker.formation === 'column') power *= 0.5;
+      }
+    }
+
+    // A broken unit is scattered and running; most of its men get away
+    if (isBroken) power *= 0.3;
 
     // Continuous casualties per tick (power * normalized strength * rate * effectiveSpeed)
-    const baseDamage = power * (attacker.strength / 1000) * 0.08 * effectiveSpeed;
+    const baseDamage = power * (engaged / 1000) * 0.08 * effectiveSpeed;
     return {
       damage: Math.max(0, baseDamage),
       isFlanking,
@@ -4599,10 +4803,19 @@ export class BattleEngine {
       }
     }
 
-    const away = nearest
-      ? Math.atan2(unit.position.y - nearest.position.y, unit.position.x - nearest.position.x)
-      : unit.faction === 'french' ? Math.PI : 0;
-    const fleeSpeed = nearestDist < 260 ? 0.9 : 0.3;
+    // Flee away from the nearest enemy but back towards the army's own rear (French west, Allies
+    // east), so a broken unit does not run headlong into the next enemy formation
+    const rearX = unit.faction === 'french' ? -1 : 1;
+    let fx = rearX * 0.8;
+    let fy = 0;
+    if (nearest) {
+      const d = Math.max(1, nearestDist);
+      fx += (unit.position.x - nearest.position.x) / d;
+      fy += (unit.position.y - nearest.position.y) / d;
+    }
+    const away = Math.atan2(fy, fx);
+    // Broken troops run (faster than the march) while the enemy is close, then straggle
+    const fleeSpeed = (nearestDist < 260 ? 5.5 : 2.5) * Math.max(0.6, unit.speed || 0);
     // Turn gradually towards the flight direction; snapping every tick made units pinned against
     // the map edge (or between two enemies) flick back and forth
     let diff = away - unit.heading;
@@ -4615,8 +4828,9 @@ export class BattleEngine {
     unit.position.x = Math.max(20, Math.min(2380, unit.position.x + Math.cos(unit.heading) * fleeSpeed * effectiveSpeed));
     unit.position.y = Math.max(20, Math.min(1480, unit.position.y + Math.sin(unit.heading) * fleeSpeed * effectiveSpeed));
 
-    if (nearestDist > 260) {
-      unit.morale = Math.min(100, unit.morale + 0.8 * effectiveSpeed);
+    // Officers rally the men once out of musket range; well clear of the enemy it happens quickly
+    if (nearestDist > 140) {
+      unit.morale = Math.min(100, unit.morale + (nearestDist > 260 ? 0.8 : 0.25) * effectiveSpeed);
       if (unit.morale >= 45) {
         unit.status = 'idle';
         unit.hasTriggeredWaveringSitrep = false;
@@ -4735,6 +4949,27 @@ export class BattleEngine {
     };
     const finalHeading = Math.atan2(target.position.y - destination.y, target.position.x - destination.x);
     return { target, destination, curveControl, finalHeading };
+  }
+
+  /**
+   * An objective is held by a side with formed (not routing) units inside its radius and no enemy
+   * formed units there; contested when both are present; otherwise it keeps its last holder.
+   */
+  private updateObjectiveControl() {
+    for (const obj of this.state.objectives) {
+      let french = 0;
+      let allies = 0;
+      for (const u of this.state.units) {
+        if (u.status === 'shattered' || u.status === 'routing' || u.strength <= 0) continue;
+        if (u.type === 'headquarters' || u.type === 'supply') continue;
+        if (Math.hypot(u.position.x - obj.position.x, u.position.y - obj.position.y) > obj.radius) continue;
+        if (u.faction === 'french') french += u.strength;
+        else allies += u.strength;
+      }
+      if (french > 0 && allies > 0) obj.heldByFaction = 'contested';
+      else if (french > 0) obj.heldByFaction = 'french';
+      else if (allies > 0) obj.heldByFaction = 'allies';
+    }
   }
 
   public getUnitVisionRadius(unit: Unit): number {
