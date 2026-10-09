@@ -46,7 +46,6 @@ export interface SimulationState {
     isGrandBattery?: boolean; // Converged Grand Battery / TOT barrage
     isCounterBattery?: boolean; // Counter-battery fire mission
     isCaissonDetonation?: boolean; // Ammunition caisson explosion
-    sourceUnitId?: string; // Battery that fired the round (drives the shell-flight animation)
   }[];
   iceCracks?: {
     x: number;
@@ -2290,8 +2289,10 @@ export class BattleEngine {
             const overlap = minStandoff - dist;
 
             // Mass weighting: stationary/holding/entrenched units are heavier
-            const isU1Fixed = u1.status === 'holding' || u1.status === 'entrenching';
-            const isU2Fixed = u2.status === 'holding' || u2.status === 'entrenching';
+            const anchored = (u: Unit) =>
+              u.status === 'holding' || u.status === 'entrenching' || u.status === 'engaging' || u.status === 'melee';
+            const isU1Fixed = anchored(u1);
+            const isU2Fixed = anchored(u2);
 
             let w1: number;
             let w2: number;
@@ -2474,7 +2475,6 @@ export class BattleEngine {
           observerUnitId: activeObserver?.id,
           isGrandBattery: isGrandBatteryConvergence,
           isCounterBattery: isExplicitCounterBattery,
-          sourceUnitId: arty.id,
         });
 
         if (isSmoke) {
@@ -2908,6 +2908,12 @@ export class BattleEngine {
         continue;
       }
 
+      // Units already in a firefight keep fighting. Re-tasking them every pass produced a new march
+      // order that movement dropped on the next frame, so they twitched between marching and engaging.
+      if (this.isInCombat(unit)) {
+        continue;
+      }
+
       // 3. OPERATIONAL OBJECTIVE-DRIVEN MANEUVERS (Generic & Scenario-Agnostic)
       const unitSector = unit.position.y < 450 ? 'north' : unit.position.y >= 850 ? 'south' : 'center';
 
@@ -2915,9 +2921,9 @@ export class BattleEngine {
       if (unit.aiRole === 'reserve') {
         const shouldReleaseReserve = criticalSector !== null || this.state.timeMinutes >= 45 || this.state.alliedLosses > 2200;
         if (!shouldReleaseReserve) {
-          // Hold position in reserve defilade behind ridge
+          // Hold position in reserve defilade behind ridge (combat status is owned by resolveCombat)
           unit.formation = 'line';
-          unit.status = 'holding';
+          if (!this.isInCombat(unit)) unit.status = 'holding';
           continue;
         }
       }
@@ -2955,7 +2961,13 @@ export class BattleEngine {
 
       if (bestObj) {
         const distToObj = Math.hypot(bestObj.position.x - unit.position.x, bestObj.position.y - unit.position.y);
-        if (distToObj > 26) {
+        // Same rule as movement arrival: within 48 px of an objective a friendly already holds counts
+        // as arrived (re-issuing the march there made units flip between idle and marching every pass)
+        const objectiveOccupied = this.state.units.some(
+          (o) => o.id !== unit.id && o.faction === unit.faction && o.status !== 'shattered' && o.strength > 0 &&
+            Math.hypot(o.position.x - bestObj!.position.x, o.position.y - bestObj!.position.y) < 45
+        );
+        if (distToObj > (objectiveOccupied ? 48 : 26)) {
           // March to objective in column formation
           unit.formation = 'column';
           unit.status = 'marching';
@@ -2969,10 +2981,13 @@ export class BattleEngine {
             plannedTime: this.state.timeMinutes,
           };
         } else {
-          // Deployed on objective: form defensive line and orient toward enemy
+          // Deployed on objective: form defensive line and orient toward enemy (unless already fighting,
+          // where resolveCombat owns status and facing)
           unit.formation = 'line';
-          unit.status = 'holding';
-          unit.heading = this.getNearestEnemyHeading(unit.position, unit.faction);
+          if (!this.isInCombat(unit)) {
+            unit.status = 'holding';
+            unit.heading = this.getNearestEnemyHeading(unit.position, unit.faction);
+          }
         }
       } else if (opponentUnits.length > 0) {
         // Fallback: If no explicit objectives defined, advance towards enemy mass centroid
@@ -3631,7 +3646,44 @@ export class BattleEngine {
     return u.range;
   }
 
+  // Nearest enemy within each unit's own range this tick (drives auto-facing)
+  private primaryTargets = new Map<string, { target: Unit; dist: number }>();
+
+  // Last tick's primary targets: a unit keeps firing at its target until it is 12% beyond range,
+  // so units at the edge of range don't flicker between moving and engaging every frame.
+  private previousTargets = new Map<string, string>();
+
+  private isInCombat(u: Unit) {
+    return u.status === 'engaging' || u.status === 'melee';
+  }
+
+  private notePrimaryTarget(unit: Unit, enemy: Unit, dist: number) {
+    const current = this.primaryTargets.get(unit.id);
+    if (!current || dist < current.dist) this.primaryTargets.set(unit.id, { target: enemy, dist });
+  }
+
+  // Turn towards the primary target only. Facing every enemy pair in turn made units oscillate
+  // between targets, which also shook their (heading-dependent) collision footprint.
+  private faceCombatTargets(effectiveSpeed: number) {
+    for (const u of this.state.units) {
+      const t = this.primaryTargets.get(u.id);
+      if (!t) continue;
+      if (u.formation === 'square' || u.status === 'routing' || u.status === 'shattered') continue;
+      if (u.currentOrder && u.currentOrder.status === 'executing') continue;
+      const targetAngle = Math.atan2(t.target.position.y - u.position.y, t.target.position.x - u.position.x);
+      let diff = targetAngle - u.heading;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      if (Math.abs(diff) < 0.02) continue; // already on target: no micro-corrections
+      const turn = 0.5 * effectiveSpeed;
+      u.heading = Math.abs(diff) <= turn ? targetAngle : u.heading + Math.sign(diff) * turn;
+    }
+  }
+
   private resolveCombat(effectiveSpeed: number) {
+    this.previousTargets.clear();
+    for (const [id, t] of this.primaryTargets) this.previousTargets.set(id, t.target.id);
+    this.primaryTargets.clear();
     // Clear engaging and melee status for units before checking current active combat
     for (const u of this.state.units) {
       if (u.type === 'artillery') {
@@ -3718,13 +3770,16 @@ export class BattleEngine {
         const dy = allied.position.y - french.position.y;
         const dist = Math.hypot(dx, dy);
 
-        // Check if within direct firefight or melee range
-        const maxRange = Math.max(frenchDirectRange, alliedDirectRange);
-        if (dist <= maxRange) {
-          this.engagePair(french, allied, dist, effectiveSpeed, frenchDirectRange, alliedDirectRange);
+        // Check if within direct firefight or melee range (with hysteresis for an existing engagement)
+        const frenchRange = frenchDirectRange * (this.previousTargets.get(french.id) === allied.id ? 1.12 : 1);
+        const alliedRange = alliedDirectRange * (this.previousTargets.get(allied.id) === french.id ? 1.12 : 1);
+        if (dist <= Math.max(frenchRange, alliedRange)) {
+          this.engagePair(french, allied, dist, effectiveSpeed, frenchRange, alliedRange);
         }
       }
     }
+
+    this.faceCombatTargets(effectiveSpeed);
   }
 
   private engagePair(
@@ -3893,23 +3948,9 @@ export class BattleEngine {
     this.updateMoraleStatus(french);
     this.updateMoraleStatus(allied);
 
-    // Auto-face towards enemy to create neat arrays (only when holding/engaging without active maneuver orders)
-    const faceTarget = (u1: Unit, u2: Unit) => {
-      if (u1.formation === 'square' || u1.status === 'routing') return;
-      if (u1.currentOrder && u1.currentOrder.status === 'executing') return;
-      const targetAngle = Math.atan2(u2.position.y - u1.position.y, u2.position.x - u1.position.x);
-      let angleDiff = targetAngle - u1.heading;
-      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-      const turnRate = 0.5 * effectiveSpeed;
-      if (Math.abs(angleDiff) <= turnRate) {
-        u1.heading = targetAngle;
-      } else {
-        u1.heading += Math.sign(angleDiff) * turnRate;
-      }
-    };
-    if (frenchInRange) faceTarget(french, allied);
-    if (alliedInRange) faceTarget(allied, french);
+    // Remember the nearest enemy each side can reach; facing is applied once per tick in resolveCombat
+    if (frenchInRange) this.notePrimaryTarget(french, allied, dist);
+    if (alliedInRange) this.notePrimaryTarget(allied, french, dist);
   }
 
   private updateEngagements() {
@@ -4471,9 +4512,17 @@ export class BattleEngine {
       ? Math.atan2(unit.position.y - nearest.position.y, unit.position.x - nearest.position.x)
       : unit.faction === 'french' ? Math.PI : 0;
     const fleeSpeed = nearestDist < 260 ? 0.9 : 0.3;
-    unit.heading = away;
-    unit.position.x = Math.max(20, Math.min(2380, unit.position.x + Math.cos(away) * fleeSpeed * effectiveSpeed));
-    unit.position.y = Math.max(20, Math.min(1480, unit.position.y + Math.sin(away) * fleeSpeed * effectiveSpeed));
+    // Turn gradually towards the flight direction; snapping every tick made units pinned against
+    // the map edge (or between two enemies) flick back and forth
+    let diff = away - unit.heading;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    if (Math.abs(diff) > 0.05) {
+      const turn = 1.5 * effectiveSpeed;
+      unit.heading += Math.abs(diff) <= turn ? diff : Math.sign(diff) * turn;
+    }
+    unit.position.x = Math.max(20, Math.min(2380, unit.position.x + Math.cos(unit.heading) * fleeSpeed * effectiveSpeed));
+    unit.position.y = Math.max(20, Math.min(1480, unit.position.y + Math.sin(unit.heading) * fleeSpeed * effectiveSpeed));
 
     if (nearestDist > 260) {
       unit.morale = Math.min(100, unit.morale + 0.8 * effectiveSpeed);

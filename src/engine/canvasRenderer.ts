@@ -1,6 +1,5 @@
 import { Unit, ManeuverOrder, Vector2D, OperationalGraphic, TroopFilterType, TargetReferencePoint, Faction, ERA_WEAPON_PROFILES } from '../types/game';
 import { SimulationState, BattleEngine } from './simulation';
-import { EffectsSystem } from './effects';
 import { GZD, SQUARE, eastingKm, northingKm } from './grid';
 import { SETTLEMENTS, HEIGHTS } from '../data/gazetteer';
 import {
@@ -18,6 +17,19 @@ import {
   FRAME_W,
   SymbolIdentity,
 } from './natoSymbols';
+
+export interface SmokeParticle {
+  x: number;
+  y: number;
+  radius: number;
+  alpha: number;
+  maxAlpha: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  isBlackpowder?: boolean;
+}
 
 export interface Camera {
   x: number;
@@ -54,7 +66,7 @@ export class SandtableRenderer {
     }
   }
 
-  private effects = new EffectsSystem();
+  private smokeParticles: SmokeParticle[] = [];
   private animFrame: number = 0;
   private zoom: number = 1;
   public showRangeRings: boolean = false;
@@ -213,10 +225,8 @@ export class SandtableRenderer {
     // 12.5 Artillery Impacts (CFF Explosions)
     this.renderArtilleryImpacts(ctx, state);
 
-    // 13. Fire, shells, explosions and smoke
-    const now = performance.now();
-    this.effects.update(state, now);
-    this.effects.draw(ctx, now);
+    // 13. Gunpowder smoke, muzzle flashes and tracers
+    this.updateAndRenderEffects(ctx, state);
 
     ctx.restore();
 
@@ -435,32 +445,226 @@ export class SandtableRenderer {
       }
     }
 
-    // 2. Craters and ricochet furrows left by landed rounds (the blast itself is animated by EffectsSystem)
+    // 2. CLEAN NATO BALLISTIC ARTILLERY IMPACT SYMBOLOGY & PERSISTENT CRATERS
     for (const impact of state.artilleryImpacts) {
-      if (impact.isSmoke || this.effects.isInFlight(impact.id)) continue;
       const age = state.timeMinutes - impact.timeMinutes;
-      if (age > 8 || age < 0) continue;
-      const fade = 1 - age / 8;
+      if (age > 1.2 || age < 0) continue;
 
       ctx.save();
       ctx.translate(impact.x, impact.y);
-      if (impact.isRicochet) {
-        ctx.rotate(impact.velocityHeading ?? 0);
-        ctx.fillStyle = `rgba(78, 52, 40, ${0.28 * fade})`;
+
+      // Phase 1: Active Detonation (first 0.25 battle minutes / 15 seconds)
+      if (age <= 0.25) {
+        const progress = age / 0.25; // 0 to 1
+
+        if (impact.isSmoke) {
+          // Tactical Smoke Screen Billow
+          const smokeRadius = impact.radius * (0.35 + progress * 0.75);
+          ctx.fillStyle = `rgba(226, 232, 240, ${Math.max(0, 0.40 * (1 - progress * 0.6))})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, smokeRadius, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = `rgba(148, 163, 184, ${Math.max(0, 0.65 * (1 - progress))})`;
+          ctx.lineWidth = 1.0;
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath();
+          ctx.arc(0, 0, smokeRadius, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.font = 'bold 7px Arial, sans-serif';
+          ctx.fillStyle = '#475569';
+          ctx.textAlign = 'center';
+          ctx.fillText('SMOKE SCREEN', 0, -smokeRadius - 3);
+          ctx.restore();
+          continue;
+        }
+
+        if (impact.isRicochet) {
+          // Grazing ricochet impact (solid shot skipping across plateau)
+          if (impact.velocityHeading !== undefined) {
+            ctx.save();
+            ctx.rotate(impact.velocityHeading);
+            ctx.fillStyle = `rgba(180, 83, 9, ${Math.max(0, 0.50 * (1 - progress))})`;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, impact.radius * 0.9, impact.radius * 0.35, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+
+          const skipRadius = impact.radius * (0.3 + progress * 0.7);
+          ctx.strokeStyle = `rgba(245, 158, 11, ${Math.max(0, 0.85 * (1 - progress))})`;
+          ctx.lineWidth = Math.max(0.6, 1.4 * (1 - progress));
+          ctx.beginPath();
+          ctx.arc(0, 0, skipRadius, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Dust spray
+          ctx.fillStyle = `rgba(217, 119, 6, ${Math.max(0, 0.75 * (1 - progress))})`;
+          for (let s = 0; s < 8; s++) {
+            const spAng = (impact.velocityHeading || 0) + (s - 3.5) * 0.22;
+            const spDist = skipRadius * (0.5 + (s % 3) * 0.25);
+            ctx.beginPath();
+            ctx.arc(Math.cos(spAng) * spDist, Math.sin(spAng) * spDist, 1.1, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          if (progress < 0.5) {
+            const tagAlpha = 1 - progress / 0.5;
+            ctx.font = 'bold 6px "Courier New", monospace';
+            ctx.fillStyle = `rgba(217, 119, 6, ${0.9 * tagAlpha})`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(`RICOCHET #${impact.skipCount || 1} (GRAZE)`, 0, -skipRadius - 2);
+          }
+
+          ctx.restore();
+          continue;
+        }
+
+        // Primary Expanding Shockwave
+        const shockRadius = impact.radius * (0.2 + progress * 0.9);
+        ctx.strokeStyle = `rgba(239, 68, 68, ${Math.max(0, 0.85 * (1 - progress))})`;
+        ctx.lineWidth = Math.max(0.8, 1.8 * (1 - progress));
+        ctx.setLineDash([]);
         ctx.beginPath();
-        ctx.ellipse(0, 0, impact.radius * 0.45, impact.radius * 0.14, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.arc(0, 0, shockRadius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Secondary Concentric Echo Ring
+        const innerEchoRadius = shockRadius * 0.55;
+        ctx.strokeStyle = `rgba(245, 158, 11, ${Math.max(0, 0.65 * (1 - progress))})`;
+        ctx.lineWidth = 0.8;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath();
+        ctx.arc(0, 0, innerEchoRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Epicenter Flash
+        if (progress < 0.3) {
+          const flashAlpha = 1 - progress / 0.3;
+          ctx.strokeStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+          ctx.lineWidth = 1.2;
+          const crossLen = 6;
+          ctx.beginPath();
+          ctx.moveTo(-crossLen, 0); ctx.lineTo(crossLen, 0);
+          ctx.moveTo(0, -crossLen); ctx.lineTo(0, crossLen);
+          ctx.stroke();
+
+          ctx.fillStyle = `rgba(254, 240, 138, ${flashAlpha})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, 2.0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Shrapnel Dispersion Dots
+        ctx.fillStyle = `rgba(180, 83, 9, ${Math.max(0, 0.75 * (1 - progress))})`;
+        for (let s = 0; s < 12; s++) {
+          const ang = s * 2.39996;
+          const d = shockRadius * (0.3 + (s % 4) * 0.16);
+          ctx.beginPath();
+          ctx.arc(Math.cos(ang) * d, Math.sin(ang) * d, 1.0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Caisson Detonation Violent Fiery Ring
+        if (impact.isCaissonDetonation) {
+          ctx.save();
+          ctx.strokeStyle = `rgba(234, 88, 12, ${Math.max(0, 0.9 * (1 - progress))})`;
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, shockRadius * 1.35, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // Micro Tag
+        if (progress < 0.5) {
+          const tagAlpha = 1 - progress / 0.5;
+          ctx.font = 'bold 6.5px "Courier New", monospace';
+          ctx.fillStyle = impact.isCaissonDetonation
+            ? `rgba(234, 88, 12, ${tagAlpha})`
+            : impact.isGrandBattery
+            ? `rgba(185, 28, 28, ${tagAlpha})`
+            : `rgba(220, 38, 38, ${0.9 * tagAlpha})`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          const label = impact.isCaissonDetonation
+            ? '⚡ CAISSON DETONATION'
+            : impact.isGrandBattery
+            ? 'MASSED TOT BARRAGE'
+            : impact.isCounterBattery
+            ? 'COUNTER-BATTERY HIT'
+            : 'IMP SALVO';
+          ctx.fillText(label, 0, -shockRadius - 3);
+        }
+
+        // Blackpowder cordite mist
+        if (progress > 0.1) {
+          const mistProgress = (progress - 0.1) / 0.9;
+          const mistAlpha = Math.max(0, 0.16 * (1 - mistProgress));
+          const mistRadius = impact.radius * (0.35 + mistProgress * 0.45);
+          ctx.fillStyle = `rgba(240, 240, 245, ${mistAlpha})`;
+          ctx.beginPath();
+          ctx.arc(0, -mistProgress * 4, mistRadius, 0, Math.PI * 2);
+          ctx.fill();
+        }
       } else {
-        const r = Math.max(2.5, impact.radius * 0.18) * (impact.isCaissonDetonation ? 1.8 : 1);
-        ctx.fillStyle = `rgba(60, 45, 32, ${0.16 * fade})`;
-        ctx.beginPath();
-        ctx.arc(0, 0, r * 1.9, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = `rgba(30, 22, 16, ${0.5 * fade})`;
-        ctx.beginPath();
-        ctx.arc(0, 0, r, 0, Math.PI * 2);
-        ctx.fill();
+        // Phase 2: Persistent Scorched Crater & Churned Ground (0.25 to 1.2 minutes)
+        // Visually reveals where artillery shells and explosives have been landing!
+        const fade = Math.max(0, 1 - (age - 0.25) / 0.95);
+
+        if (impact.isSmoke) {
+          // Dissipating smoke haze
+          const smokeRadius = impact.radius * (0.75 + (1 - fade) * 0.35);
+          ctx.fillStyle = `rgba(226, 232, 240, ${0.12 * fade})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, smokeRadius, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (impact.isRicochet) {
+          // Skid furrow gouge
+          if (impact.velocityHeading !== undefined) {
+            ctx.save();
+            ctx.rotate(impact.velocityHeading);
+            ctx.fillStyle = `rgba(78, 52, 46, ${0.35 * fade})`;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, impact.radius * 0.7, impact.radius * 0.25, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+        } else {
+          // Blackened explosive crater pit
+          const craterRadius = Math.max(2.5, impact.radius * 0.26);
+
+          // Outer scorched dirt halo
+          ctx.fillStyle = `rgba(24, 18, 12, ${0.35 * fade})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, craterRadius * 1.5, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Dark crater pit
+          ctx.fillStyle = `rgba(12, 10, 8, ${0.55 * fade})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, craterRadius, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Jagged crater lip
+          ctx.strokeStyle = `rgba(55, 40, 25, ${0.40 * fade})`;
+          ctx.lineWidth = 0.8;
+          ctx.stroke();
+
+          // Faint ember speckle during early crater phase
+          if (age < 0.6) {
+            const emberFade = (1 - (age - 0.25) / 0.35);
+            ctx.fillStyle = `rgba(217, 119, 6, ${0.45 * emberFade})`;
+            ctx.beginPath();
+            ctx.arc(0, 0, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
       }
+
       ctx.restore();
     }
     ctx.restore();
@@ -2798,6 +3002,35 @@ export class SandtableRenderer {
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
+
+      // Frontline volley pulse with short tracers. The tracer pattern is fixed for each volley
+      // cycle (seeded), rather than re-randomised every frame, so it reads as fire, not flicker.
+      const phase = now + unit.id.charCodeAt(0) * 120;
+      const pulse = 0.5 + 0.5 * Math.sin(phase / 140);
+      ctx.strokeStyle = `rgba(254, 240, 138, ${0.75 * pulse})`;
+      ctx.lineWidth = 1.5;
+      const span = Math.max(lh, 14); // match the original chit-height firing front
+      ctx.beginPath();
+      ctx.moveTo(fx + 1, -span / 2);
+      ctx.lineTo(fx + 1, span / 2);
+      ctx.stroke();
+      if (pulse > 0.6) {
+        let seed = (Math.floor(phase / (Math.PI * 280)) * 2654435761 + unit.id.length * 97) >>> 0;
+        const rnd = () => {
+          seed = (seed * 1664525 + 1013904223) >>> 0;
+          return seed / 4294967296;
+        };
+        ctx.strokeStyle = `rgba(254, 240, 138, ${0.9 * pulse})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let ty = -span * 0.35; ty <= span * 0.35; ty += 6) {
+          const startDist = fx + 3 + rnd() * 6;
+          const tracerLen = 6 + rnd() * 8;
+          ctx.moveTo(startDist, ty);
+          ctx.lineTo(startDist + tracerLen, ty);
+        }
+        ctx.stroke();
+      }
     }
 
     // Charge: chevrons surging forward
@@ -3007,6 +3240,217 @@ export class SandtableRenderer {
       if (sy < top + 16 || sy > bottom) continue;
       haloText(ctx, northingKm(y), 6, sy, MAP.gridLabel, 3);
     }
+    ctx.restore();
+  }
+
+  private visualProjectiles: {
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    life: number;
+    maxLife: number;
+    isArtillery?: boolean;
+    isCanister?: boolean;
+  }[] = [];
+
+  private muzzleFlashes: {
+    x: number;
+    y: number;
+    heading: number;
+    life: number;
+    maxLife: number;
+  }[] = [];
+
+  public spawnSmoke(x: number, y: number, count: number = 2, isHeavy = false) {
+    for (let i = 0; i < count; i++) {
+      const maxLife = (isHeavy ? 26 : 16) + Math.random() * 8;
+      const radius = (isHeavy ? 2.8 : 1.8) + Math.random() * 1.2;
+      const alpha = isHeavy ? 0.25 : 0.16;
+
+      this.smokeParticles.push({
+        x: x + (Math.random() - 0.5) * (isHeavy ? 6 : 3),
+        y: y + (Math.random() - 0.5) * (isHeavy ? 6 : 3),
+        radius,
+        alpha,
+        maxAlpha: alpha,
+        vx: 0.02 + (Math.random() - 0.5) * 0.04,
+        vy: -0.015 - Math.random() * 0.03,
+        life: 0,
+        maxLife,
+      });
+    }
+  }
+
+  private lastEffectsTime = 0;
+
+  private updateAndRenderEffects(ctx: CanvasRenderingContext2D, state: SimulationState) {
+    // Advance particles in 60 fps "frames" of real time so lifetimes and drift match at any refresh rate
+    const nowMs = performance.now();
+    const step = this.lastEffectsTime ? Math.min(3, (nowMs - this.lastEffectsTime) / (1000 / 60)) : 1;
+    this.lastEffectsTime = nowMs;
+    if (state.isRunning) {
+      for (const unit of state.units) {
+        const isEngaging = unit.status === 'engaging' && unit.ammo !== undefined && unit.ammo > 0;
+        const isBombarding = unit.type === 'artillery' && unit.currentOrder?.status === 'executing' && unit.currentOrder.type === 'bombard' && unit.ammo !== undefined && unit.ammo > 0;
+
+        if (isEngaging || isBombarding) {
+          const isArtillery = unit.type === 'artillery';
+          const fireChance = (isBombarding ? 0.08 : isArtillery ? 0.05 : 0.15) * step;
+          
+          if (Math.random() < fireChance) {
+            // Weapon station coordinates along the unit's front rank
+            const w = (unit.width || 50) * 0.6;
+            const h = (unit.depth || 16) * 0.6;
+            const spread = (Math.random() - 0.5) * w;
+            const frontDist = h / 2 + 3;
+            
+            const px = unit.position.x + Math.cos(unit.heading) * frontDist - Math.sin(unit.heading) * spread;
+            const py = unit.position.y + Math.sin(unit.heading) * frontDist + Math.cos(unit.heading) * spread;
+
+            // 1. Realistic small muzzle smoke discharge
+            this.spawnSmoke(px, py, isArtillery ? 2 : 1, isArtillery);
+
+            // 2. Subtle micro muzzle flash spark (1-2 frames)
+            this.muzzleFlashes.push({
+              x: px,
+              y: py,
+              heading: unit.heading,
+              life: 0,
+              maxLife: 2,
+            });
+
+            // 3. Direct fire: Realistic small micro-tracers (no cartoon balls or parabolic arcs)
+            // (Bombardment is visualized cleanly at destination via renderArtilleryImpacts)
+            if (!isBombarding) {
+              if (isArtillery && unit.canisterActive) {
+                // Canister close defense: small fan of subtle micro-flechettes
+                for (let k = 0; k < 5; k++) {
+                  const spreadAngle = unit.heading + (Math.random() - 0.5) * 0.35;
+                  const speed = 9.5 + Math.random() * 2.0;
+                  this.visualProjectiles.push({
+                    x: px,
+                    y: py,
+                    vx: Math.cos(spreadAngle) * speed,
+                    vy: Math.sin(spreadAngle) * speed,
+                    life: 0,
+                    maxLife: 6,
+                    isArtillery: true,
+                    isCanister: true,
+                  });
+                }
+              } else if (isArtillery) {
+                // Artillery direct roundshot fire: solid, high-velocity cannon projectile (never musket bullets!)
+                const spreadAngle = unit.heading + (Math.random() - 0.5) * 0.04;
+                const speed = 12.0 + Math.random() * 2.0;
+                this.visualProjectiles.push({
+                  x: px,
+                  y: py,
+                  vx: Math.cos(spreadAngle) * speed,
+                  vy: Math.sin(spreadAngle) * speed,
+                  life: 0,
+                  maxLife: 9,
+                  isArtillery: true,
+                  isCanister: false,
+                });
+              } else {
+                // Musket volley / direct small arms fire: subtle, razor-thin micro-tracer line
+                const spreadAngle = unit.heading + (Math.random() - 0.5) * 0.10;
+                const speed = 8.5 + Math.random() * 2.0;
+                this.visualProjectiles.push({
+                  x: px,
+                  y: py,
+                  vx: Math.cos(spreadAngle) * speed,
+                  vy: Math.sin(spreadAngle) * speed,
+                  life: 0,
+                  maxLife: 8,
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    ctx.save();
+
+    // 1. Subtle, realistic micro muzzle flash sparks
+    for (let i = this.muzzleFlashes.length - 1; i >= 0; i--) {
+      const mf = this.muzzleFlashes[i];
+      mf.life += step;
+      if (mf.life >= mf.maxLife) {
+        this.muzzleFlashes.splice(i, 1);
+        continue;
+      }
+      const alpha = 1 - mf.life / mf.maxLife;
+      ctx.save();
+      ctx.translate(mf.x, mf.y);
+      ctx.rotate(mf.heading);
+      ctx.strokeStyle = `rgba(254, 240, 138, ${0.85 * alpha})`;
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(3.5, 0);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // 2. Realistic small direct-fire micro-tracers (razor-thin, fast line ticks - no large balls or circles!)
+    for (let i = this.visualProjectiles.length - 1; i >= 0; i--) {
+      const p = this.visualProjectiles[i];
+      p.life += step;
+      p.x += p.vx * step;
+      p.y += p.vy * step;
+
+      if (p.life >= p.maxLife) {
+        this.visualProjectiles.splice(i, 1);
+        continue;
+      }
+
+      const alpha = Math.max(0, 0.75 * (1 - p.life / p.maxLife));
+      ctx.beginPath();
+      if (p.isArtillery && !p.isCanister) {
+        // Solid cannon roundshot tracer: longer, heavier stroke
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x - p.vx * 0.65, p.y - p.vy * 0.65);
+        ctx.strokeStyle = `rgba(254, 215, 170, ${alpha * 1.1})`;
+        ctx.lineWidth = 2.0;
+      } else if (p.isCanister) {
+        // Canister flechette / pellet spark
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x - p.vx * 0.35, p.y - p.vy * 0.35);
+        ctx.strokeStyle = `rgba(251, 191, 36, ${alpha})`;
+        ctx.lineWidth = 1.1;
+      } else {
+        // Musket bullet line
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x - p.vx * 0.4, p.y - p.vy * 0.4);
+        ctx.strokeStyle = `rgba(254, 240, 138, ${alpha})`;
+        ctx.lineWidth = 0.75;
+      }
+      ctx.stroke();
+    }
+
+    // 3. Gunpowder Smoke Puffs Drifting with Wind
+    for (let i = this.smokeParticles.length - 1; i >= 0; i--) {
+      const p = this.smokeParticles[i];
+      p.life += step;
+      p.x += p.vx * step;
+      p.y += p.vy * step;
+      p.radius += 0.06 * step;
+      p.alpha = p.maxAlpha * (1 - p.life / p.maxLife);
+
+      if (p.life >= p.maxLife) {
+        this.smokeParticles.splice(i, 1);
+        continue;
+      }
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(212, 212, 216, ${p.alpha})`;
+      ctx.fill();
+    }
+
     ctx.restore();
   }
 
