@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BattleEngine, SimulationState } from '../engine/simulation';
+import { BattleEngine, SimulationState, BASE_TIME_COMPRESSION } from '../engine/simulation';
 import { ChevronDown, Pause, Play, Reset } from './glyphs';
 import { REALISTIC_AUSTERLITZ_SCENARIO } from '../data/austerlitzScenario';
 import { sounds } from '../engine/soundEffects';
@@ -200,20 +200,21 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
             <span className={cx(ui.fieldValue, 'text-[12px] font-semibold px-2')}>{clock}</span>
           </div>
 
-          <div className={ui.group} title="Simulation speed">
-            {[0.5, 1, 2, 5].map((s) => {
-              const isActive = Math.abs(state.speedMultiplier - s) < 0.05;
+          <div className={ui.group} title="Time compression (1× is real time)">
+            {[1, 10, 30, 60].map((c) => {
+              const isActive = Math.abs(state.speedMultiplier * BASE_TIME_COMPRESSION - c) < 0.5;
               return (
                 <button
-                  key={s}
+                  key={c}
                   type="button"
                   onClick={() => {
-                    engine.setSpeedMultiplier(s);
+                    engine.setSpeedMultiplier(c / BASE_TIME_COMPRESSION);
                     try { sounds.playClick(); } catch {}
                   }}
                   className={cx(ui.groupItem, ui.mono, isActive && ui.groupItemActive)}
+                  title={c === 1 ? 'Real time' : `${c}× real time`}
                 >
-                  {s}×
+                  {c}×
                 </button>
               );
             })}

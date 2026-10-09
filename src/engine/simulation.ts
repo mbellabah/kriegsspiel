@@ -59,6 +59,12 @@ export interface SimulationState {
   autoGeneralEnabled?: boolean;
 }
 
+/**
+ * At speedMultiplier 1 the engine runs at 30x real time (1 real second = 30 battle seconds);
+ * all rates are tuned to that. The UI presents true time compression: compression = multiplier x 30.
+ */
+export const BASE_TIME_COMPRESSION = 30;
+
 export class BattleEngine {
   private scenario: Scenario;
   private state: SimulationState;
@@ -169,7 +175,7 @@ export class BattleEngine {
       playerFaction: 'french',
       timeMinutes: this.scenario.initialTimeMinutes,
       isRunning: false,
-      speedMultiplier: 1,
+      speedMultiplier: 10 / BASE_TIME_COMPRESSION, // 10x real time
       isHistoricalMode: true,
       isFullHistoricalReplay: false,
       wargameSymbology: 'nato', // Standard NATO Wargaming Symbology by default
@@ -2174,9 +2180,11 @@ export class BattleEngine {
       const terrainMod = this.getTerrainSpeedModifier(unit.position, unit.heading);
       const formationSpeedMod = unit.formation === 'column' ? 1.25 : unit.formation === 'square' ? 0.3 : 0.85;
 
-      // Authentic Napoleonic march velocities (tuned so 0.5x is a smooth, perceptible slow-motion march)
-      // Cavalry ~6.5 px/s, artillery ~2.6 px/s, headquarters ~5.0 px/s, infantry ~3.8 px/s
-      let baseVelocity = unit.type === 'cavalry' ? 6.5 : unit.type === 'artillery' ? 2.6 : unit.type === 'headquarters' ? 5.0 : 3.8;
+      // Period march rates in battle time (column, unit.speed 1.0): infantry ~3.2 km/h, cavalry at the
+      // walk ~6 km/h, foot artillery ~3.6 km/h, horse artillery with the cavalry, staff ~3.8 km/h
+      const isHorseArtillery = unit.type === 'artillery' && /horse/i.test(unit.name);
+      let baseVelocity =
+        unit.type === 'cavalry' || isHorseArtillery ? 6.5 : unit.type === 'artillery' ? 4.3 : unit.type === 'headquarters' ? 5.0 : 3.8;
 
       // Forced march bonus (+45% speed)
       const isForcedMarch = !!(order.isForcedMarch || unit.isForcedMarch);
@@ -2184,10 +2192,11 @@ export class BattleEngine {
         baseVelocity *= 1.45;
       }
 
-      // Final bayonet/saber charge acceleration when charging or within close proximity of target
+      // Final bayonet/saber charge acceleration when charging or within close proximity of target.
+      // Infantry goes to the pas de charge (~4.6 km/h); cavalry closes at a gallop (~18 km/h).
       if (order.type === 'charge' || (order.type === 'assault' && dist < 50)) {
         unit.status = 'charging';
-        baseVelocity *= 1.45;
+        baseVelocity *= unit.type === 'cavalry' ? 3 : 1.45;
       } else if (unit.status !== 'entrenching' && unit.status !== 'melee') {
         unit.status = 'marching';
       }
