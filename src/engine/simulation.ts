@@ -1,4 +1,4 @@
-import { Unit, ManeuverOrder, Scenario, TerrainFeature, CombatLogEntry, BattleStateSnapshot, HistoricalEvent, HistoricalDispatch, Vector2D, OperationalGraphic, ActiveEngagement, TargetReferencePoint, SectorForceRatios, WargameSymbology, TacticalObjective, Formation, EnemyIntel, CampaignEra, OrderCondition, OrderSource, ContactType, SitrepNotification, ERA_WEAPON_PROFILES } from '../types/game';
+import { Unit, ManeuverOrder, Scenario, TerrainFeature, CombatLogEntry, BattleStateSnapshot, HistoricalEvent, HistoricalDispatch, Vector2D, OperationalGraphic, ActiveEngagement, TargetReferencePoint, SectorForceRatios, WargameSymbology, TacticalObjective, Formation, EnemyIntel, FireKind, IncomingFire, FireSituation, CampaignEra, OrderCondition, OrderSource, ContactType, SitrepNotification, ERA_WEAPON_PROFILES } from '../types/game';
 import { toMgrs } from './grid';
 import { AUSTERLITZ_CONTROL_MEASURES } from '../data/controlMeasures';
 import { sounds } from './soundEffects';
@@ -974,6 +974,7 @@ export class BattleEngine {
   }
 
   public resetBattle() {
+    this.clearTransientTracking();
     this.state = this.createInitialState();
     this.saveSnapshot();
     this.notify();
@@ -1534,9 +1535,7 @@ export class BattleEngine {
    */
   public scrubToTime(targetMinutes: number) {
     if (targetMinutes >= this.state.timeMinutes) return; // the future has not been played yet
-    this.squareFrom.clear();
-    this.columnFireSince.clear();
-    this.awaitingAmmo.clear();
+    this.clearTransientTracking();
     // The enemy picture belongs to the timeline being discarded; it rebuilds from the next observation
     this.state.enemyIntel = {};
     const restorable = this.state.snapshots.filter((snap) => snap.timeMinutes <= targetMinutes);
@@ -1661,6 +1660,12 @@ export class BattleEngine {
         this.updateObjectiveControl();
         this.state.sectorForceRatios = this.computeSectorRatios(this.state.units, this.state.playerFaction);
       }
+    }
+
+    // 3.9 Once a battle minute, sample losses and ammunition for the inspector's rates
+    if (this.state.timeMinutes - this.lastLossSampleAt >= 1) {
+      this.lastLossSampleAt = this.state.timeMinutes;
+      this.sampleLosses();
     }
 
     // 4. Save periodic snapshots (approx every 8 battle minutes)
@@ -2680,6 +2685,7 @@ export class BattleEngine {
               }
 
               target.casualtiesTaken += finalDamage;
+              this.noteIncoming(target, arty, 'bombardment', finalDamage);
               target.suppression = Math.min(100, (target.suppression || 0) + damage * (isGrandBatteryConvergence ? 0.45 : 0.25));
               target.morale = Math.max(0, target.morale - (finalDamage / target.initialStrength) * (isGrandBatteryConvergence ? 110 : 75));
 
@@ -2779,7 +2785,7 @@ export class BattleEngine {
               const d = Math.hypot(target.position.x - skip1X, target.position.y - skip1Y);
               if (d <= 22) {
                 const distRatio = Math.min(1, d / 22);
-                let damage = (arty.firepower * 0.65 * 0.60) * Math.pow(1 - distRatio, 1.5);
+                let damage = (arty.firepower * 0.08 * Math.max(0.25, arty.strength / 18) * 0.60) * Math.pow(1 - distRatio, 1.5);
                 // Column formation vulnerability: solid ball bowling through ranks
                 if (target.formation === 'column') {
                   damage *= 1.65;
@@ -2789,6 +2795,7 @@ export class BattleEngine {
 
                 target.strength = Math.max(0, target.strength - finalDamage);
                 target.casualtiesTaken += finalDamage;
+                this.noteIncoming(target, arty, 'bombardment', finalDamage);
                 target.suppression = Math.min(100, (target.suppression || 0) + damage * 0.20);
                 target.morale = Math.max(0, target.morale - (finalDamage / target.initialStrength) * 60);
 
@@ -2829,7 +2836,7 @@ export class BattleEngine {
                 const d = Math.hypot(target.position.x - skip2X, target.position.y - skip2Y);
                 if (d <= 16) {
                   const distRatio = Math.min(1, d / 16);
-                  let damage = (arty.firepower * 0.65 * 0.35) * Math.pow(1 - distRatio, 1.5);
+                  let damage = (arty.firepower * 0.08 * Math.max(0.25, arty.strength / 18) * 0.35) * Math.pow(1 - distRatio, 1.5);
                   if (target.formation === 'column') {
                     damage *= 1.65;
                   }
@@ -2838,6 +2845,7 @@ export class BattleEngine {
 
                   target.strength = Math.max(0, target.strength - finalDamage);
                   target.casualtiesTaken += finalDamage;
+                  this.noteIncoming(target, arty, 'bombardment', finalDamage);
                   target.suppression = Math.min(100, (target.suppression || 0) + damage * 0.15);
                   target.morale = Math.max(0, target.morale - (finalDamage / target.initialStrength) * 45);
 
@@ -3846,6 +3854,84 @@ export class BattleEngine {
     if (!current || dist < current.dist) this.primaryTargets.set(unit.id, { target: enemy, dist });
   }
 
+  /** Per-unit bookkeeping that is not part of the saved state; dropped on rewind and reset. */
+  private clearTransientTracking() {
+    this.squareFrom.clear();
+    this.columnFireSince.clear();
+    this.awaitingAmmo.clear();
+    this.incomingFire.clear();
+    this.lossSamples.clear();
+    this.lastLossSampleAt = -Infinity;
+  }
+
+  // Who is firing on each unit (keyed by source and kind), and a rolling sample of its losses
+  private incomingFire = new Map<string, Map<string, IncomingFire>>();
+  private lossSamples = new Map<string, { t: number; lost: number; strength: number; ammo: number }[]>();
+  private lastLossSampleAt = -Infinity;
+
+  private noteIncoming(target: Unit, source: Unit, kind: FireKind, casualties: number) {
+    if (target.faction === source.faction || casualties <= 0) return;
+    let bySource = this.incomingFire.get(target.id);
+    if (!bySource) {
+      bySource = new Map();
+      this.incomingFire.set(target.id, bySource);
+    }
+    const now = this.state.timeMinutes;
+    const key = `${source.id}:${kind}`;
+    const spell = bySource.get(key);
+    // A pause of more than a few minutes starts a new spell of fire
+    if (spell && now - spell.lastAt <= 5) {
+      spell.lastAt = now;
+      spell.casualties += casualties;
+    } else {
+      bySource.set(key, { sourceId: source.id, kind, since: now, lastAt: now, casualties });
+    }
+  }
+
+  private sampleLosses() {
+    const now = this.state.timeMinutes;
+    for (const u of this.state.units) {
+      if (u.status === 'shattered') {
+        this.lossSamples.delete(u.id);
+        continue;
+      }
+      const samples = this.lossSamples.get(u.id) || [];
+      samples.push({ t: now, lost: u.casualtiesTaken, strength: u.strength, ammo: u.ammo });
+      while (samples.length > 0 && samples[0].t < now - 12) samples.shift();
+      this.lossSamples.set(u.id, samples);
+    }
+  }
+
+  /** Fire currently received by a unit (hits in the last two battle minutes) and its rates of loss. */
+  public getFireSituation(unitId: string): FireSituation {
+    const unit = this.state.units.find((u) => u.id === unitId);
+    const now = this.state.timeMinutes;
+    const empty: FireSituation = { incoming: [], lossesPerHour: 0, ammoPercentPerHour: 0, minutesToHalfStrength: null, minutesToNoAmmo: null };
+    if (!unit) return empty;
+
+    const incoming = [...(this.incomingFire.get(unitId)?.values() ?? [])]
+      .filter((f) => now - f.lastAt <= 2)
+      .sort((a, b) => b.casualties - a.casualties);
+
+    // Rates over the last ten battle minutes (or as much of them as has been sampled)
+    const samples = this.lossSamples.get(unitId) ?? [];
+    const from = samples.find((s) => s.t >= now - 10);
+    const dt = from ? now - from.t : 0;
+    if (!from || dt < 1) return { ...empty, incoming };
+
+    const lossesPerHour = Math.max(0, ((unit.casualtiesTaken - from.lost) / dt) * 60);
+    const strengthPerMinute = (from.strength - unit.strength) / dt;
+    const ammoPerMinute = (from.ammo - unit.ammo) / dt;
+    const halfStrength = unit.initialStrength * 0.5;
+    return {
+      incoming,
+      lossesPerHour,
+      ammoPercentPerHour: Math.max(0, (ammoPerMinute * 60 * 100) / Math.max(1, unit.maxAmmo)),
+      minutesToHalfStrength: strengthPerMinute > 0 && unit.strength > halfStrength ? (unit.strength - halfStrength) / strengthPerMinute : null,
+      minutesToNoAmmo: ammoPerMinute > 0 && unit.ammo > 0 ? unit.ammo / ammoPerMinute : null,
+    };
+  }
+
   // Units that ran dry stay out of the firefight until resupply brings real ammunition up; the
   // logistics trickle otherwise had them fire one round and fall silent again every pass
   private awaitingAmmo = new Set<string>();
@@ -4078,6 +4164,7 @@ export class BattleEngine {
           allied.strength = Math.max(0, allied.strength - effectiveDamage);
           french.kills += damage;
           allied.casualtiesTaken += damage;
+          this.noteIncoming(allied, french, isFrenchMelee ? 'melee' : french.type === 'artillery' ? 'artillery' : 'musketry', damage);
           this.state.alliedLosses += damage;
 
           // Units break mainly on losses (a battalion rarely stood past a quarter of its men down);
@@ -4152,6 +4239,7 @@ export class BattleEngine {
         french.strength = Math.max(0, french.strength - effectiveDamage);
         allied.kills += damage;
         french.casualtiesTaken += damage;
+        this.noteIncoming(french, allied, isAlliedMelee ? 'melee' : allied.type === 'artillery' ? 'artillery' : 'musketry', damage);
         this.state.frenchLosses += damage;
 
         // Same morale model as above: losses dominate, the continuous drain is the strain of close action

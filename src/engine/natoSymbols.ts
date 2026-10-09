@@ -53,6 +53,8 @@ export function echelonFor(unit: Unit): string {
     return 'XXX';
   }
   if (/brigade/.test(n)) return 'X';
+  // "(2nd Div, IV Corps)" names the division's parent corps; it is still a division
+  if (/\bdiv\b|division/.test(unit.name.toLowerCase())) return 'XX';
   if (/corps\)/.test(unit.name.toLowerCase())) return 'XXX';
   return 'XX';
 }

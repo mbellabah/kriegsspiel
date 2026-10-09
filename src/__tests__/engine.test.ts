@@ -180,6 +180,26 @@ describe('enemy situation (fog of war)', () => {
   });
 });
 
+describe('fire situation (unit inspector)', () => {
+  it('reports who is firing on a unit, how, and how fast it is losing men', () => {
+    const { engine, state, runUntil } = createBattle();
+    const target = unit(engine, 'fr_vandamme');
+    const shooter = unit(engine, 'al_kollowrat');
+    shooter.position = { x: target.position.x + 80, y: target.position.y };
+    engine.setRunning(true);
+    runUntil(state.timeMinutes + 6);
+
+    const fire = engine.getFireSituation(target.id);
+    expect(fire.incoming.some((f) => f.sourceId === shooter.id && (f.kind === 'musketry' || f.kind === 'melee'))).toBe(true);
+    expect(fire.incoming.every((f) => f.casualties > 0)).toBe(true);
+    expect(fire.lossesPerHour).toBeGreaterThan(0);
+    expect(fire.minutesToHalfStrength).toBeGreaterThan(0);
+
+    engine.scrubToTime(state.timeMinutes - 1);
+    expect(engine.getFireSituation(target.id).incoming).toEqual([]);
+  });
+});
+
 describe('contact reports', () => {
   it('does not identify an enemy that fog of war has not identified', () => {
     const { engine, state } = createBattle();

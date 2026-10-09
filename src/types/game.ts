@@ -196,6 +196,29 @@ export interface OperationalGraphic {
   rightUnit?: string;
 }
 
+/** How a unit is being hit: musketry, close combat, direct artillery fire, or indirect bombardment. */
+export type FireKind = 'musketry' | 'melee' | 'artillery' | 'bombardment';
+
+/** One enemy unit currently firing on (or fighting) a unit. */
+export interface IncomingFire {
+  sourceId: string;
+  kind: FireKind;
+  /** Battle minutes: start of this spell of fire and the last hit. */
+  since: number;
+  lastAt: number;
+  casualties: number;
+}
+
+/** What the unit inspector shows about fire received and how fast the unit is being used up. */
+export interface FireSituation {
+  incoming: IncomingFire[];
+  /** Rates over the last few battle minutes (casualties are men, also for batteries' crews). */
+  lossesPerHour: number;
+  ammoPercentPerHour: number;
+  minutesToHalfStrength: number | null;
+  minutesToNoAmmo: number | null;
+}
+
 /** Last known picture of an enemy formation (fog of war). Positions go stale when contact is lost. */
 export interface EnemyIntel {
   unitId: string;

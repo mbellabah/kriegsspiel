@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Unit, ERA_WEAPON_PROFILES } from '../types/game';
+import { Unit, FireKind, ERA_WEAPON_PROFILES } from '../types/game';
 import { BattleEngine } from '../engine/simulation';
 import { X } from './glyphs';
 import { ui, cx } from './ui';
@@ -38,6 +38,22 @@ const ORDER_LABEL: Record<string, string> = {
   entrench: 'Entrench',
   suppress: 'Suppress',
   volley: 'Volley',
+};
+
+const FIRE_LABEL: Record<FireKind, string> = {
+  musketry: 'Musketry',
+  melee: 'Melee',
+  artillery: 'Artillery, direct',
+  bombardment: 'Bombardment',
+};
+
+/** Round a projection the way a staff officer would state it: 5-minute steps, then quarter hours. */
+const roughMinutes = (m: number) => {
+  if (m < 60) return `~${Math.max(5, Math.round(m / 5) * 5)} min`;
+  const q = Math.round(m / 15) * 15;
+  const h = Math.floor(q / 60);
+  const rest = q % 60;
+  return `~${h} h${rest ? ` ${rest} min` : ''}`;
 };
 
 const Meter: React.FC<{ label: string; value: string; ratio: number; tone?: 'normal' | 'warn' | 'bad' }> = ({
@@ -140,7 +156,20 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
   const order = unit.currentOrder;
   const minutesToArrival = order?.dispatchArrivalTime !== undefined ? Math.max(0, Math.ceil(order.dispatchArrivalTime - state.timeMinutes)) : 0;
 
+  // Fire received and how fast the unit is being used up
+  const fire = engine.getFireSituation(unit.id);
+  const kinds = new Set(fire.incoming.map((f) => f.kind));
+  const sourceName = (id: string) => {
+    const src = state.units.find((u) => u.id === id);
+    if (!src) return 'Unknown';
+    const hidden = state.fogOfWarEnabled && src.faction !== state.playerFaction && src.detectionState !== 'identified';
+    return hidden ? 'Unidentified enemy' : designationFor(src);
+  };
+
   const alerts: { text: string; tone: 'warn' | 'bad' }[] = [];
+  if (kinds.has('melee')) alerts.push({ text: 'In close combat', tone: 'bad' });
+  if (kinds.has('bombardment')) alerts.push({ text: 'Under bombardment', tone: 'bad' });
+  if (kinds.has('musketry') || kinds.has('artillery')) alerts.push({ text: kinds.has('artillery') ? 'Under direct fire, artillery' : 'Under musketry fire', tone: 'warn' });
   if (unit.isEncircled) alerts.push({ text: 'Isolated: line of supply cut', tone: 'bad' });
   if (unit.ammo <= 0) alerts.push({ text: `Out of ammunition: ${eraProfile.meleeOnlyNoun.toLowerCase()}`, tone: 'bad' });
   if (unit.gunsDisabled && unit.gunsDisabled > 0) alerts.push({ text: `${unit.gunsDisabled} guns disabled`, tone: 'warn' });
@@ -300,6 +329,35 @@ export const UnitDossier: React.FC<UnitDossierProps> = ({
             </div>
           ))}
         </div>
+
+        <Section title="Fire">
+          {fire.incoming.length === 0 ? (
+            <div className="text-[11px] text-stone-500 py-[2px]">Not under fire</div>
+          ) : (
+            fire.incoming.slice(0, 4).map((f) => (
+              <div key={`${f.sourceId}:${f.kind}`} className="grid grid-cols-[84px_1fr_auto] items-baseline gap-2 py-[2px]">
+                <span className={cx('text-[11px]', f.kind === 'bombardment' || f.kind === 'melee' ? 'text-[#8f1d22]' : 'text-[#92400e]')}>{FIRE_LABEL[f.kind]}</span>
+                <span className="text-[11px] text-stone-900 truncate">{sourceName(f.sourceId)}</span>
+                <span className={cx(ui.mono, 'text-[11px] text-stone-600 text-right')}>
+                  {isPlayerUnit ? `−${Math.round(f.casualties).toLocaleString()} · ` : ''}
+                  {Math.max(1, Math.round(state.timeMinutes - f.since))} min
+                </span>
+              </div>
+            ))
+          )}
+          {isPlayerUnit && (fire.lossesPerHour >= 1 || fire.ammoPercentPerHour >= 1) && (
+            <div className="mt-1">
+              <Row label="Loss rate">{`${(Math.round(fire.lossesPerHour / 10) * 10).toLocaleString()} men / h`}</Row>
+              {fire.ammoPercentPerHour >= 1 && <Row label="Ammunition use">{`${Math.round(fire.ammoPercentPerHour)}% / h`}</Row>}
+              {fire.minutesToHalfStrength !== null && fire.minutesToHalfStrength < 600 && (
+                <Row label="Half strength">{`in ${roughMinutes(fire.minutesToHalfStrength)}`}</Row>
+              )}
+              {fire.minutesToNoAmmo !== null && fire.minutesToNoAmmo < 600 && (
+                <Row label="Out of ammunition">{`in ${roughMinutes(fire.minutesToNoAmmo)}`}</Row>
+              )}
+            </div>
+          )}
+        </Section>
 
         <Section title="Condition">
           <Meter
