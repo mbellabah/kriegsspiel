@@ -1,7 +1,6 @@
 import { Unit, Vector2D, ManeuverOrder, Formation, OrderCondition, TargetReferencePoint } from '../types/game';
 import { PLACE_NAMES } from '../data/gazetteer';
 import { normalizeGridRefs, parseMgrs } from '../engine/grid';
-import { useState, useEffect } from 'react';
 import {
   parseCompassDirection,
   headingToBearing,
@@ -30,7 +29,13 @@ export interface TacticalDispatchContext {
 }
 
 /** Raised when an order cannot be attributed or understood; the message is shown to the player. */
-export class DispatchError extends Error {}
+export type DispatchErrorCode = 'unknown_recipient' | 'no_recipient' | 'unclear' | 'no_battery';
+
+export class DispatchError extends Error {
+  constructor(message: string, public code: DispatchErrorCode = 'unclear') {
+    super(message);
+  }
+}
 
 function nearestBattery(units: Unit[], target: Vector2D): Unit | undefined {
   let best: Unit | undefined;
@@ -57,7 +62,11 @@ export interface ParsedDispatchResult {
   acknowledgment: string;
   delayMinutes: number;
   modelUsed: string;
-  confidence: 'llm' | 'rule_fallback';
+  confidence: 'rule' | 'model_rewrite';
+  /** When the language model rephrased the order before parsing, the phrasing it produced. */
+  interpretedAs?: string;
+  /** Set when the parser had to guess; the language model is asked for a cleaner reading. */
+  uncertainty?: string;
   isSmokeMission?: boolean;
   isTrpFire?: boolean;
   trpCode?: string;
@@ -86,17 +95,14 @@ export interface ParsedDispatchResult {
   isSkirmishScreen?: boolean;
 }
 
-export interface OllamaConnectionStatus {
-  online: boolean | null; // null = checking, true = detected & ready, false = offline
-  model: string;
-  endpoint: string;
-  availableModels: string[];
-}
 
-type StatusListener = (status: OllamaConnectionStatus) => void;
 
 const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434';
-const DEFAULT_MODEL = 'gemma4:e2b';
+const DEFAULT_MODEL = 'gemma4:latest';
+// Small instruction models are enough for rephrasing; the first one installed is used
+// Measured on the rewrite task (M3, 24 GB): gemma4 8B 7/8 at ~1.3 s; e2b 6/8 at ~0.7 s; 12B too slow (4.5 s+)
+const PREFERRED_MODELS = ['gemma4:e4b', 'gemma4:latest', 'gemma4:e2b', 'gemma3:4b', 'qwen2.5:3b', 'llama3.2:3b', 'gemma3:1b'];
+const MODEL_KEEP_ALIVE = '30m';
 
 /**
  * Normalizes unicode diacritics / accents (e.g. Bessières -> Bessieres, Étienne -> Etienne)
@@ -210,6 +216,38 @@ export function extractCoordinates(text: string, trps?: TargetReferencePoint[]):
 /**
  * Converts battle minutes from 07:00 AM into human-readable 12-hour military clock string
  */
+const HOUR_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+};
+
+/**
+ * Spelled-out clock times after a time preposition become HH:MM ("until eleven" -> "until 11:00",
+ * "at half past eight" -> "at 08:30", "by noon" -> "by 12:00"). The battle runs 07:00-16:00, so
+ * one to six o'clock are afternoon hours unless "in the morning"/"am" is given.
+ */
+export function normalizeTimeWords(text: string): string {
+  const words = Object.keys(HOUR_WORDS).join('|');
+  const re = new RegExp(
+    `\\b(until|till|til|at|by|before|after|from)\\s+(?:(half\\s+past|quarter\\s+past|quarter\\s+to)\\s+)?(${words}|noon|midday)(?:\\s+o'?clock)?(\\s+(?:in\\s+the\\s+morning|am|a\\.m\\.|pm|p\\.m\\.|in\\s+the\\s+afternoon))?\\b(?=\\s*(?:[,.;:!?)]|$)|\\s+(?:then|and|or|to|at|on|in|before|after|with|while|unless|if|hold|attack|advance|march|move|form|fire)\\b)`,
+    'gi'
+  );
+  return text.replace(re, (_m, prep: string, frac: string | undefined, word: string, ampm: string | undefined) => {
+    const w = word.toLowerCase();
+    let hour = w === 'noon' || w === 'midday' ? 12 : HOUR_WORDS[w];
+    const am = !!ampm && /morning|a\.?m/i.test(ampm);
+    if (!am && hour <= 6) hour += 12;
+    let minute = 0;
+    const f = (frac || '').toLowerCase().replace(/\s+/g, ' ');
+    if (f === 'half past') minute = 30;
+    else if (f === 'quarter past') minute = 15;
+    else if (f === 'quarter to') {
+      hour -= 1;
+      minute = 45;
+    }
+    return `${prep} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  });
+}
+
 export function formatBattleClock(minutesFromStart: number): string {
   const baseHour = 7;
   const totalMins = Math.floor(baseHour * 60 + minutesFromStart);
@@ -569,413 +607,174 @@ export function parseChainedDirective(
 }
 
 export class LLMDispatchService {
-  private endpoint: string;
-  private model: string;
-  private isOllamaOnline: boolean | null = null;
-  private availableModels: string[] = [];
+  private endpoint = DEFAULT_OLLAMA_ENDPOINT;
+  private model = DEFAULT_MODEL;
+  private online: boolean | null = null;
   private lastCheckTime = 0;
-  private listeners: StatusListener[] = [];
-  private pollingTimer: ReturnType<typeof setInterval> | null = null;
+  private warmed = false;
 
-  constructor(endpoint = DEFAULT_OLLAMA_ENDPOINT, model = DEFAULT_MODEL) {
-    this.endpoint = endpoint;
-    this.model = model;
-  }
-
-  public getStatus(): OllamaConnectionStatus {
-    return {
-      online: this.isOllamaOnline,
-      model: this.model,
-      endpoint: this.endpoint,
-      availableModels: this.availableModels,
-    };
-  }
-
-  public subscribe(listener: StatusListener): () => void {
-    this.listeners.push(listener);
-    listener(this.getStatus());
-    return () => {
-      this.listeners = this.listeners.filter((l) => l !== listener);
-    };
-  }
-
-  private notify() {
-    const status = this.getStatus();
-    for (const listener of this.listeners) {
-      try {
-        listener(status);
-      } catch (err) {
-        console.error('[LLMDispatchService] Listener error:', err);
-      }
+  /** The local model is a fallback, on by default; set localStorage "dispatch.localModel" = "0" to disable. */
+  private modelEnabled(): boolean {
+    try {
+      return !(typeof localStorage?.getItem === 'function' && localStorage.getItem('dispatch.localModel') === '0');
+    } catch {
+      return true;
     }
   }
 
-  public startAutoPolling(intervalMs = 4000) {
-    if (this.pollingTimer !== null) return;
-    this.checkConnection(true);
-    this.pollingTimer = setInterval(() => {
-      this.checkConnection(true);
-    }, intervalMs);
-  }
-
-  public stopAutoPolling() {
-    if (this.pollingTimer !== null) {
-      clearInterval(this.pollingTimer);
-      this.pollingTimer = null;
-    }
-  }
-
-  public setEndpoint(endpoint: string) {
-    this.endpoint = endpoint.replace(/\/+$/, '');
-    this.isOllamaOnline = null;
-    this.checkConnection(true);
-  }
-
-  public setModel(model: string) {
-    this.model = model;
-    this.notify();
-  }
-
-  public getEndpoint() {
-    return this.endpoint;
-  }
-
-  public getModel() {
-    return this.model;
-  }
-
-  /**
-   * Probes localhost:11434/api/tags to detect if a local Ollama daemon is active
-   */
+  /** Detects Ollama (cached for 30 s) and picks a small instruction model from what is installed. */
   public async checkConnection(force = false): Promise<boolean> {
     const now = Date.now();
-    if (!force && this.isOllamaOnline !== null && now - this.lastCheckTime < 4000) {
-      return !!this.isOllamaOnline;
-    }
-
+    if (!force && this.online !== null && now - this.lastCheckTime < 30000) return this.online;
     this.lastCheckTime = now;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1200);
-
     try {
-      const res = await fetch(`${this.endpoint}/api/tags`, {
-        method: 'GET',
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const data = await res.json();
-        const models = Array.isArray(data?.models)
-          ? data.models.map((m: { name: string }) => m.name)
-          : [];
-        this.availableModels = models;
-        const wasOnline = this.isOllamaOnline;
-        this.isOllamaOnline = true;
-        if (wasOnline !== true) {
-          console.log(`[DispatchService] Session active at ${this.endpoint}. Models:`, models);
-          this.notify();
-        }
-        return true;
-      } else {
-        const wasOnline = this.isOllamaOnline;
-        this.isOllamaOnline = false;
-        if (wasOnline !== false) this.notify();
-        return false;
-      }
-    } catch {
-      clearTimeout(timeoutId);
-      const wasOnline = this.isOllamaOnline;
-      this.isOllamaOnline = false;
-      if (wasOnline !== false) this.notify();
-      return false;
-    }
-  }
-
-  /**
-   * Main dispatch entry point with tactical awareness of places, landmarks, friendly units and enemy contacts
-   */
-  public async processDispatch(
-    originalText: string,
-    context: TacticalDispatchContext
-  ): Promise<ParsedDispatchResult> {
-    // MGRS references ("XQ 1834 5172") become map coordinates before any parsing
-    const rawText = normalizeGridRefs(originalText);
-
-    // The deterministic staff parser is authoritative: it is instant and always resolves real units
-    // and places. A local Ollama model is opt-in (localStorage "dispatch.localModel" = "1"); in testing
-    // small models were slow (8-10 s) and returned unit names instead of IDs and invented coordinates.
-    let modelOptIn = false;
-    try {
-      modelOptIn = typeof localStorage?.getItem === 'function' && localStorage.getItem('dispatch.localModel') === '1';
-    } catch {
-      modelOptIn = false; // storage unavailable (private mode, non-browser runtime)
-    }
-    if (modelOptIn && (await this.checkConnection())) {
+      const res = await fetch(`${this.endpoint}/api/tags`, { signal: AbortSignal.timeout(800) });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json();
+      const installed: string[] = Array.isArray(data?.models) ? data.models.map((m: { name: string }) => m.name) : [];
+      let override: string | null = null;
       try {
-        const ollamaResult = await this.queryOllama(rawText, context);
-        if (ollamaResult) {
-          return ollamaResult;
-        }
-      } catch (err) {
-        console.warn('[Dispatch] Local engine query failed, engaging tactical staff parser:', err);
+        override = typeof localStorage?.getItem === 'function' ? localStorage.getItem('dispatch.model') : null;
+      } catch {
+        override = null;
       }
+      this.model =
+        (override && installed.includes(override) && override) ||
+        PREFERRED_MODELS.find((m) => installed.includes(m)) ||
+        installed[0] ||
+        DEFAULT_MODEL;
+      this.online = installed.length > 0;
+    } catch {
+      this.online = false;
     }
-
-    // High-fidelity rule-based tactical fallback
-    return this.parseWithRuleEngine(rawText, context);
+    return this.online;
   }
 
-  /**
-   * Query local AI /api/chat with a calibrated military staff officer system prompt
-   */
-  private async queryOllama(
-    rawText: string,
-    context: TacticalDispatchContext
-  ): Promise<ParsedDispatchResult | null> {
-    const unitsBrief = context.playerUnits.map((u) => {
-      let sector = 'Central Heights';
-      if (u.position.y < 450) sector = 'Northern Flank';
-      else if (u.position.y >= 850) sector = 'Southern Flank';
-      else if (u.position.x < 1100) sector = 'Western Valley / HQ';
-
-      return {
-        id: u.id,
-        commander: u.commander,
-        unitName: u.name,
-        type: u.type,
-        formation: u.formation,
-        strength: u.strength,
-        position: { x: Math.round(u.position.x), y: Math.round(u.position.y) },
-        sector,
-        status: u.status,
-      };
-    });
-
-    const landmarksBrief = context.landmarks.map((l) => ({
-      name: l.name,
-      type: l.type || 'landmark',
-      elevation: l.elevation ? `${l.elevation}m` : undefined,
-      sector: l.sector || (l.position.y < 450 ? 'North' : l.position.y >= 850 ? 'South' : 'Center'),
-      position: { x: Math.round(l.position.x), y: Math.round(l.position.y) },
-    }));
-
-    // Realistic reconnaissance reports: troop types, approximate positions, and estimated strengths
-    const enemyContactsBrief = context.enemyUnits
-      .filter((u) => u.status !== 'shattered' && u.strength > 0)
-      .map((u) => {
-        let sector = 'Central Heights (Pratzen)';
-        if (u.position.y < 450) sector = 'Northern Flank (near Santon / Road)';
-        else if (u.position.y >= 850) sector = 'Southern Flank (near Sokolnitz / Telnitz)';
-        else if (u.position.x > 1400) sector = 'Central Plateau (Pratzen / Staré Vinohrady)';
-
-        const approxStrength = Math.round(u.strength / 250) * 250;
-        const typeStr = u.type === 'artillery' ? 'Artillery Battery' : u.type === 'cavalry' ? 'Cavalry' : 'Infantry';
-        const contactDesc = `Hostile ${typeStr} (~${approxStrength} men)`;
-
-        return {
-          contactId: u.id,
-          report: contactDesc,
-          type: u.type,
-          formation: u.formation,
-          position: { x: Math.round(u.position.x), y: Math.round(u.position.y) },
-          sector,
-          status: u.status,
-        };
-      });
-
-    const systemPrompt = `You are the Imperial Chief of Staff coordinating tactical maneuvers on the Austerlitz 1805 battlefield (Map dimensions: 2400x1500).
-Your duty is to translate operational dispatches from the commanding general into structured tactical orders for your field commanders.
-Be honest, realistic, concise, and professional.
-THINKING MODE: OFF. Do NOT output <think> tags, reasoning thoughts, explanations, or markdown fences. Output strictly raw JSON.
-
-1. CURRENT FRIENDLY UNITS & COMMANDERS:
-${JSON.stringify(unitsBrief)}
-
-2. KEY GEOGRAPHICAL LANDMARKS & SECTORS:
-${JSON.stringify(landmarksBrief)}
-
-3. SCOUT RECONNAISSANCE - ENEMY POSITIONS & CONTACTS:
-(Note: Real reconnaissance provides troop types, approximate positions, and estimated strengths rather than formal enemy regiment names)
-${JSON.stringify(enemyContactsBrief)}
-
-OPERATIONAL RULES:
-1. The addressee at the beginning of the dispatch (e.g. "@Oudinot ...", "@d'Aboville ...", "@V Corps ...", "Davout, ...") is ALWAYS the recipient. Prepositional mentions later in the message (e.g. "to relieve the V Corps", "support Murat") indicate objectives or allies, NOT the recipient.
-2. Determine orderType: 'assault' (advance/attack), 'charge' (bayonet charge/sabre charge), 'hold' (defend position), 'bombard' (artillery Call-For-Fire/bombardment), 'entrench' (dig in), 'retreat' (withdraw), 'march' (reposition).
-3. If user mentions "bombard", "fire", "barrage", "shell", "strike", "battery", or if an artillery battery is ordered to engage/attack, set orderType to "bombard" and targetFormation to "unlimbered".
-4. If user mentions "bayonets", "charge", "melee", or "storm", use orderType: "charge" and targetFormation: "column".
-5. Determine target coordinates {x, y}:
-   - If explicit coordinates are specified (e.g. "(1420, 680)", "1420, 680", "coords 1500 700"): targetCoords MUST be { "x": 1420, "y": 680 }.
-   - If holding/defending/entrenching at a landmark (e.g. "hold Santon Hill"), targetCoords MUST be that landmark's coordinates, ignoring descriptions of enemy movements (e.g. "enemies converging due East").
-   - If targeting an enemy (e.g. "attack the enemy on Pratzen", "intercept hostile forces in Sokolnitz", "charge the enemy cavalry in the north"): identify the corresponding enemy contact from the recon list and use its position {x, y}.
-   - If a landmark is named with towards/to (e.g. "march towards Bosenitz", "advance to Pratzen"): use that landmark's coordinates.
-   - If another friendly general/unit is named to reinforce/support (e.g. "reinforce Murat", "support Davout"): use that friendly commander's current coordinates.
-   - NEVER set targetCoords to the recipient unit's own current position.
-   - If no destination is named: advance 160 units along current heading.
-6. Create a concise, realistic military acknowledgment: "[ACK] <CommanderName>: Understood. <Action brief>."
-7. Respond with ONLY valid JSON with keys:
-{
-  "recipientUnitId": string,
-  "orderType": string,
-  "targetCoords": { "x": number, "y": number },
-  "targetFormation": "column" | "line" | "square" | "unlimbered" | null,
-  "ackMessage": string,
-  "delayMinutes": number
-}`;
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-    const response = await fetch(`${this.endpoint}/api/chat`, {
+  /** Loads the model into memory ahead of use (a cold load takes several seconds). */
+  public async warmUp(): Promise<void> {
+    if (this.warmed || !this.modelEnabled() || !(await this.checkConnection())) return;
+    this.warmed = true;
+    fetch(`${this.endpoint}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: this.model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: rawText },
-        ],
-        stream: false,
-        format: 'json',
-        think: false, // Disables thinking tokens in models
-        options: {
-          temperature: 0.1,
-          num_predict: 256,
-        },
-      }),
+      body: JSON.stringify({ model: this.model, keep_alive: MODEL_KEEP_ALIVE }),
+    }).catch(() => {
+      this.warmed = false;
     });
-    clearTimeout(timeoutId);
-
-    if (!response.ok) return null;
-
-    const data = await response.json();
-    let content = data?.message?.content;
-    if (!content) return null;
-
-    // Strip any thinking tags if the model outputs them despite instructions
-    content = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-
-    // Extract JSON object bounds
-    const firstBrace = content.indexOf('{');
-    const lastBrace = content.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
-      content = content.substring(firstBrace, lastBrace + 1);
-    }
-
-    const parsed = JSON.parse(content);
-    let unit = context.playerUnits.find((u) => u.id === parsed.recipientUnitId) || context.playerUnits[0];
-
-    // Check if user requested artillery bombardment: ensure an artillery unit is selected if possible
-    const isBombardmentIntent =
-      rawText.toLowerCase().includes('bombard') ||
-      rawText.toLowerCase().includes('barrage') ||
-      rawText.toLowerCase().includes('shell') ||
-      rawText.toLowerCase().includes('battery') ||
-      rawText.toLowerCase().includes('cannon') ||
-      unit.type === 'artillery';
-
-    if (isBombardmentIntent && unit.type !== 'artillery') {
-      const arty = context.playerUnits.find((u) => u.type === 'artillery' && u.status !== 'shattered');
-      if (arty) unit = arty;
-    }
-
-    // Safeguard: exact user coordinate extraction takes precedence over any LLM rounding
-    const explicitUserCoords = extractCoordinates(rawText, context.trps);
-    const destination = explicitUserCoords || parsed.targetCoords || { ...unit.position };
-
-    // Arc pathfinding if user requested curved sweep / wheeling
-    const arcAnalysis = extractArcOptions(rawText, unit.position, destination, context.landmarks);
-    let waypoints: Vector2D[] = [];
-    let curveControl: Vector2D | undefined = undefined;
-    let isArcManeuver = false;
-    let arcDescription = '';
-
-    if (arcAnalysis.hasArc) {
-      const arcResult = generateArcPath(unit.position, destination, arcAnalysis.options);
-      if (arcResult.isArc) {
-        waypoints = arcResult.waypoints;
-        curveControl = arcResult.curveControl;
-        isArcManeuver = true;
-        arcDescription = arcResult.arcDescription || 'curved arc maneuver';
-      }
-    }
-
-    const orderType = (isBombardmentIntent && (parsed.orderType === 'assault' || parsed.orderType === 'march' || !parsed.orderType))
-      ? 'bombard'
-      : (['assault', 'charge', 'hold', 'bombard', 'entrench', 'retreat', 'march'].includes(parsed.orderType)
-        ? parsed.orderType
-        : 'assault') as ManeuverOrder['type'];
-
-    const targetFormation = orderType === 'bombard'
-      ? 'unlimbered'
-      : orderType === 'charge'
-      ? 'column'
-      : parsed.targetFormation;
-
-    // Compute delay based on distance from HQ
-    const hq = context.playerUnits.find((u) => u.type === 'headquarters') || context.playerUnits[0];
-    const distToUnit = Math.hypot(unit.position.x - hq.position.x, unit.position.y - hq.position.y);
-    const delayMinutes = Math.max(1.5, Math.round(distToUnit / 380));
-
-    const isForcedMarch = /\b(?:force|forced)\s+march\b|\bat\s+the\s+double\b|\bdouble\s+time\b|\bhaste\b|\bpas\s+de\s+charge\b/i.test(rawText);
-
-    // Apply temporal and condition parsing as reliable guarantees
-    const temporal = parseTemporalConstraints(rawText, context.currentTimeMinutes, delayMinutes);
-    const conditionInfo = parseConditionAndChaining(rawText, context.landmarks);
-
-    let chainedOrder: Omit<ManeuverOrder, 'id' | 'status'> | undefined = undefined;
-    if (conditionInfo.chainedClause) {
-      const chainedData = parseChainedDirective(conditionInfo.chainedClause, context, destination);
-      chainedOrder = {
-        unitId: unit.id,
-        type: chainedData.orderType,
-        destination: chainedData.destination,
-        waypoints: [],
-        targetFormation: chainedData.targetFormation,
-        plannedTime: temporal.endTime ?? temporal.startTime ?? context.currentTimeMinutes,
-      };
-    }
-
-    let ackMessage = parsed.ackMessage || `[ACK] ${unit.commander}: Received orders. Executing.`;
-    if (temporal.timingDescription && !ackMessage.includes(temporal.timingDescription)) {
-      ackMessage += ` [TIMING: ${temporal.timingDescription}]`;
-    }
-    if (conditionInfo.conditionDescription && !ackMessage.includes('CONTINGENCY')) {
-      ackMessage += ` [CONTINGENCY: ${conditionInfo.conditionDescription}]`;
-    }
-    if (chainedOrder && !ackMessage.includes('FOLLOW-UP')) {
-      ackMessage += ` [FOLLOW-UP: ${chainedOrder.type.toUpperCase()}]`;
-    }
-
-    return {
-      recipientUnitId: unit.id,
-      recipientName: unit.commander || unit.name,
-      orderType,
-      destination,
-      waypoints: waypoints.length > 0 ? waypoints : undefined,
-      curveControl,
-      targetFormation,
-      acknowledgment: ackMessage,
-      delayMinutes,
-      modelUsed: `Staff Dispatch (AI Engine)`,
-      confidence: 'llm',
-      isArcManeuver,
-      arcDescription: isArcManeuver ? arcDescription : undefined,
-      isForcedMarch,
-      startTime: temporal.startTime,
-      endTime: temporal.endTime,
-      durationMinutes: temporal.durationMinutes,
-      condition: conditionInfo.condition,
-      chainedOrder,
-      conditionDescription: conditionInfo.conditionDescription,
-      timingDescription: temporal.timingDescription,
-    };
   }
 
   /**
-   * Fast, reliable rule-based military NLP parser with deep positional and recon awareness
+   * The deterministic staff parser resolves every order. Only when it cannot (unknown or missing
+   * recipient, unrecognised wording) is a small local model asked to rephrase the order into the
+   * standard form, which is then parsed again. The model never chooses units or coordinates itself.
    */
+  public async processDispatch(originalText: string, context: TacticalDispatchContext): Promise<ParsedDispatchResult> {
+    // MGRS references ("XQ 1834 5172") become map coordinates and spelled-out times become HH:MM
+    const rawText = normalizeTimeWords(normalizeGridRefs(originalText));
+    try {
+      const result = this.parseWithRuleEngine(rawText, context);
+      if (!result.uncertainty || !this.modelEnabled() || !(await this.checkConnection())) return result;
+      const rewrite = await this.rewriteWithModel(originalText, context);
+      if (!rewrite) return result;
+      try {
+        const better = this.parseWithRuleEngine(normalizeTimeWords(normalizeGridRefs(rewrite)), context);
+        if (better.uncertainty) return result;
+        return {
+          ...better,
+          confidence: 'model_rewrite',
+          modelUsed: this.model,
+          interpretedAs: rewrite,
+          acknowledgment: `${better.acknowledgment} (Interpreted as "${rewrite}".)`,
+        };
+      } catch {
+        return result;
+      }
+    } catch (err) {
+      if (!(err instanceof DispatchError) || err.code === 'no_battery' || !this.modelEnabled()) throw err;
+      if (!(await this.checkConnection())) throw err;
+
+      const rewrite = await this.rewriteWithModel(originalText, context);
+      if (!rewrite) throw err;
+      try {
+        const result = this.parseWithRuleEngine(normalizeTimeWords(normalizeGridRefs(rewrite)), context);
+        return {
+          ...result,
+          confidence: 'model_rewrite',
+          modelUsed: this.model,
+          interpretedAs: rewrite,
+          acknowledgment: `${result.acknowledgment} (Interpreted as "${rewrite}".)`,
+        };
+      } catch {
+        throw new DispatchError(`${err.message} The order was read as "${rewrite}", which could not be resolved either.`, err.code);
+      }
+    }
+  }
+
+  /** Asks the model to restate a free-form order in the parser's grammar, using only real names. */
+  private async rewriteWithModel(text: string, context: TacticalDispatchContext): Promise<string | null> {
+    const units = context.playerUnits
+      .filter((u) => u.status !== 'shattered')
+      .map((u) => {
+        const surname = (u.commander.split(' ').pop() || u.commander).replace(/[’‘`]/g, "'");
+        const detail = (u.name.match(/\(([^)]*)\)/)?.[1] ?? u.corps).trim();
+        return `@${surname} = ${detail}, ${u.type}`;
+      });
+    const corps = Array.from(new Set(context.playerUnits.map((u) => u.corps.replace(/\s*\([^)]*\)/, ''))));
+    const places = Array.from(
+      new Set([...context.landmarks.map((l) => l.name), ...PLACE_NAMES.map((p) => p.name)].map((n) => n.replace(/\s*\([^)]*\)/g, '').trim()))
+    );
+
+    const system = [
+      'You rewrite a commander\'s order into the standard staff format. Reply with JSON only.',
+      'Format: @<unit> <action> [<place>] [until HH:MM | at HH:MM] [, if <condition>, <action>] [then <action> <place>]',
+      'Actions: advance to, march to, forced march to, attack, charge, take, hold, entrench at, withdraw to, fire on, lay smoke on, counter-battery, form line, form column, form square.',
+      'Use only the unit and place names listed below, spelled exactly. Keep times, grid references (e.g. XQ 2285 5110) and coordinates unchanged.',
+      'If the order addresses no unit, start with the action and no @unit.',
+      'If the order names a unit that is not listed, or cannot be expressed in this format, return {"order": "", "understood": false}. Never substitute a different unit.',
+      `Units: ${units.join('; ')}`,
+      `Corps: ${corps.join('; ')}`,
+      `Places: ${places.join(', ')}`,
+      'Examples:',
+      'Order: "get the grenadiers up onto the vineyard hill" -> {"order": "@Oudinot advance to Staré Vinohrady Hill", "understood": true}',
+      'Order: "Soult\'s boys should hit the plateau hard at half past eight" -> {"order": "@Soult attack Pratzen Heights at 08:30", "understood": true}',
+      'Order: "pull Caffarelli back behind the brook" -> {"order": "@Caffarelli withdraw to Schlappanitz", "understood": true}',
+      'Order: "Kellermann, charge!" -> {"order": "", "understood": false}',
+    ].join('\n');
+
+    try {
+      const res = await fetch(`${this.endpoint}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(this.warmed ? 8000 : 15000),
+        body: JSON.stringify({
+          model: this.model,
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: `Order: "${text}"` },
+          ],
+          stream: false,
+          think: false,
+          keep_alive: MODEL_KEEP_ALIVE,
+          format: {
+            type: 'object',
+            properties: { order: { type: 'string' }, understood: { type: 'boolean' } },
+            required: ['order', 'understood'],
+          },
+          options: { temperature: 0, num_predict: 60 },
+        }),
+      });
+      this.warmed = true;
+      if (!res.ok) return null;
+      const data = await res.json();
+      const parsed = JSON.parse(String(data?.message?.content ?? '{}'));
+      const order = typeof parsed.order === 'string' ? parsed.order.trim() : '';
+      if (!parsed.understood || !order || order.toLowerCase() === text.trim().toLowerCase()) return null;
+      return order;
+    } catch {
+      return null; // offline, timed out or malformed: fall back to the parser's own message
+    }
+  }
+
   private parseWithRuleEngine(
     rawText: string,
     context: TacticalDispatchContext
@@ -996,11 +795,11 @@ OPERATIONAL RULES:
     // additionally excludes contingencies ("if attacked, form square") so they don't read as actions.
     const chainedAt = /\b(?:then|afterwards|subsequently|followed\s+by)\b/i.exec(normText);
     const primaryText = chainedAt ? normText.slice(0, chainedAt.index) : normText;
-    const condAt = /\b(?:if|when|should|once|in\s+case|unless)\b/i.exec(primaryText);
+    const condAt = /\b(?:if|when|once|in\s+case|unless)\b/i.exec(primaryText);
     const actionText = condAt ? primaryText.slice(0, condAt.index) : primaryText;
     const actionLower = actionText.toLowerCase();
     const plainPrimary = stripDiacritics(primaryText);
-    const hasAction = /\b(advance|march|move|go|proceed|push|attack|assault|charge|storm|take|seize|secure|occupy|capture|hold|defend|stand|entrench|dig|retreat|withdraw|retire|fall\s+back|pull\s+back|reinforce|support|join|relieve|bombard|fire|shell|barrage|smoke|suppress|volley|screen|deploy|cross|wheel|engage|intercept|counter[- ]?battery)\b/i.test(actionText);
+    const hasAction = /\b(advance|march|move|go|proceed|push|attack|assault|charge|storm|take|seize|secure|occupy|capture|hold|defend|stand|hang\s+on|stay|remain|entrench|dig|retreat|withdraw|retire|fall\s+back|pull\s+back|reinforce|support|join|relieve|bombard|fire|shell|barrage|smoke|suppress|volley|screen|deploy|cross|wheel|engage|intercept|counter[- ]?battery)\b/i.test(actionText);
     const isPureContingency = !!condAt && !hasAction;
 
     // Check if user specifically ordered artillery bombardment or battery fire
@@ -1053,14 +852,21 @@ OPERATIONAL RULES:
       }
     }
 
+    // How the recipient was identified; a loose substring or keyword match is a guess worth double-checking
+    let recipientGuessed = false;
+
     // Priority 1b: Check if leading addressee is an individual Commander or Regiment (with diacritic stripping)
-    const normLead = leadToken ? stripDiacritics(leadToken) : null;
+    const LEAD_STOPWORDS = /^(?:the|a|an|i|we|you|our|my|have|get|send|let|make|tell|order|all|now|then|please|and|if|when|once|move|advance|attack|hold|march|fire|charge)$/;
+    const normLead = leadToken && !(leadPlain && !leadAt && !rankMatch && !leadComma && LEAD_STOPWORDS.test(leadToken))
+      ? stripDiacritics(leadToken)
+      : null;
     if (!isCorpsOrder && normLead) {
       // Step 1: Exact commander surname or exact full commander name
       for (const u of context.playerUnits) {
         const cleanCmd = stripDiacritics(u.commander.replace(/[’‘`]/g, "'").toLowerCase());
         const surname = stripDiacritics((u.commander.split(' ').pop() || u.commander).replace(/[’‘`]/g, "'").toLowerCase());
-        if (normLead === surname || cleanCmd === normLead) {
+        // "@Friant forced march ..." captures "friant forced": an @-address starting with the surname is exact
+        if (normLead === surname || cleanCmd === normLead || (leadAt && normLead.startsWith(`${surname} `))) {
           matchedUnit = u;
           break;
         }
@@ -1076,37 +882,48 @@ OPERATIONAL RULES:
           }
         }
       }
-      // Step 3: Word-subset match on unit name (e.g. "guard battery" in "guard horse battery")
+      // Step 3: Best word overlap with the unit's name (e.g. "whoever commands the Guard battery"
+      // -> GUARD HORSE BATTERY); needs two shared words and a unique best match
       if (!matchedUnit) {
-        const leadWords = normLead.split(/\s+/).filter((w) => w.length > 2);
+        const filler = /^(?:the|and|who|whoever|commands|command|commanding|your|our|with|from|for|men|troops|lads)$/;
+        const leadWords = normLead.split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !filler.test(w));
         if (leadWords.length > 1) {
+          let best: Unit | null = null;
+          let bestScore = 1;
+          let tie = false;
           for (const u of context.playerUnits) {
-            const fullName = stripDiacritics(u.name.replace(/[’‘`]/g, "'").toLowerCase().trim());
-            const nameWords = fullName.split(/[^a-z0-9]+/);
-            if (leadWords.every((w) => nameWords.includes(w))) {
-              matchedUnit = u;
-              break;
+            const nameWords = stripDiacritics(u.name.replace(/[’‘`]/g, "'").toLowerCase()).split(/[^a-z0-9]+/);
+            const score = leadWords.filter((w) => nameWords.includes(w) || (w === 'cavalry' && nameWords.includes('cav'))).length;
+            if (score > bestScore) {
+              best = u;
+              bestScore = score;
+              tie = false;
+            } else if (score === bestScore && best) {
+              tie = true;
             }
           }
+          if (best && !tie) matchedUnit = best;
         }
       }
-      // Step 4: Substring match on commander
-      if (!matchedUnit) {
+      // Step 4: Substring match on commander (only for tokens long enough to mean something)
+      if (!matchedUnit && normLead.length >= 4) {
         for (const u of context.playerUnits) {
           const cleanCmd = stripDiacritics(u.commander.replace(/[’‘`]/g, "'").toLowerCase());
           if (cleanCmd.includes(normLead)) {
             matchedUnit = u;
+            recipientGuessed = true;
             break;
           }
         }
       }
       // Step 5: Substring match on unit name
-      if (!matchedUnit) {
+      if (!matchedUnit && normLead.length >= 4) {
         for (const u of context.playerUnits) {
           const cleanName = stripDiacritics(u.name.replace(/\s*\([^)]*\)/g, '').replace(/[’‘`]/g, "'").toLowerCase().trim());
           const fullName = stripDiacritics(u.name.replace(/[’‘`]/g, "'").toLowerCase().trim());
           if (cleanName.includes(normLead) || normLead.includes(cleanName) || fullName.includes(normLead)) {
             matchedUnit = u;
+            recipientGuessed = true;
             break;
           }
         }
@@ -1119,6 +936,7 @@ OPERATIONAL RULES:
       if (cFound) {
         isCorpsOrder = true;
         matchedCorps = cFound;
+        recipientGuessed = !/\bcorps\b/i.test(normText); // "cavalry" alone is a guess, "IV Corps" is not
       }
     }
 
@@ -1137,6 +955,7 @@ OPERATIONAL RULES:
     // Fallback for bombardment commands without named unit: assign to active artillery
     if (!matchedUnit && !isCorpsOrder && isBombardmentKeyword) {
       matchedUnit = context.playerUnits.find((u) => u.type === 'artillery' && u.status !== 'shattered') || null;
+      recipientGuessed = !!matchedUnit;
     }
 
     // If Corps order confirmed, populate regiments and find headquarters
@@ -1160,14 +979,21 @@ OPERATIONAL RULES:
       }
     }
 
-    if (!matchedUnit && leadAt) {
-      throw new DispatchError(`No unit answers to "${leadAt[1].trim()}". Check the name in the ORBAT.`);
+    // An explicit addressee that matches nobody is refused, never reassigned ("@Ney ...", "Kellermann, charge!")
+    const namedLead =
+      leadAt?.[1] ?? (leadComma && /^[A-Z][\w'’-]*(?:\s+[A-Z][\w'’-]*){0,2}$/.test(leadComma[1].trim()) ? leadComma[1] : null);
+    if (!matchedUnit && namedLead) {
+      throw new DispatchError(`No unit answers to "${namedLead.trim()}". Check the name in the ORBAT.`, 'unknown_recipient');
     }
     if (!matchedUnit && context.defaultRecipientId) {
       matchedUnit = context.playerUnits.find((u) => u.id === context.defaultRecipientId) || null;
+      // The selection is only a safe default if the order doesn't name some other formation
+      if (/\b(guard|grenadiers?|cavalry|horse|dragoons|hussars|cuirassiers|chasseurs|batter(?:y|ies)|guns|artillery|corps|division|column|brigade)\b/i.test(actionText)) {
+        recipientGuessed = true;
+      }
     }
     if (!matchedUnit) {
-      throw new DispatchError('Address the order to a unit, e.g. "@Vandamme advance to Pratzen", or select a unit first.');
+      throw new DispatchError('Address the order to a unit, e.g. "@Vandamme advance to Pratzen", or select a unit first.', 'no_recipient');
     }
 
     // 2. Identify Target Location / Destination
@@ -1251,7 +1077,7 @@ OPERATIONAL RULES:
         }
       }
 
-      const isHoldOrder = isPureContingency || /\b(hold|defend|entrench|stand|dig\s*in)\b/i.test(actionLower);
+      const isHoldOrder = isPureContingency || /\b(hold|defend|entrench|stand|dig\s*in|hang\s+on|stay|remain)\b/i.test(actionLower);
 
       // If holding/defending at a landmark, destination IS the landmark itself!
       const isWithdrawal = /\b(retreat|withdraw|retire|fall\s+back|pull\s+back)\b/i.test(actionLower);
@@ -1393,6 +1219,14 @@ OPERATIONAL RULES:
           destinationName = 'designated sector';
         }
       }
+    }
+
+    const namesFormationOrFacing = /\b(?:form(?:ing)?|in(?:to)?)\s+(?:line|column|square)\b|\b(?:face|facing|limber|unlimber)\b/i.test(actionText);
+    if (!hasAction && !isPureContingency && !namesFormationOrFacing && destinationName === 'designated sector') {
+      throw new DispatchError(
+        'Could not make out the order. Use a verb and a place, e.g. "@Vandamme advance to Pratzen" or "@Legrand hold Sokolnitz".',
+        'unclear'
+      );
     }
 
     // 2e. Explicit Facing Command (e.g. "face East", "forming line facing South")
@@ -1553,7 +1387,7 @@ OPERATIONAL RULES:
           ? `Laying pre-registered artillery fire on ${trpCode} (${destinationName}) with pre-dialed elevation`
           : `Unlimbering guns and laying artillery bombardment on ${destinationName}`;
       }
-    } else if (primaryTextLower.includes('bayonet') || primaryTextLower.includes('charge') || primaryTextLower.includes('melee') || primaryTextLower.includes('storm')) {
+    } else if (/\b(bayonets?|charge|melee|storm)\b/.test(primaryTextLower)) {
       orderType = 'charge';
       formation = explicitFormation || 'column';
       actionDesc = `Advancing to assault ${destinationName}`;
@@ -1561,15 +1395,15 @@ OPERATIONAL RULES:
       orderType = 'assault';
       formation = explicitFormation || 'column';
       actionDesc = `Advancing to assault ${destinationName}`;
-    } else if (primaryTextLower.includes('reinforce') || primaryTextLower.includes('support') || primaryTextLower.includes('join')) {
+    } else if (/\b(reinforce|support|join)\b/.test(primaryTextLower)) {
       orderType = 'assault';
       formation = explicitFormation || 'column';
       actionDesc = `Marching in column to reinforce ${destinationName}`;
-    } else if (primaryTextLower.includes('hold') || primaryTextLower.includes('defend') || primaryTextLower.includes('stand')) {
+    } else if (/\b(hold|defend|stand|hang\s+on|stay|remain)\b/.test(primaryTextLower)) {
       orderType = 'hold';
       formation = explicitFormation || 'line';
       actionDesc = `Holding defensive position at ${destinationName}`;
-    } else if (primaryTextLower.includes('entrench') || primaryTextLower.includes('dig')) {
+    } else if (/\b(entrench|dig)\b/.test(primaryTextLower)) {
       orderType = 'entrench';
       formation = explicitFormation || 'line';
       actionDesc = `Constructing field fortifications at ${destinationName}`;
@@ -1585,7 +1419,7 @@ OPERATIONAL RULES:
 
     if (orderType === 'bombard' && matchedUnit.type !== 'artillery' && !supportingBatteryId) {
       const battery = nearestBattery(context.playerUnits, destination);
-      if (!battery) throw new DispatchError('No friendly battery is available to fire this mission.');
+      if (!battery) throw new DispatchError('No friendly battery is available to fire this mission.', 'no_battery');
       observerUnitId = matchedUnit.id;
       supportingBatteryId = battery.id;
       actionDesc += `, observed for ${battery.name}`;
@@ -1673,7 +1507,14 @@ OPERATIONAL RULES:
       acknowledgment: ackMessage,
       delayMinutes,
       modelUsed: isCorpsOrder ? 'Corps Headquarters Dispatch' : 'Staff Dispatch (HQ Protocol)',
-      confidence: 'rule_fallback',
+      confidence: 'rule',
+      uncertainty: recipientGuessed
+        ? 'recipient inferred from a keyword'
+        : !hasAction && !isPureContingency && !namesFormationOrFacing
+        ? 'no recognised action'
+        : isPureContingency && !conditionInfo.conditionDescription
+        ? 'contingency not understood'
+        : undefined,
       isSmokeMission: isSmoke,
       isTrpFire,
       trpCode,
@@ -1705,17 +1546,3 @@ OPERATIONAL RULES:
 }
 
 export const dispatchService = new LLMDispatchService();
-
-export function useOllamaStatus(): OllamaConnectionStatus {
-  const [status, setStatus] = useState<OllamaConnectionStatus>(() => dispatchService.getStatus());
-
-  useEffect(() => {
-    dispatchService.startAutoPolling(4000);
-    const unsubscribe = dispatchService.subscribe(setStatus);
-    return () => {
-      unsubscribe();
-    };
-  }, []);
-
-  return status;
-}

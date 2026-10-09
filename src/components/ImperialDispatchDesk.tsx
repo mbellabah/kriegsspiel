@@ -1657,7 +1657,11 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
                     }
                   }
                 }}
-                onFocus={() => setIsInputFocused(true)}
+                onFocus={() => {
+                  setIsInputFocused(true);
+                  // Load the fallback language model while the order is being written
+                  void dispatchService.warmUp();
+                }}
                 onBlur={() => setIsInputFocused(false)}
                 onKeyUp={(e) => {
                   e.stopPropagation();
