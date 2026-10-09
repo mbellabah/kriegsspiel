@@ -207,7 +207,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
                       <div className="flex items-center gap-1 min-w-0">
                         <span className="text-[10.5px] font-sans font-semibold text-neutral-500">{s.formattedTime}</span>
                         <span className={`px-1.5 py-0.2 text-[10px] font-semibold truncate ${badgeStyle}`}>
-                          {s.headline.replace('IN CONTACT: ', '')}
+                          {s.report ? (s.report.kind === 'SPOTREP' ? 'SPOTREP' : s.contactType === 'routing' ? 'STATUS · ROUTING' : 'STATUS · WAVERING') : s.headline.replace('IN CONTACT: ', '')}
                         </span>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
@@ -228,18 +228,30 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
                       </div>
                     </div>
 
-                  <div className="text-[10.5px] font-semibold text-black flex items-center justify-between mb-0.5">
-                    <span>{s.unitName}</span>
-                    <span className="text-[10.5px] font-sans text-neutral-500">{s.corps}</span>
-                  </div>
-
-                  <p className="text-[10.5px] text-neutral-700 mb-1 leading-snug">
-                    {s.message}
-                  </p>
+                  {s.report ? (
+                    <table className="w-full mb-1 text-[10.5px] leading-snug">
+                      <tbody>
+                        {s.report.lines.map(([label, value]) => (
+                          <tr key={label} className="align-top">
+                            <td className="w-[68px] pr-2 py-[1px] font-mono text-[10px] uppercase text-neutral-500">{label}</td>
+                            <td className="py-[1px] text-neutral-900">{value}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <>
+                      <div className="text-[10.5px] font-semibold text-black flex items-center justify-between mb-0.5">
+                        <span>{s.unitName}</span>
+                        <span className="text-[10.5px] font-sans text-neutral-500">{s.corps}</span>
+                      </div>
+                      <p className="text-[10.5px] text-neutral-700 mb-1 leading-snug">{s.message}</p>
+                    </>
+                  )}
 
                   <div className="flex items-center justify-between pt-1 border-t border-neutral-200 text-[10.5px] font-sans">
                     <span className="font-semibold text-neutral-600">
-                      STR: {s.strength.toLocaleString()} | MOR: {s.morale}%
+                      {s.report?.kind === 'SPOTREP' ? `Reported by ${s.unitName}` : `Strength ${s.strength.toLocaleString()} · cohesion ${s.morale}%`}
                     </span>
 
                     <button
@@ -253,8 +265,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
                       className="px-2 py-0.5 bg-[#23324a] hover:bg-[#2e4160] text-white text-[10.5px] font-semibold flex items-center gap-1 transition-transform cursor-pointer"
                       title="Center camera on this unit and select it"
                     >
-                      
-                      <span>LOCATE</span>
+                      <span>Locate</span>
                     </button>
                   </div>
                 </div>

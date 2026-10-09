@@ -413,7 +413,11 @@ export function parseConditionAndChaining(
   text: string,
   landmarks: TacticalLandmarkContext[]
 ): ParsedConditionAndChaining {
-  const norm = stripDiacritics(text);
+  // "if he is attacked" / "if they get outflanked" read the same as "if attacked" / "if outflanked"
+  const norm = stripDiacritics(text).replace(
+    /\b(if|when|once)\s+(?:he|she|they|it|we|you|(?:the\s+)?[a-z'’-]+)\s+(?:is|are|gets?|becomes?|has\s+been|have\s+been)\s+(attacked|outflanked|encircled|surrounded|flanked|engaged)\b/gi,
+    '$1 $2'
+  );
   const textLower = norm.toLowerCase();
 
   let condition: OrderCondition | undefined = undefined;
@@ -800,7 +804,13 @@ export class LLMDispatchService {
     const actionLower = actionText.toLowerCase();
     const plainPrimary = stripDiacritics(primaryText);
     const hasAction = /\b(advance|march|move|go|proceed|push|attack|assault|charge|storm|take|seize|secure|occupy|capture|hold|defend|stand|hang\s+on|stay|remain|entrench|dig|retreat|withdraw|retire|fall\s+back|pull\s+back|reinforce|support|join|relieve|bombard|fire|shell|barrage|smoke|suppress|volley|screen|deploy|cross|wheel|engage|intercept|counter[- ]?battery)\b/i.test(actionText);
-    const isPureContingency = !!condAt && !hasAction;
+    const conditionInfo = parseConditionAndChaining(normText, context.landmarks);
+    // "withdraw to Puntowitz if outflanked": a condition that closes the clause makes the preceding
+    // action the response to it, so the unit holds until the condition triggers
+    const trailingCondition =
+      !!condAt && !!conditionInfo.condition && !/[,;:]/.test(primaryText.slice(condAt.index)) &&
+      /\b(retreat|withdraw|retire|fall\s+back|pull\s+back|form\s+square|square|charge|counter[- ]?attack)\b/i.test(actionText);
+    const isPureContingency = (!!condAt && !hasAction) || trailingCondition;
 
     // Check if user specifically ordered artillery bombardment or battery fire
     const isBombardmentKeyword =
@@ -1268,8 +1278,6 @@ export class LLMDispatchService {
     const bearingDeg = headingToBearing(routeHeading);
     const cardinalInfo = getCardinalDirection(bearingDeg);
 
-    // Extract tactical condition and chained directive (e.g. "if attacked form square", "then assault Pratzen")
-    const conditionInfo = parseConditionAndChaining(normText, context.landmarks);
 
     const primaryTextLower = actionLower;
 

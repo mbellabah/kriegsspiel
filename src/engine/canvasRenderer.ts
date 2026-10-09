@@ -76,6 +76,8 @@ export class SandtableRenderer {
   public draggingTrpId: string | null = null;
   public targetingState: { active: boolean; batteryUnitId?: string; currentMousePos?: Vector2D } = { active: false };
   public showArtilleryKillzones: boolean = true;
+  public showLineOfSight: boolean = true;
+  private viewshed: { key: string; canvas: HTMLCanvasElement; x: number; y: number; r: number } | null = null;
   private _showTopography: boolean = true;
   public get showTopography(): boolean {
     return this._showTopography;
@@ -207,6 +209,9 @@ export class SandtableRenderer {
     if (drawingOrder) {
       this.renderDraftingArrow(ctx, drawingOrder);
     }
+
+    // 10.5 Line of sight from the selected unit (dead ground shaded)
+    if (this.showLineOfSight) this.renderLineOfSight(ctx, state);
 
     // 11. Weapon Range Rings (Musket & Artillery CFF) & Active Targeting Overlay
     this.renderWeaponRanges(ctx, state, hoveredUnitId);
@@ -2815,6 +2820,70 @@ export class SandtableRenderer {
     }
 
     ctx.drawImage(this.fowCanvas, 0, 0, 2400, 1500);
+  }
+
+  // Viewshed of the selected unit: points within its vision range that the terrain hides from it
+  // (same line-of-sight test as fog of war), drawn as shaded dead ground. Cached until the unit moves.
+  private renderLineOfSight(ctx: CanvasRenderingContext2D, state: SimulationState) {
+    if (!this.engine || !state.selectedUnitId) return;
+    const unit = state.units.find((u) => u.id === state.selectedUnitId);
+    if (!unit || unit.status === 'shattered' || unit.faction !== state.playerFaction) return;
+
+    const r = this.engine.getUnitVisionRadius(unit);
+    const key = `${unit.id}:${Math.round(unit.position.x / 4)}:${Math.round(unit.position.y / 4)}:${Math.round(r)}`;
+    if (!this.viewshed || this.viewshed.key !== key) {
+      const step = 8;
+      const n = Math.ceil((r * 2) / step);
+      const canvas = this.viewshed?.canvas ?? document.createElement('canvas');
+      canvas.width = n;
+      canvas.height = n;
+      const c = canvas.getContext('2d');
+      if (!c) return;
+      const img = c.createImageData(n, n);
+      const ox = unit.position.x - r;
+      const oy = unit.position.y - r;
+      for (let j = 0; j < n; j++) {
+        for (let i = 0; i < n; i++) {
+          const px = ox + (i + 0.5) * step;
+          const py = oy + (j + 0.5) * step;
+          const d = Math.hypot(px - unit.position.x, py - unit.position.y);
+          if (d > r || d < 50) continue;
+          if (this.engine.checkLineOfSight(unit.position, { x: px, y: py }).inDefilade) {
+            const o = (j * n + i) * 4;
+            img.data[o] = 70;
+            img.data[o + 1] = 66;
+            img.data[o + 2] = 80;
+            img.data[o + 3] = 95;
+          }
+        }
+      }
+      c.putImageData(img, 0, 0);
+      this.viewshed = { key, canvas, x: ox, y: oy, r };
+    }
+
+    const v = this.viewshed;
+    const hair = 1 / this.zoom;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(unit.position.x, unit.position.y, v.r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(v.canvas, v.x, v.y, v.r * 2, v.r * 2);
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(11, 94, 168, 0.55)';
+    ctx.lineWidth = hair;
+    ctx.setLineDash([6 * hair, 4 * hair]);
+    ctx.beginPath();
+    ctx.arc(unit.position.x, unit.position.y, v.r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = font(600, 7 * this.symbolScale());
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    haloText(ctx, `Observation ${Math.round(v.r * 5).toLocaleString()} m · shaded: dead ground`, unit.position.x, unit.position.y - v.r - 3 * hair, '#0b5ea8', 2.6 * this.symbolScale());
+    ctx.restore();
   }
 
   // Counter-scale for upright symbols & labels: legible when zoomed out, restrained when zoomed in

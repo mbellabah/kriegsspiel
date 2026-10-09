@@ -1,9 +1,10 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { ui, cx } from './ui';
 import { toMgrs } from '../engine/grid';
+import { hoverStore, useHover } from './hoverStore';
 import { BattleEngine, SimulationState } from '../engine/simulation';
 import { SandtableRenderer, Camera, DraftingManeuver } from '../engine/canvasRenderer';
-import { Unit, Vector2D, TroopFilterType, TargetReferencePoint } from '../types/game';
+import { Unit, Vector2D, TroopFilterType, TargetReferencePoint, TerrainFeature } from '../types/game';
 import { sounds } from '../engine/soundEffects';
 import { Play, X } from './glyphs';
 import { TacticalContextMenu } from './TacticalContextMenu';
@@ -14,6 +15,8 @@ interface SandtableCanvasProps {
   state: SimulationState;
   showRangeRings?: boolean;
   onToggleRangeRings?: () => void;
+  showLineOfSight?: boolean;
+  onToggleLineOfSight?: () => void;
   showCorpsOverlay?: boolean;
   onToggleCorpsOverlay?: () => void;
   hoveredCorps?: string | null;
@@ -35,6 +38,8 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
   state,
   showRangeRings = true,
   onToggleRangeRings,
+  showLineOfSight = true,
+  onToggleLineOfSight,
   showCorpsOverlay = false,
   onToggleCorpsOverlay,
   hoveredCorps = null,
@@ -95,8 +100,10 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
   } | null>(null);
 
   // Live mouse hover coordinates & screen position
-  const [hoverCoords, setHoverCoords] = useState<Vector2D | null>(null);
-  const [hoverScreenPos, setHoverScreenPos] = useState<{ x: number; y: number } | null>(null);
+  // Cursor position is kept in refs and the hover store (not React state) so mouse movement
+  // doesn't re-render this component; nearby TRP/landmark update only when they change.
+  const [nearbyTrpId, setNearbyTrpId] = useState<string | null>(null);
+  const [nearbyLandmarkId, setNearbyLandmarkId] = useState<string | null>(null);
 
   // Rubber-band box selection
   const [isBoxSelecting, setIsBoxSelecting] = useState(false);
@@ -157,9 +164,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
 
   // Quick cursor coordinate and orientation refs
   const hoverCoordsRef = useRef<Vector2D | null>(null);
-  hoverCoordsRef.current = hoverCoords;
   const hoverScreenPosRef = useRef<{ x: number; y: number } | null>(null);
-  hoverScreenPosRef.current = hoverScreenPos;
   const handleQuickCopyRef = useRef<(coords: Vector2D, screenPos: { x: number; y: number } | null, includeBearing?: boolean) => void>(() => {});
 
 
@@ -173,6 +178,8 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
 
   const showRangeRingsRef = useRef(showRangeRings);
   showRangeRingsRef.current = showRangeRings;
+  const showLineOfSightRef = useRef(showLineOfSight);
+  showLineOfSightRef.current = showLineOfSight;
 
   const activeFilterRef = useRef(activeFilter);
   activeFilterRef.current = activeFilter;
@@ -207,37 +214,19 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
 
   const rightClickDownPosRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Identify nearby pre-planned Target Reference Point within 35px of cursor (or currently dragging TRP)
+  // Nearby pre-planned Target Reference Point (or the one being dragged) and nearby landmark
   const nearbyTRP = useMemo(() => {
-    if (draggingTrpId && state.targetReferencePoints) {
-      return state.targetReferencePoints.find((t) => t.id === draggingTrpId) || null;
-    }
-    if (!hoverCoords || !state.targetReferencePoints) return null;
-    for (const trp of state.targetReferencePoints) {
-      const dist = Math.hypot(trp.position.x - hoverCoords.x, trp.position.y - hoverCoords.y);
-      if (dist <= 35) {
-        return trp;
-      }
-    }
-    return null;
-  }, [hoverCoords, state.targetReferencePoints, draggingTrpId]);
+    const id = draggingTrpId || nearbyTrpId;
+    return id ? state.targetReferencePoints?.find((t) => t.id === id) || null : null;
+  }, [nearbyTrpId, draggingTrpId, state.targetReferencePoints]);
 
   const nearbyTrpIdRef = useRef<string | null>(null);
   nearbyTrpIdRef.current = nearbyTRP?.id || null;
 
-  // Identify nearby strategic landmark or terrain feature within 80px of cursor
-  const nearbyLandmark = useMemo(() => {
-    if (!hoverCoords) return null;
-    for (const t of state.terrain) {
-      if (t.center && t.name) {
-        const dist = Math.hypot(t.center.x - hoverCoords.x, t.center.y - hoverCoords.y);
-        if (dist <= 80) {
-          return t;
-        }
-      }
-    }
-    return null;
-  }, [hoverCoords, state.terrain]);
+  const nearbyLandmark = useMemo(
+    () => (nearbyLandmarkId ? state.terrain.find((t) => t.id === nearbyLandmarkId) || null : null),
+    [nearbyLandmarkId, state.terrain]
+  );
 
   // Identify unit currently hovered by cursor
   const hoveredUnit = useMemo(() => {
@@ -334,6 +323,8 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
           }
         } else if (lowerKey === 'r') {
           onToggleRangeRings?.();
+        } else if (lowerKey === 'v') {
+          onToggleLineOfSight?.();
         } else if (lowerKey === 'c') {
           onToggleCorpsOverlay?.();
         } else if (lowerKey === 'k') {
@@ -536,6 +527,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
           const liveState = engine.getState();
           rendererRef.current.activeFilter = activeFilterRef.current || 'all';
           rendererRef.current.showRangeRings = !!showRangeRingsRef.current;
+          rendererRef.current.showLineOfSight = showLineOfSightRef.current;
           rendererRef.current.showArtilleryKillzones = liveState.showArtilleryKillzones !== false;
           rendererRef.current.showTopography = liveState.showTopography !== false;
           rendererRef.current.showCorpsOverlay = !!showCorpsOverlayRef.current;
@@ -895,9 +887,14 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
         const isActivelyPanning = isPanning ||
           keys['w'] || keys['s'] || keys['a'] || keys['d'] ||
           keys['arrowup'] || keys['arrowdown'] || keys['arrowleft'] || keys['arrowright'];
-        if (!isActivelyPanning) {
-          if (hoverCoordsRef.current) setHoverCoords(hoverCoordsRef.current);
-          if (hoverScreenPosRef.current) setHoverScreenPos(hoverScreenPosRef.current);
+        if (!isActivelyPanning && hoverCoordsRef.current) {
+          const at = hoverCoordsRef.current;
+          hoverStore.set({ coords: at, screen: hoverScreenPosRef.current });
+          const live = engine.getState();
+          const trp = live.targetReferencePoints?.find((t) => Math.hypot(t.position.x - at.x, t.position.y - at.y) <= 35);
+          setNearbyTrpId(trp ? trp.id : null);
+          const lm = live.terrain.find((t) => t.center && t.name && Math.hypot(t.center.x - at.x, t.center.y - at.y) <= 80);
+          setNearbyLandmarkId(lm ? lm.id : null);
         }
       });
     }
@@ -1137,8 +1134,10 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
   };
 
   const handleMouseLeave = () => {
-    setHoverCoords(null);
-    setHoverScreenPos(null);
+    hoverCoordsRef.current = null;
+    hoverStore.set({ coords: null, screen: null });
+    setNearbyTrpId(null);
+    setNearbyLandmarkId(null);
     setHoveredUnitId(null);
   };
 
@@ -1271,37 +1270,15 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
       )}
 
       {/* Hover tooltip for units, TRPs and landmarks */}
-      {hoverCoords && hoverScreenPos && !isBoxSelecting && !isPanning && (nearbyTRP || hoveredUnit || nearbyLandmark) && (
-        <div
-          className="fixed pointer-events-none z-30 bg-[#f7f5f0] border border-[#8f897e] shadow-[0_2px_8px_rgba(28,25,23,0.15)] text-stone-900 text-[10.5px] font-sans select-none"
-          style={{
-            left: Math.min(hoverScreenPos.x + 16, window.innerWidth - 280),
-            top: Math.min(hoverScreenPos.y + 16, window.innerHeight - 60),
-          }}
-        >
-          {nearbyTRP ? (
-            <div className="px-2 py-1">
-              <span className="font-mono font-semibold">{nearbyTRP.code}</span>
-              <span className="ml-1.5">{nearbyTRP.name}</span>
-              <div className="text-[10px] text-stone-500">{draggingTrpId ? 'Release to set' : 'Drag to move · right-click for options'}</div>
-            </div>
-          ) : hoveredUnit ? (
-            <div className="flex items-stretch">
-              <span className={`w-1 ${hoveredUnit.faction === state.playerFaction ? 'bg-[#0b5ea8]' : 'bg-[#c2272d]'}`} />
-              <div className="px-2 py-1">
-                <div className="font-semibold">{hoveredUnit.name}</div>
-                <div className="text-[10px] text-stone-500 font-mono uppercase">
-                  {hoveredUnit.type} · {hoveredUnit.strength.toLocaleString()} · {hoveredUnit.status}
-                </div>
-              </div>
-            </div>
-          ) : nearbyLandmark ? (
-            <div className="px-2 py-1">
-              <span className="font-semibold">{nearbyLandmark.name.replace(/\s*\([^)]*\)/g, '').trim()}</span>
-              <span className="ml-1.5 font-mono text-stone-500">{Math.round(engine.getElevation(hoverCoords))} m</span>
-            </div>
-          ) : null}
-        </div>
+      {!isBoxSelecting && !isPanning && (nearbyTRP || hoveredUnit || nearbyLandmark) && (
+        <HoverTooltip
+          engine={engine}
+          trp={nearbyTRP}
+          unit={hoveredUnit}
+          landmark={nearbyLandmark}
+          isDraggingTrp={!!draggingTrpId}
+          playerFaction={state.playerFaction}
+        />
       )}
 
       {/* Start card */}
@@ -1553,41 +1530,11 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
             </div>
           )}
 
-          {hoverCoords && (
-            <div className={cx(ui.field, 'hidden lg:flex h-5')}>
-              <span className={ui.fieldLabel}>Elev</span>
-              <span className={cx(ui.fieldValue, 'text-[10.5px]')}>{Math.round(engine.getElevation(hoverCoords))} m</span>
-            </div>
-          )}
-
-          <div className={cx(ui.field, 'h-5')}>
-            <span className={ui.fieldLabel}>Grid</span>
-            <span className={cx(ui.fieldValue, 'text-[10.5px] min-w-[96px]')}>
-              {hoverCoords ? toMgrs(hoverCoords) : 'XQ ---- ----'}
-            </span>
-            {hoverCoords && onPickCoordinates && isDispatchDeskOpen && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const clickedTrp = state.targetReferencePoints?.find(
-                    (t) => Math.hypot(t.position.x - hoverCoords.x, t.position.y - hoverCoords.y) <= 35
-                  );
-                  const finalCoords = clickedTrp
-                    ? { x: clickedTrp.position.x, y: clickedTrp.position.y }
-                    : { x: Math.round(hoverCoords.x), y: Math.round(hoverCoords.y) };
-                  onPickCoordinates(finalCoords);
-                  try {
-                    sounds.playDispatchStamp();
-                  } catch {}
-                }}
-                title="Insert grid into the current order"
-                className="h-full px-1.5 border-l border-[#b3ada2] text-[9px] font-bold uppercase bg-[#23324a] text-white hover:bg-[#2e4160] cursor-pointer"
-              >
-                To order
-              </button>
-            )}
-          </div>
+          <GridReadout
+            engine={engine}
+            trps={state.targetReferencePoints}
+            onPickCoordinates={isDispatchDeskOpen ? onPickCoordinates : undefined}
+          />
 
           <span className={cx(ui.divider, 'h-4 mx-0.5')} />
 
@@ -1627,3 +1574,90 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
     </div>
   );
 });
+
+// Subscribes to the hover store, so only this tooltip re-renders as the cursor moves
+const HoverTooltip: React.FC<{
+  engine: BattleEngine;
+  trp: TargetReferencePoint | null;
+  unit: Unit | null;
+  landmark: TerrainFeature | null;
+  isDraggingTrp: boolean;
+  playerFaction: string;
+}> = ({ engine, trp, unit, landmark, isDraggingTrp, playerFaction }) => {
+  const { coords, screen } = useHover();
+  if (!coords || !screen) return null;
+  return (
+    <div
+      className="fixed pointer-events-none z-30 bg-[#f7f5f0] border border-[#8f897e] shadow-[0_2px_8px_rgba(28,25,23,0.15)] text-stone-900 text-[10.5px] font-sans select-none"
+      style={{
+        left: Math.min(screen.x + 16, window.innerWidth - 280),
+        top: Math.min(screen.y + 16, window.innerHeight - 60),
+      }}
+    >
+      {trp ? (
+        <div className="px-2 py-1">
+          <span className="font-mono font-semibold">{trp.code}</span>
+          <span className="ml-1.5">{trp.name}</span>
+          <div className="text-[10px] text-stone-500">{isDraggingTrp ? 'Release to set' : 'Drag to move · right-click for options'}</div>
+        </div>
+      ) : unit ? (
+        <div className="flex items-stretch">
+          <span className={`w-1 ${unit.faction === playerFaction ? 'bg-[#0b5ea8]' : 'bg-[#c2272d]'}`} />
+          <div className="px-2 py-1">
+            <div className="font-semibold">{unit.detectionState === 'contact' && unit.faction !== playerFaction ? 'Unidentified contact' : unit.name}</div>
+            <div className="text-[10px] text-stone-500 font-mono uppercase">
+              {unit.detectionState === 'contact' && unit.faction !== playerFaction
+                ? `est. ${unit.estimatedStrength || 'unknown'}`
+                : `${unit.type} · ${unit.strength.toLocaleString()} · ${unit.status}`}
+            </div>
+          </div>
+        </div>
+      ) : landmark ? (
+        <div className="px-2 py-1">
+          <span className="font-semibold">{landmark.name.replace(/\s*\([^)]*\)/g, '').trim()}</span>
+          <span className="ml-1.5 font-mono text-stone-500">{Math.round(engine.getElevation(coords))} m</span>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+// Status-bar grid reference and elevation under the cursor
+const GridReadout: React.FC<{
+  engine: BattleEngine;
+  trps?: TargetReferencePoint[];
+  onPickCoordinates?: (coords: Vector2D) => void;
+}> = ({ engine, trps, onPickCoordinates }) => {
+  const { coords } = useHover();
+  return (
+    <>
+      {coords && (
+        <div className={cx(ui.field, 'hidden lg:flex h-5')}>
+          <span className={ui.fieldLabel}>Elev</span>
+          <span className={cx(ui.fieldValue, 'text-[10.5px]')}>{Math.round(engine.getElevation(coords))} m</span>
+        </div>
+      )}
+      <div className={cx(ui.field, 'h-5')}>
+        <span className={ui.fieldLabel}>Grid</span>
+        <span className={cx(ui.fieldValue, 'text-[10.5px] min-w-[96px]')}>{coords ? toMgrs(coords) : 'XQ ---- ----'}</span>
+        {coords && onPickCoordinates && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              const trp = trps?.find((t) => Math.hypot(t.position.x - coords.x, t.position.y - coords.y) <= 35);
+              onPickCoordinates(trp ? { ...trp.position } : { x: Math.round(coords.x), y: Math.round(coords.y) });
+              try {
+                sounds.playDispatchStamp();
+              } catch {}
+            }}
+            title="Insert grid into the current order"
+            className="h-full px-1.5 border-l border-[#b3ada2] text-[9px] font-bold uppercase bg-[#23324a] text-white hover:bg-[#2e4160] cursor-pointer"
+          >
+            To order
+          </button>
+        )}
+      </div>
+    </>
+  );
+};

@@ -12,6 +12,8 @@ interface WarRoomHUDProps {
   state: SimulationState;
   showRangeRings: boolean;
   onToggleRangeRings: () => void;
+  showLineOfSight: boolean;
+  onToggleLineOfSight: () => void;
   showCorpsOverlay?: boolean;
   onToggleCorpsOverlay?: () => void;
   activeFilter: TroopFilterType;
@@ -36,6 +38,8 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
   state,
   showRangeRings,
   onToggleRangeRings,
+  showLineOfSight,
+  onToggleLineOfSight,
   showCorpsOverlay = false,
   onToggleCorpsOverlay,
   activeFilter,
@@ -54,12 +58,12 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
 }) => {
   const [isLayersOpen, setIsLayersOpen] = useState(false);
   const [isRatiosOpen, setIsRatiosOpen] = useState(false);
+  const [rewindTarget, setRewindTarget] = useState<number | null>(null);
 
   const activeEngagementsCount = state.activeEngagements?.length || 0;
   const needsReinforcementsCount = state.activeEngagements?.filter((e) => e.needsReinforcements).length || 0;
   const unreadContactsCount = (state.sitrepNotifications || []).filter((s) => !s.read && !s.dismissed).length;
 
-  const currentFormattedTime = engine.formatTime(state.timeMinutes);
   const totalDuration = REALISTIC_AUSTERLITZ_SCENARIO.endTimeMinutes - REALISTIC_AUSTERLITZ_SCENARIO.initialTimeMinutes;
   const progressPct = Math.min(100, Math.max(0, (state.timeMinutes / totalDuration) * 100));
 
@@ -196,8 +200,64 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
             <span>{state.isRunning ? 'Pause' : 'Start'}</span>
           </button>
 
-          <div className={ui.field} title={currentFormattedTime}>
-            <span className={cx(ui.fieldValue, 'text-[12px] font-semibold px-2')}>{clock}</span>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setRewindTarget((v) => (v === null ? Math.floor(state.timeMinutes) : null))}
+              className={cx(ui.field, 'cursor-pointer hover:border-[#8f897e]', rewindTarget !== null && '!border-[#23324a]')}
+              title="Battle time · click to rewind"
+            >
+              <span className={cx(ui.fieldValue, 'text-[12px] font-semibold px-2')}>{clock}</span>
+            </button>
+            {rewindTarget !== null && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setRewindTarget(null)} />
+                <div className={cx(ui.popover, 'absolute left-0 top-full mt-1 z-50 w-72 p-2.5')}>
+                  <div className="flex items-baseline justify-between">
+                    <span className={ui.caption}>Rewind to</span>
+                    <span className={cx(ui.mono, 'text-[12px] font-semibold text-stone-900')}>{engine.formatTime(rewindTarget)}</span>
+                  </div>
+                  {(() => {
+                    const snaps = state.snapshots || [];
+                    const latest = snaps.length ? snaps[snaps.length - 1].timeMinutes : 0;
+                    // Snap the slider to the restore point that would actually be used
+                    const restorePoint = [...snaps].reverse().find((sn) => sn.timeMinutes <= rewindTarget)?.timeMinutes ?? 0;
+                    return (
+                      <>
+                        <input
+                          type="range"
+                          min={0}
+                          max={Math.max(1, Math.floor(state.timeMinutes))}
+                          value={rewindTarget}
+                          onChange={(e) => setRewindTarget(parseInt(e.target.value, 10))}
+                          className="w-full mt-2 h-1 bg-[#b3ada2] appearance-none cursor-pointer accent-[#23324a]"
+                        />
+                        <p className="mt-1.5 text-[10.5px] leading-snug text-stone-500">
+                          Restores the saved state at {engine.formatTime(restorePoint)} (saved every 8 minutes; latest{' '}
+                          {engine.formatTime(latest)}). Everything after is discarded.
+                        </p>
+                        <div className="mt-2 flex justify-end gap-1">
+                          <button type="button" className={ui.btn} onClick={() => setRewindTarget(null)}>
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            disabled={state.timeMinutes < 1}
+                            className={cx(ui.btn, ui.btnActive)}
+                            onClick={() => {
+                              engine.scrubToTime(rewindTarget);
+                              setRewindTarget(null);
+                            }}
+                          >
+                            Rewind
+                          </button>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </>
+            )}
           </div>
 
           <div className={ui.group} title="Time compression (1× is real time)">
@@ -328,6 +388,7 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
                   {checkRow('Fog of war', null, !!state.fogOfWarEnabled, () => engine.toggleFogOfWar())}
 
                   {menuHeader('Overlays')}
+                  {checkRow('Line of sight, selected unit', 'V', showLineOfSight, onToggleLineOfSight)}
                   {checkRow('Weapon ranges, all units', 'R', showRangeRings, onToggleRangeRings)}
                   {checkRow('Artillery target areas', 'K', !!state.showArtilleryKillzones, () => engine.toggleArtilleryKillzones())}
                   {onToggleCorpsOverlay && checkRow('Corps boundaries', 'C', showCorpsOverlay, onToggleCorpsOverlay)}

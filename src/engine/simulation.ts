@@ -186,7 +186,7 @@ export class BattleEngine {
       historicalDispatches: this.scenario.historicalDispatches ? JSON.parse(JSON.stringify(this.scenario.historicalDispatches)) : [],
       autoGeneralEnabled: false,
       units: initialUnits,
-      terrain: this.scenario.terrain,
+      terrain: [...this.scenario.terrain],
       activeOrders: [],
       frenchLosses: 0,
       alliedLosses: 0,
@@ -438,6 +438,59 @@ export class BattleEngine {
       message += ` ${details}`;
     }
 
+    // Enemy identity is only reported once identified (fog of war); otherwise the estimate
+    const enemyIdentified = !!enemy && (!this.state.fogOfWarEnabled || enemy.detectionState === 'identified');
+    if (enemy && !enemyIdentified) {
+      message = message.replace(enemyName + enemyCommander, 'unidentified enemy forces').replace(enemyName, 'unidentified enemy forces');
+    }
+    const hhmm = formattedTime.replace(/[^0-9]/g, '').slice(0, 4);
+    const typeWord: Record<Unit['type'], string> = {
+      infantry: 'infantry', guard: 'guard infantry', cavalry: 'cavalry', artillery: 'artillery', headquarters: 'staff and escort', supply: 'trains',
+    };
+    const echelonWord = (u: Unit) =>
+      u.type === 'artillery' ? 'battery' : u.type === 'headquarters' ? 'headquarters' : /brigade/i.test(u.name) ? 'brigade' : 'division';
+    const equipmentWord: Record<Unit['type'], string> = {
+      infantry: 'muskets, bayonets', guard: 'muskets, bayonets', cavalry: 'sabres, carbines', artillery: 'field guns', headquarters: '—', supply: 'wagons',
+    };
+    const report: SitrepNotification['report'] =
+      contactType === 'wavering' || contactType === 'routing'
+        ? {
+            kind: 'STATUS',
+            lines: [
+              ['Unit', unit.name],
+              ['Condition', contactType === 'routing' ? 'Broken, routing' : 'Wavering under fire'],
+              ['Strength', `${Math.round(unit.strength).toLocaleString()} (${Math.round((unit.strength / Math.max(1, unit.initialStrength)) * 100)}%)`],
+              ['Cohesion', `${Math.round(unit.morale)}%`],
+              ['Location', `${toMgrs(unit.position)} · ${sectorName}`],
+              ['Request', contactType === 'routing' ? 'Rally point and relief' : 'Reinforcement'],
+            ],
+          }
+        : {
+            kind: 'SPOTREP',
+            lines: [
+              [
+                'Size',
+                enemy
+                  ? enemyIdentified
+                    ? `~${(Math.round(enemy.strength / 100) * 100).toLocaleString()} ${typeWord[enemy.type]} (${echelonWord(enemy)})`
+                    : `${enemy.estimatedStrength || 'Unknown'} (not identified)`
+                  : 'Unknown',
+              ],
+              [
+                'Activity',
+                contactType === 'melee'
+                  ? `In melee with ${unit.name}`
+                  : contactType === 'artillery_bombardment'
+                  ? `Artillery fire on ${unit.name}`
+                  : `Engaging ${unit.name} with direct fire`,
+              ],
+              ['Location', `${toMgrs(enemy?.position ?? unit.position)} · ${sectorName}`],
+              ['Unit', enemyIdentified && enemy ? enemy.name : 'Not identified'],
+              ['Time', hhmm],
+              ['Equipment', enemy ? (enemyIdentified ? equipmentWord[enemy.type] : 'Not observed') : 'Not observed'],
+            ],
+          };
+
     const sitrep: SitrepNotification = {
       id: `sitrep_${unit.id}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       unitId: unit.id,
@@ -446,8 +499,8 @@ export class BattleEngine {
       corps: unit.corps,
       faction: unit.faction,
       contactType,
-      enemyUnitId: enemy?.id,
-      enemyUnitName: enemy?.name,
+      enemyUnitId: enemyIdentified ? enemy?.id : undefined,
+      enemyUnitName: enemyIdentified ? enemy?.name : undefined,
       position: { ...unit.position },
       sectorName,
       timestamp: nowMinutes,
@@ -459,6 +512,7 @@ export class BattleEngine {
       read: false,
       dismissed: false,
       createdAtWallMs: Date.now(),
+      report,
     };
 
     this.state.sitrepNotifications = [sitrep, ...(this.state.sitrepNotifications || [])].slice(0, 25);
@@ -1503,20 +1557,46 @@ export class BattleEngine {
   }
 
   // Scrubbing to specific time
+  /**
+   * Rewinds the battle to the latest snapshot at or before targetMinutes. The future beyond it is
+   * discarded (snapshots, craters, alerts, trenches), so play continues on a single timeline.
+   */
   public scrubToTime(targetMinutes: number) {
-    // Find closest snapshot <= targetMinutes
-    const validSnapshots = this.state.snapshots.filter((s) => s.timeMinutes <= targetMinutes);
-    if (validSnapshots.length > 0) {
-      const closest = validSnapshots[validSnapshots.length - 1];
-      this.state.timeMinutes = closest.timeMinutes;
-      this.state.units = JSON.parse(JSON.stringify(closest.units));
-      this.state.activeOrders = JSON.parse(JSON.stringify(closest.activeOrders));
-      this.state.frenchLosses = closest.frenchLosses;
-      this.state.alliedLosses = closest.alliedLosses;
-      this.state.combatLogs = JSON.parse(JSON.stringify(closest.combatLogs));
-    } else {
+    if (targetMinutes >= this.state.timeMinutes) return; // the future has not been played yet
+    const restorable = this.state.snapshots.filter((snap) => snap.timeMinutes <= targetMinutes);
+    if (restorable.length === 0) {
       this.resetBattle();
+      return;
     }
+    const snap = restorable[restorable.length - 1];
+    const t = snap.timeMinutes;
+
+    this.state.isRunning = false;
+    this.state.timeMinutes = t;
+    this.state.units = JSON.parse(JSON.stringify(snap.units));
+    // Units and the active-order list must share order objects (status changes are made through either)
+    const restoredOrders: ManeuverOrder[] = JSON.parse(JSON.stringify(snap.activeOrders));
+    this.state.activeOrders = restoredOrders.map(
+      (o) => this.state.units.find((u) => u.currentOrder?.id === o.id)?.currentOrder ?? o
+    );
+    this.state.frenchLosses = snap.frenchLosses;
+    this.state.alliedLosses = snap.alliedLosses;
+    this.state.combatLogs = JSON.parse(JSON.stringify(snap.combatLogs));
+    if (snap.terrain) this.state.terrain = [...snap.terrain];
+    if (snap.lastHistoricalEventIndex !== undefined) this.state.lastHistoricalEventIndex = snap.lastHistoricalEventIndex;
+
+    this.state.snapshots = restorable;
+    this.state.artilleryImpacts = this.state.artilleryImpacts.filter((i) => i.timeMinutes <= t);
+    if (this.state.iceCracks) this.state.iceCracks = this.state.iceCracks.filter((c) => (c.timeMinutes ?? 0) <= t);
+    this.state.sitrepNotifications = (this.state.sitrepNotifications || []).filter((n) => n.timestamp <= t);
+    this.primaryTargets.clear();
+    this.previousTargets.clear();
+
+    if (this.state.selectedUnitId && !this.state.units.some((u) => u.id === this.state.selectedUnitId && u.status !== 'shattered')) {
+      this.state.selectedUnitId = null;
+      this.state.selectedUnitIds = [];
+    }
+    this.addLog(`Rewound to ${this.formatTime(t)}.`, this.state.playerFaction, 'highlight');
     this.notify();
   }
 
@@ -1529,6 +1609,8 @@ export class BattleEngine {
       frenchLosses: this.state.frenchLosses,
       alliedLosses: this.state.alliedLosses,
       combatLogs: JSON.parse(JSON.stringify(this.state.combatLogs)),
+      terrain: [...this.state.terrain],
+      lastHistoricalEventIndex: this.state.lastHistoricalEventIndex,
     };
     this.state.snapshots.push(snapshot);
     if (this.state.snapshots.length > 80) {

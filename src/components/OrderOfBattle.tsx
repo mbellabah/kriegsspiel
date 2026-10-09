@@ -32,11 +32,21 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
   const [newCorpsNameInput, setNewCorpsNameInput] = useState('');
   const [isCreatingNewCorps, setIsCreatingNewCorps] = useState(false);
 
-  const filteredUnits = units.filter((u) => u.faction === activeTab && u.status !== 'shattered');
+  // Under fog of war the enemy list shows only what has been detected: hidden units are omitted and
+  // unidentified contacts show an estimate, never their name, corps or exact strength
+  const live = engine.getState();
+  const isOwnTab = activeTab === live.playerFaction;
+  const fogOn = !!live.fogOfWarEnabled && !isOwnTab;
+  const isContact = (u: Unit) => fogOn && u.detectionState === 'contact';
+  const filteredUnits = units.filter(
+    (u) => u.faction === activeTab && u.status !== 'shattered' && !(fogOn && u.detectionState === 'hidden')
+  );
+  const identifiedUnits = filteredUnits.filter((u) => !isContact(u));
+  const contactCount = filteredUnits.length - identifiedUnits.length;
 
   // Group units by corps
   const corpsGroups = filteredUnits.reduce<Record<string, Unit[]>>((acc, unit) => {
-    const c = unit.corps || 'Unassigned / Independent';
+    const c = isContact(unit) ? 'Unidentified contacts' : unit.corps || 'Unassigned / Independent';
     if (!acc[c]) acc[c] = [];
     acc[c].push(unit);
     return acc;
@@ -71,8 +81,8 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
     onFocusLocation?.(center);
   };
 
-  const totalMen = filteredUnits.reduce((sum, u) => sum + (u.type === 'artillery' ? 0 : u.strength), 0);
-  const totalGuns = filteredUnits.reduce((sum, u) => sum + (u.type === 'artillery' ? u.strength : 0), 0);
+  const totalMen = identifiedUnits.reduce((sum, u) => sum + (u.type === 'artillery' ? 0 : u.strength), 0);
+  const totalGuns = identifiedUnits.reduce((sum, u) => sum + (u.type === 'artillery' ? u.strength : 0), 0);
 
   const containerClasses = embedded
     ? "flex-1 min-h-0 flex flex-col overflow-hidden bg-[#fcfbf8] text-black font-sans select-none"
@@ -108,7 +118,7 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
           ))}
         </div>
         <span className={cx(ui.mono, 'text-[10.5px] text-stone-500')}>
-          {totalMen.toLocaleString()} men · {totalGuns} guns
+          {totalMen.toLocaleString()} men · {totalGuns} guns{fogOn ? ` identified${contactCount ? ` · ${contactCount} contacts` : ''}` : ''}
         </span>
       </div>
 
@@ -155,7 +165,7 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                     className={cx(ui.btn, 'h-6 px-1.5 text-[10.5px]')}
                   >Show</button>
 
-                  {activeTab === 'french' && onDispatchCorps && (
+                  {isOwnTab && onDispatchCorps && (
                     <button
                       type="button"
                       onClick={() => onDispatchCorps(corpsName)}
@@ -191,16 +201,27 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                           }}
                         >
                           <div className="flex items-center gap-2 min-w-0">
-                            <UnitSymbol unit={u} hostile={u.faction !== 'french'} size={26} />
+                            {isContact(u) ? (
+                              <svg width={26} height={24} viewBox="0 0 36 34" className="flex-shrink-0" aria-hidden>
+                                <path d="M18 9 L29 20 L18 31 L7 20 Z" fill="rgba(255,128,128,0.35)" stroke="#c2272d" strokeWidth={1.3} strokeDasharray="2.5 2" />
+                                <text x="18" y="24" textAnchor="middle" fontSize="10" fontWeight="700" fill="#c2272d">?</text>
+                              </svg>
+                            ) : (
+                              <UnitSymbol unit={u} hostile={u.faction !== live.playerFaction} size={26} />
+                            )}
                             <div className="flex flex-col min-w-0">
-                              <span className="text-[11px] font-medium text-neutral-900 truncate">{u.name}</span>
+                              <span className="text-[11px] font-medium text-neutral-900 truncate">
+                                {isContact(u) ? 'Unidentified contact' : u.name}
+                              </span>
                               <span className="text-[10.5px] text-neutral-500 truncate capitalize">
-                                {u.formation} · {u.status === 'idle' ? 'ready' : u.status}
+                                {isContact(u)
+                                  ? `Estimated ${u.estimatedStrength || 'strength unknown'}`
+                                  : `${u.formation} · ${u.status === 'idle' ? 'ready' : u.status}`}
                               </span>
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-2">
+                          <div className={`flex items-center gap-2 ${isContact(u) ? 'hidden' : ''}`}>
                             <div className="text-right">
                               <div className="font-mono text-[11px] text-neutral-900">
                                 {u.type === 'artillery' ? `${u.strength} guns` : u.strength.toLocaleString()}
@@ -213,8 +234,8 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                               </div>
                             </div>
 
-                            {/* Reassign Button */}
-                            <button
+                            {/* Reassign Button (own units only) */}
+                            {isOwnTab && <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -225,7 +246,7 @@ export const OrderOfBattle: React.FC<OrderOfBattleProps> = ({
                               className={`p-1 text-neutral-500 hover:text-black hover:bg-neutral-200 transition-colors cursor-pointer ${
  isTransferring ? 'bg-[#d9d3c7] text-black' : ''
  }`}
-                            >Move</button>
+                            >Move</button>}
                           </div>
                         </div>
 

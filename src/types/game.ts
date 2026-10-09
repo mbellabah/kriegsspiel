@@ -454,6 +454,8 @@ export interface BattleStateSnapshot {
   frenchLosses: number;
   alliedLosses: number;
   combatLogs: CombatLogEntry[];
+  terrain?: TerrainFeature[];
+  lastHistoricalEventIndex?: number;
 }
 
 export interface ActiveEngagement {
@@ -519,5 +521,7 @@ export interface SitrepNotification {
   read: boolean;
   dismissed: boolean;
   createdAtWallMs: number;
+  /** Standard-format report lines, e.g. SPOTREP (SALUTE) for contacts or a unit status report */
+  report?: { kind: 'SPOTREP' | 'STATUS'; lines: [string, string][] };
 }
 

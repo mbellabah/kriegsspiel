@@ -14,6 +14,7 @@ export const App: React.FC = () => {
   const engine = useMemo(() => new BattleEngine(REALISTIC_AUSTERLITZ_SCENARIO), []);
   const [state, setState] = useState<SimulationState>(engine.getState());
   const [showRangeRings, setShowRangeRings] = useState(false);
+  const [showLineOfSight, setShowLineOfSight] = useState(true);
   const [showCorpsOverlay, setShowCorpsOverlay] = useState(false);
   const [hoveredCorps, setHoveredCorps] = useState<string | null>(null);
   // Text pushed into the Orders input; `id` makes repeated identical inserts still apply
@@ -80,6 +81,7 @@ export const App: React.FC = () => {
 
   // Stable memoized callbacks to prevent downstream re-render churn
   const handleToggleRangeRings = useCallback(() => setShowRangeRings((v) => !v), []);
+  const handleToggleLineOfSight = useCallback(() => setShowLineOfSight((v) => !v), []);
   const handleToggleCorpsOverlay = useCallback(() => setShowCorpsOverlay((v) => !v), []);
   const handleToggleDoctrine = useCallback(() => setIsDoctrineOpen((v) => !v), []);
   const handleStartBombardTargeting = useCallback(() => setIsBombardTargeting(true), []);
@@ -116,6 +118,8 @@ export const App: React.FC = () => {
         state={state}
         showRangeRings={showRangeRings}
         onToggleRangeRings={handleToggleRangeRings}
+        showLineOfSight={showLineOfSight}
+        onToggleLineOfSight={handleToggleLineOfSight}
         showCorpsOverlay={showCorpsOverlay}
         onToggleCorpsOverlay={handleToggleCorpsOverlay}
         activeFilter={activeFilter}
@@ -132,6 +136,8 @@ export const App: React.FC = () => {
         activeFilter={activeFilter}
         showRangeRings={showRangeRings}
         onToggleRangeRings={handleToggleRangeRings}
+        showLineOfSight={showLineOfSight}
+        onToggleLineOfSight={handleToggleLineOfSight}
         showCorpsOverlay={showCorpsOverlay}
         onToggleCorpsOverlay={handleToggleCorpsOverlay}
         hoveredCorps={hoveredCorps}
