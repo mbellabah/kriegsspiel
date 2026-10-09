@@ -1,5 +1,5 @@
-import { Unit, ManeuverOrder, Vector2D, OperationalGraphic, TroopFilterType, TargetReferencePoint, Faction, ERA_WEAPON_PROFILES } from '../types/game';
-import { SimulationState, BattleEngine } from './simulation';
+import { Unit, ManeuverOrder, Vector2D, OperationalGraphic, TroopFilterType, TargetReferencePoint, Faction, EnemyIntel, ERA_WEAPON_PROFILES } from '../types/game';
+import { SimulationState, BattleEngine, ENEMY_INTEL_MAX_AGE } from './simulation';
 import { GZD, SQUARE, eastingKm, northingKm } from './grid';
 import { SETTLEMENTS, HEIGHTS } from '../data/gazetteer';
 import {
@@ -10,7 +10,8 @@ import {
   drawUnitSymbol,
   tracePathFrame,
   frameExtents,
-  healthColor,
+  combatEffectiveness,
+  conditionColor,
   designationFor,
   higherFormationFor,
   DIAMOND_R,
@@ -196,7 +197,7 @@ export class SandtableRenderer {
     // 8.5 NATO Operational Graphics & Control Measures (Phase Lines, OBJs, FSCL, TRPs)
     if (state.showOperationalGraphics) {
       if (state.operationalGraphics) {
-        this.renderOperationalGraphics(ctx, state.operationalGraphics);
+        this.renderOperationalGraphics(ctx, state.operationalGraphics, state.playerFaction);
       }
       if (state.targetReferencePoints) {
         this.renderTargetReferencePoints(ctx, state.targetReferencePoints);
@@ -221,7 +222,7 @@ export class SandtableRenderer {
       this.renderFogOfWarShroud(ctx, state);
     }
 
-    // 11.8 NATO Corps Boundaries & Command and Control (C2) Links
+    // 11.8 Corps highlight (hover in the order of battle)
     this.renderCorpsOverlay(ctx, state);
 
     // 12. Military Unit Chits (Royal Blue French vs Red Allied)
@@ -2317,31 +2318,54 @@ export class SandtableRenderer {
       ctx.lineWidth = emphasized ? 1.4 * hair : hair;
 
       if (unit.type === 'artillery') {
+        // Range fan: the sector the battery is laid on (towards its current target, else its
+        // facing), bounded by left and right limits, with arcs at canister and maximum range
         const canisterRadius = 120;
         const maxRange = unit.range || 350;
+        const target = unit.currentOrder?.type === 'bombard' ? unit.currentOrder.destination : null;
+        const laying = target ? Math.atan2(target.y - unit.position.y, target.x - unit.position.x) : unit.heading;
+        const half = Math.PI / 4;
+        const left = laying - half;
+        const right = laying + half;
+        const stroke = `rgba(${rgb}, ${emphasized ? 0.85 : 0.45})`;
 
-        ctx.strokeStyle = `rgba(${rgb}, ${a})`;
-        ctx.setLineDash([7 * hair, 5 * hair]);
         ctx.beginPath();
-        ctx.arc(0, 0, maxRange, 0, Math.PI * 2);
+        ctx.moveTo(0, 0);
+        ctx.arc(0, 0, maxRange, left, right);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(${rgb}, ${emphasized ? 0.06 : 0.025})`;
+        ctx.fill();
+
+        ctx.strokeStyle = stroke;
+        ctx.setLineDash([5 * hair, 4 * hair]);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(left) * maxRange, Math.sin(left) * maxRange);
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(right) * maxRange, Math.sin(right) * maxRange);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.lineWidth = (emphasized ? 1.6 : 1.1) * hair;
+        ctx.beginPath();
+        ctx.arc(0, 0, maxRange, left, right);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(0, 0, canisterRadius, left, right);
         ctx.stroke();
 
         if (emphasized) {
-          ctx.fillStyle = `rgba(${rgb}, 0.035)`;
-          ctx.fill();
-
-          ctx.strokeStyle = 'rgba(217, 119, 6, 0.8)';
-          ctx.setLineDash([3 * hair, 3 * hair]);
-          ctx.beginPath();
-          ctx.arc(0, 0, canisterRadius, 0, Math.PI * 2);
-          ctx.stroke();
-
-          ctx.setLineDash([]);
+          const metres = (px: number) => `${(px * 5).toLocaleString('en-GB').replace(',', '\u2009')} m`;
           ctx.font = font(600, labelSize);
           ctx.textAlign = 'center';
-          ctx.textBaseline = 'bottom';
-          haloText(ctx, `${eraProfile.rangeLabels.pointDefense} · ${canisterRadius * 5}m`, 0, -canisterRadius - 2 * hair, '#b45309');
-          haloText(ctx, `${eraProfile.rangeLabels.indirectFire} · ${maxRange * 5}m`, 0, -maxRange - 2 * hair, `rgb(${rgb})`);
+          ctx.textBaseline = 'middle';
+          const tag = (r: number, text: string) =>
+            haloText(ctx, text, Math.cos(laying) * (r + 7 * hair), Math.sin(laying) * (r + 7 * hair), `rgb(${rgb})`);
+          tag(maxRange, `${eraProfile.rangeLabels.indirectFire} ${metres(maxRange)}`);
+          tag(canisterRadius, `${eraProfile.rangeLabels.pointDefense} ${metres(canisterRadius)}`);
+          ctx.font = font(700, labelSize);
+          haloText(ctx, 'L', Math.cos(left) * (maxRange + 8 * hair), Math.sin(left) * (maxRange + 8 * hair), `rgb(${rgb})`);
+          haloText(ctx, 'R', Math.cos(right) * (maxRange + 8 * hair), Math.sin(right) * (maxRange + 8 * hair), `rgb(${rgb})`);
         }
       } else {
         const range = unit.range || 100;
@@ -2469,47 +2493,93 @@ export class SandtableRenderer {
   // =========================================================================
   // 11.5 NATO OPERATIONAL GRAPHICS (PHASE LINES, OBJECTIVES, FSCL)
   // =========================================================================
-  private renderOperationalGraphics(ctx: CanvasRenderingContext2D, graphics: OperationalGraphic[]) {
+  /** Points spaced along a polyline (world units), with the local direction of the line. */
+  private pointsAlong(points: Vector2D[], spacing: number, offset: number) {
+    const out: { x: number; y: number; angle: number }[] = [];
+    let next = offset;
+    let walked = 0;
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const angle = Math.atan2(b.y - a.y, b.x - a.x);
+      while (next <= walked + len) {
+        const t = (next - walked) / len;
+        out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, angle });
+        next += spacing;
+      }
+      walked += len;
+    }
+    return out;
+  }
+
+  /** Text laid along a line, kept upright, on a paper gap so the line appears broken around it. */
+  private lineLabel(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, angle: number, color: string, size: number, gap: boolean) {
+    let a = angle;
+    if (a > Math.PI / 2) a -= Math.PI;
+    if (a < -Math.PI / 2) a += Math.PI;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(a);
+    ctx.font = font(700, size);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    if (gap) {
+      const w = ctx.measureText(text).width + size * 0.9;
+      ctx.fillStyle = MAP.paper;
+      ctx.fillRect(-w / 2, -size * 0.62, w, size * 1.24);
+      ctx.fillStyle = color;
+      ctx.fillText(text, 0, size * 0.04);
+    } else {
+      haloText(ctx, text, 0, 0, color, size * 0.4);
+    }
+    ctx.restore();
+  }
+
+  // Control measures per APP-6: boundaries (solid, echelon in a gap, formations either side), phase
+  // lines (solid, named at intervals), FSCL, objectives. Only the player's own overlay is shown.
+  private renderOperationalGraphics(ctx: CanvasRenderingContext2D, graphics: OperationalGraphic[], playerFaction: Faction) {
     const hair = 1 / this.zoom;
     const ls = this.symbolScale();
+    const size = 8 * ls;
+    const spacing = 650;
     ctx.save();
+    ctx.lineJoin = 'round';
     for (const g of graphics) {
+      if (g.faction && g.faction !== playerFaction) continue;
+      if (g.type === 'boundary' && !this.showCorpsOverlay) continue;
+
       if (g.type === 'phase_line' || g.type === 'fscl' || g.type === 'boundary') {
         if (g.points.length < 2) continue;
-        // Control measures in black per APP-6; fire support lines keep their accent colour
-        const color = g.type === 'fscl' ? '#c2410c' : 'rgba(28, 25, 23, 0.8)';
+        const color = g.type === 'fscl' ? '#c2410c' : MAP.ink;
         ctx.strokeStyle = color;
-        ctx.lineWidth = 1.6 * hair;
-        ctx.setLineDash(g.type === 'boundary' ? [10 * hair, 6 * hair] : []);
-        ctx.lineJoin = 'round';
+        ctx.lineWidth = (g.type === 'boundary' ? 1.7 : 1.4) * hair;
         ctx.beginPath();
         ctx.moveTo(g.points[0].x, g.points[0].y);
         for (let i = 1; i < g.points.length; i++) ctx.lineTo(g.points[i].x, g.points[i].y);
         ctx.stroke();
-        ctx.setLineDash([]);
 
-        // Label at both ends, just beyond the line, kept upright
-        ctx.font = font(700, 7 * ls);
-        const ends = [
-          { p: g.points[0], q: g.points[1] },
-          { p: g.points[g.points.length - 1], q: g.points[g.points.length - 2] },
-        ];
-        for (const { p, q } of ends) {
-          const dx = p.x - q.x;
-          const dy = p.y - q.y;
-          const len = Math.hypot(dx, dy) || 1;
-          const off = 10 * ls;
-          ctx.textAlign = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'left' : 'right') : 'center';
-          ctx.textBaseline = Math.abs(dy) >= Math.abs(dx) ? (dy > 0 ? 'top' : 'bottom') : 'middle';
-          haloText(ctx, g.name, p.x + (dx / len) * off, p.y + (dy / len) * off, color, 3 * ls);
+        for (const at of this.pointsAlong(g.points, spacing, spacing / 2)) {
+          if (g.type === 'boundary') {
+            this.lineLabel(ctx, g.echelon || 'XX', at.x, at.y, at.angle, color, size, true);
+            // Formations on either side: left of the line's direction is north for a west-east boundary
+            const off = size * 1.35;
+            const nx = Math.sin(at.angle);
+            const ny = -Math.cos(at.angle);
+            if (g.leftUnit) this.lineLabel(ctx, g.leftUnit, at.x + nx * off, at.y + ny * off, at.angle, color, size, false);
+            if (g.rightUnit) this.lineLabel(ctx, g.rightUnit, at.x - nx * off, at.y - ny * off, at.angle, color, size, false);
+          } else {
+            const label = g.role ? `${g.name} (${g.role})` : g.name;
+            this.lineLabel(ctx, label, at.x, at.y, at.angle, color, size, true);
+          }
         }
       } else if (g.type === 'objective') {
         const pt = g.points[0];
         if (!pt) continue;
         // Objective: closed, slightly irregular outline with the name inside
         const r = 46;
-        ctx.strokeStyle = 'rgba(28, 25, 23, 0.8)';
-        ctx.lineWidth = 1.6 * hair;
+        ctx.strokeStyle = MAP.ink;
+        ctx.lineWidth = 1.5 * hair;
         ctx.beginPath();
         for (let k = 0; k <= 24; k++) {
           const t = (k / 24) * Math.PI * 2;
@@ -2522,7 +2592,7 @@ export class SandtableRenderer {
         ctx.closePath();
         ctx.stroke();
 
-        ctx.font = font(700, 7 * ls);
+        ctx.font = font(700, size);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         haloText(ctx, g.name, pt.x, pt.y - r + 12 * ls, MAP.ink, 3 * ls);
@@ -2592,190 +2662,26 @@ export class SandtableRenderer {
   // Operational staff graphics showing Corps groupings, C2 HQ-to-subordinate
   // links, and dynamic hover highlighting with convex hull perimeters.
   // =========================================================================
+  // 11.8 CORPS HIGHLIGHT
+  // Hovering a corps in the order of battle brackets its formations on the map. Corps sectors
+  // themselves are shown by the boundaries in the control-measures overlay.
+  // =========================================================================
   private renderCorpsOverlay(ctx: CanvasRenderingContext2D, state: SimulationState) {
-    if (!this.showCorpsOverlay && !this.hoveredCorps) return;
-
-    // Group active units by corps
-    const corpsMap: Record<string, { faction: Faction; units: Unit[] }> = {};
-    for (const unit of state.units) {
-      if (unit.status === 'shattered' || unit.strength <= 0) continue;
-      if (!unit.corps) continue;
-      if (!corpsMap[unit.corps]) {
-        corpsMap[unit.corps] = { faction: unit.faction, units: [] };
-      }
-      corpsMap[unit.corps].units.push(unit);
-    }
-
+    if (!this.hoveredCorps) return;
+    const corps = this.hoveredCorps.toLowerCase();
+    const hair = 1 / this.zoom;
     ctx.save();
-
-    for (const [corpsName, { faction, units }] of Object.entries(corpsMap)) {
-      const isHovered = this.hoveredCorps?.toLowerCase() === corpsName.toLowerCase();
-      // Only render if showCorpsOverlay is enabled, OR if this specific corps is hovered
-      if (!this.showCorpsOverlay && !isHovered) continue;
-
-      const isFrench = faction === 'french';
-      const hq = units.find((u) => u.type === 'headquarters') || units[0];
-
-      // Centroid
-      let sumX = 0;
-      let sumY = 0;
-      let totalMen = 0;
-      let totalGuns = 0;
-      for (const u of units) {
-        sumX += u.position.x;
-        sumY += u.position.y;
-        if (u.type === 'artillery') totalGuns += u.strength;
-        else totalMen += u.strength;
-      }
-      const cx = sumX / units.length;
-      const cy = sumY / units.length;
-
-      // 1. C2 Links (Headquarters to subordinate regiments)
-      ctx.save();
-      ctx.setLineDash([4, 4]);
-      ctx.lineWidth = isHovered ? 1.6 : 0.9;
-      ctx.strokeStyle = isHovered
-        ? (isFrench ? '#1d4ed8' : '#b91c1c')
-        : (isFrench ? 'rgba(37, 99, 235, 0.45)' : 'rgba(220, 38, 38, 0.45)');
-
-      for (const u of units) {
-        if (u.id === hq.id) continue;
-        ctx.beginPath();
-        ctx.moveTo(hq.position.x, hq.position.y);
-        ctx.lineTo(u.position.x, u.position.y);
-        ctx.stroke();
-
-        // Subordinate anchor node
-        ctx.fillStyle = isFrench ? '#2563eb' : '#dc2626';
-        ctx.beginPath();
-        ctx.arc(u.position.x, u.position.y, 2.5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-
-      // 2. Corps Perimeter Boundary (Convex Hull)
-      if (units.length >= 2) {
-        const paddedPoints: Vector2D[] = [];
-        const pad = isHovered ? 34 : 26;
-        for (const u of units) {
-          paddedPoints.push(
-            { x: u.position.x - pad, y: u.position.y - pad },
-            { x: u.position.x + pad, y: u.position.y - pad },
-            { x: u.position.x + pad, y: u.position.y + pad },
-            { x: u.position.x - pad, y: u.position.y + pad }
-          );
-        }
-
-        const hull = this.computeConvexHull(paddedPoints);
-        if (hull.length >= 3) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.moveTo(hull[0].x, hull[0].y);
-          for (let i = 1; i < hull.length; i++) {
-            ctx.lineTo(hull[i].x, hull[i].y);
-          }
-          ctx.closePath();
-
-          // Soft translucent NATO fill
-          ctx.fillStyle = isHovered
-            ? (isFrench ? 'rgba(37, 99, 235, 0.12)' : 'rgba(220, 38, 38, 0.12)')
-            : (isFrench ? 'rgba(37, 99, 235, 0.05)' : 'rgba(220, 38, 38, 0.05)');
-          ctx.fill();
-
-          // Dashed perimeter casing
-          ctx.strokeStyle = isHovered
-            ? (isFrench ? '#1d4ed8' : '#b91c1c')
-            : (isFrench ? 'rgba(37, 99, 235, 0.55)' : 'rgba(220, 38, 38, 0.55)');
-          ctx.lineWidth = isHovered ? 2.0 : 1.2;
-          ctx.setLineDash([6, 4]);
-          ctx.stroke();
-          ctx.restore();
-        }
-      }
-
-      // 3. Highlight rings around units when hovered
-      if (isHovered) {
-        ctx.save();
-        ctx.strokeStyle = isFrench ? '#2563eb' : '#dc2626';
-        ctx.lineWidth = 2.2;
-        ctx.setLineDash([3, 3]);
-        for (const u of units) {
-          ctx.beginPath();
-          ctx.arc(u.position.x, u.position.y, 20, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-        ctx.restore();
-      }
-
-      // 4. Tactical Corps Identification Badge (Staff Cartography)
-      ctx.save();
-      const badgeText = `${corpsName.toUpperCase()}`;
-      const subText = `${units.length} REGS • ${totalMen.toLocaleString()} MEN${totalGuns > 0 ? ` • ${totalGuns} GUNS` : ''}`;
-
-      ctx.font = 'bold 9px Arial, sans-serif';
-      const tw1 = ctx.measureText(badgeText).width;
-      ctx.font = 'bold 7.5px Arial, sans-serif';
-      const tw2 = ctx.measureText(subText).width;
-      const boxW = Math.max(tw1, tw2) + 16;
-      const boxH = 26;
-      const badgeX = cx - boxW / 2;
-      const badgeY = (hq ? hq.position.y - 32 : cy - 25);
-
-      // White staff card with drop shadow
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
-      ctx.fillRect(badgeX, badgeY, boxW, boxH);
-      ctx.strokeStyle = isFrench ? '#1e3a8a' : '#991b1b';
-      ctx.lineWidth = isHovered ? 1.8 : 1.1;
-      ctx.setLineDash([]);
-      ctx.strokeRect(badgeX, badgeY, boxW, boxH);
-
-      // Left color accent bar
-      ctx.fillStyle = isFrench ? '#1e3a8a' : '#991b1b';
-      ctx.fillRect(badgeX, badgeY, 3.5, boxH);
-
-      // Text
-      ctx.font = 'bold 8.5px Arial, sans-serif';
-      ctx.fillStyle = isFrench ? '#1e3a8a' : '#991b1b';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      ctx.fillText(badgeText, badgeX + 7, badgeY + 4);
-
-      ctx.font = 'bold 7px Arial, sans-serif';
-      ctx.fillStyle = '#475569';
-      ctx.fillText(subText, badgeX + 7, badgeY + 15);
-
-      ctx.restore();
+    ctx.lineWidth = 1.6 * hair;
+    ctx.setLineDash([3 * hair, 3 * hair]);
+    for (const u of state.units) {
+      if (u.status === 'shattered' || u.strength <= 0 || u.corps?.toLowerCase() !== corps) continue;
+      if (state.fogOfWarEnabled && u.faction !== state.playerFaction && u.detectionState !== 'identified') continue;
+      ctx.strokeStyle = u.faction === state.playerFaction ? MAP.friendLine : MAP.hostileLine;
+      ctx.beginPath();
+      ctx.arc(u.position.x, u.position.y, 20 * this.symbolScale(), 0, Math.PI * 2);
+      ctx.stroke();
     }
-
     ctx.restore();
-  }
-
-  private computeConvexHull(points: Vector2D[]): Vector2D[] {
-    if (points.length <= 2) return points;
-    const sorted = [...points].sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
-    const cross = (o: Vector2D, a: Vector2D, b: Vector2D) =>
-      (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-
-    const lower: Vector2D[] = [];
-    for (const p of sorted) {
-      while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
-        lower.pop();
-      }
-      lower.push(p);
-    }
-
-    const upper: Vector2D[] = [];
-    for (let i = sorted.length - 1; i >= 0; i--) {
-      const p = sorted[i];
-      while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
-        upper.pop();
-      }
-      upper.push(p);
-    }
-
-    upper.pop();
-    lower.pop();
-    return lower.concat(upper);
   }
 
   // =========================================================================
@@ -2891,6 +2797,101 @@ export class SandtableRenderer {
     return Math.min(1.7, Math.max(0.45, Math.pow(this.zoom, -0.62)));
   }
 
+  /** Probable enemy course of action: dashed red arrow along the last observed direction of march. */
+  private renderProbableCourse(ctx: CanvasRenderingContext2D, from: Vector2D, heading: number, length: number, alpha: number) {
+    const hair = 1 / this.zoom;
+    const ex = from.x + Math.cos(heading) * length;
+    const ey = from.y + Math.sin(heading) * length;
+    const head = 9 * this.symbolScale();
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = MAP.hostileLine;
+    ctx.fillStyle = MAP.hostileLine;
+    ctx.lineWidth = 1.6 * hair;
+    ctx.setLineDash([7 * hair, 4 * hair]);
+    ctx.beginPath();
+    ctx.moveTo(from.x + Math.cos(heading) * 14 * this.symbolScale(), from.y + Math.sin(heading) * 14 * this.symbolScale());
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(ex + Math.cos(heading) * head, ey + Math.sin(heading) * head);
+    ctx.lineTo(ex + Math.cos(heading + 2.6) * head * 0.8, ey + Math.sin(heading + 2.6) * head * 0.8);
+    ctx.lineTo(ex + Math.cos(heading - 2.6) * head * 0.8, ey + Math.sin(heading - 2.6) * head * 0.8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /**
+   * Lost contact (situation template): a suspected (dashed) symbol at the last known position, an
+   * uncertainty circle that grows with the time since it was seen, the time of the last sighting,
+   * and the probable course if it was on the move. Fades as the report ages.
+   */
+  private renderLostContact(ctx: CanvasRenderingContext2D, state: SimulationState, unit: Unit, report: EnemyIntel) {
+    const age = Math.max(0, state.timeMinutes - report.seenAt);
+    const fade = 1 - 0.65 * Math.min(1, age / ENEMY_INTEL_MAX_AGE);
+    const hair = 1 / this.zoom;
+    const s = this.symbolScale();
+    const { x, y } = report.position;
+
+    // Ground the formation has probably covered since: well under a march rate on average, as
+    // formations spend most of the day halted, deploying or fighting
+    const radius = Math.min(220, 12 + age * 5);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.fillStyle = 'rgba(194, 39, 45, 0.04)';
+    ctx.strokeStyle = 'rgba(194, 39, 45, 0.7)';
+    ctx.lineWidth = hair;
+    ctx.setLineDash([4 * hair, 4 * hair]);
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    if (report.moving) this.renderProbableCourse(ctx, report.position, report.heading, Math.max(50, Math.min(180, radius)), fade);
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(s, s);
+    ctx.globalAlpha = fade;
+    if (report.level === 'identified') {
+      ctx.save();
+      ctx.globalAlpha = fade * 0.75;
+      drawUnitSymbol(ctx, unit, 'hostile', { dashed: true });
+      ctx.restore();
+      if (this.zoom >= 0.55) {
+        ctx.font = font(600, 7.5);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        haloText(ctx, designationFor(unit), DIAMOND_R + 3, 2.5, MAP.inkMuted);
+      }
+    } else {
+      tracePathFrame(ctx, 'hostile');
+      ctx.fillStyle = 'rgba(255, 128, 128, 0.25)';
+      ctx.fill();
+      ctx.setLineDash([2.5, 2]);
+      ctx.strokeStyle = MAP.hostileLine;
+      ctx.lineWidth = 1.3;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = font(700, 10);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = MAP.hostileLine;
+      ctx.fillText('?', 0, 0.5);
+    }
+    const clock = 7 * 60 + Math.floor(report.seenAt);
+    const hhmm = `${String(Math.floor(clock / 60)).padStart(2, '0')}${String(clock % 60).padStart(2, '0')}`;
+    ctx.font = font(600, 6.2);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    haloText(ctx, `LAST SEEN ${hhmm}`, 0, DIAMOND_R + 2, MAP.hostileLine);
+    ctx.restore();
+  }
+
   // Contact marker: APP-6 dashed (suspect) hostile frame for unidentified fog-of-war contacts
   private renderContactDiamond(ctx: CanvasRenderingContext2D, unit: Unit, isHovered: boolean) {
     const s = this.symbolScale();
@@ -2932,12 +2933,17 @@ export class SandtableRenderer {
   ) {
     const visible: { unit: Unit; matchesFilter: boolean }[] = [];
     const contacts: Unit[] = [];
+    const lostContacts: { unit: Unit; report: EnemyIntel }[] = [];
 
     for (const unit of state.units) {
       if (unit.status === 'shattered' || unit.strength <= 0) continue;
 
       if (state.fogOfWarEnabled && unit.faction !== state.playerFaction) {
-        if (unit.detectionState === 'hidden') continue;
+        if (unit.detectionState === 'hidden') {
+          const report = state.enemyIntel?.[unit.id];
+          if (report) lostContacts.push({ unit, report });
+          continue;
+        }
         if (unit.detectionState === 'contact') {
           contacts.push(unit);
           continue;
@@ -2961,6 +2967,13 @@ export class SandtableRenderer {
 
     const isSelected = (u: Unit) => !!state.selectedUnitIds?.includes(u.id) || u.id === state.selectedUnitId;
 
+    // Formations that have detached part of their strength carry the (−) amplifier
+    this.reducedUnitIds.clear();
+    for (const u of state.units) {
+      const cut = u.id.lastIndexOf('_det_');
+      if (cut > 0 && u.status !== 'shattered') this.reducedUnitIds.add(u.id.slice(0, cut));
+    }
+
     // Pass 1 — footprints & combat effects (world scale)
     for (const { unit, matchesFilter } of visible) {
       ctx.save();
@@ -2969,7 +2982,13 @@ export class SandtableRenderer {
       ctx.restore();
     }
 
+    // Enemy situation: last known positions of lost contacts, then current unidentified contacts
+    for (const { unit, report } of lostContacts) {
+      this.renderLostContact(ctx, state, unit, report);
+    }
     for (const unit of contacts) {
+      const report = state.enemyIntel?.[unit.id];
+      if (report?.moving) this.renderProbableCourse(ctx, unit.position, unit.heading, 70, 1);
       this.renderContactDiamond(ctx, unit, hoveredUnitId === unit.id);
     }
 
@@ -2980,6 +2999,8 @@ export class SandtableRenderer {
       this.renderUnitSymbol(ctx, state, unit, matchesFilter, isSelected(unit), unit.id === hoveredUnitId);
     }
   }
+
+  private reducedUnitIds = new Set<string>();
 
   private footprintSize(unit: Unit): { lw: number; lh: number } {
     if (unit.type === 'headquarters') return { lw: 12, lh: 8 };
@@ -3199,21 +3220,44 @@ export class SandtableRenderer {
       ctx.stroke();
     }
 
-    // Strength & cohesion bars beneath the frame
-    const strength = Math.max(0, Math.min(1, unit.strength / Math.max(1, unit.initialStrength)));
-    const cohesion = Math.max(0, Math.min(1, unit.morale / 100));
+    // APP-6 operational condition amplifier: one bar under the frame, green / amber / red / black
     const barW = identity === 'hostile' ? DIAMOND_R * 1.7 : FRAME_W;
-    let y = hh + (unit.type === 'headquarters' ? 10.5 : 2.5);
-    const drawBar = (ratio: number, color: string, h: number) => {
-      ctx.fillStyle = 'rgba(28, 25, 23, 0.22)';
-      ctx.fillRect(-barW / 2, y, barW, h);
-      ctx.fillStyle = color;
-      ctx.fillRect(-barW / 2, y, barW * ratio, h);
-      y += h + 0.8;
-    };
-    if (unit.type !== 'headquarters') {
-      drawBar(strength, healthColor(strength), 2);
-      drawBar(cohesion, cohesion > 0.5 ? '#334155' : healthColor(cohesion), 1.3);
+    let y = hh + 1.2;
+    ctx.fillStyle = conditionColor(combatEffectiveness(unit));
+    ctx.fillRect(-barW / 2, y, barW, 2.4);
+    ctx.strokeStyle = MAP.ink;
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(-barW / 2, y, barW, 2.4);
+    y += 3.2;
+
+    // Direction of movement (field Q): from the foot of the HQ staff, or the bottom centre of the frame
+    if (unit.status === 'marching' || unit.status === 'charging' || unit.status === 'routing') {
+      const ox = unit.type === 'headquarters' ? -hw : 0;
+      const oy = unit.type === 'headquarters' ? hh + 9 : y;
+      const len = 15;
+      const ex = ox + Math.cos(unit.heading) * len;
+      const ey = oy + Math.sin(unit.heading) * len;
+      ctx.strokeStyle = MAP.ink;
+      ctx.fillStyle = MAP.ink;
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(ex + Math.cos(unit.heading) * 2.5, ey + Math.sin(unit.heading) * 2.5);
+      ctx.lineTo(ex + Math.cos(unit.heading + 2.4) * 3.5, ey + Math.sin(unit.heading + 2.4) * 3.5);
+      ctx.lineTo(ex + Math.cos(unit.heading - 2.4) * 3.5, ey + Math.sin(unit.heading - 2.4) * 3.5);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Reinforced / reduced (field F): (−) once the formation has detached part of its strength
+    if (this.reducedUnitIds.has(unit.id)) {
+      ctx.font = font(700, 5.8);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      haloText(ctx, '(−)', hw + 1.5, -hh - 0.5, MAP.ink, 2);
     }
 
     // Designation (T) and higher formation (M) to the right of the frame

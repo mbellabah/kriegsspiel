@@ -15,7 +15,7 @@ export const App: React.FC = () => {
   const [state, setState] = useState<SimulationState>(engine.getState());
   const [showRangeRings, setShowRangeRings] = useState(false);
   const [showLineOfSight, setShowLineOfSight] = useState(true);
-  const [showCorpsOverlay, setShowCorpsOverlay] = useState(false);
+  const [showCorpsOverlay, setShowCorpsOverlay] = useState(true);
   const [hoveredCorps, setHoveredCorps] = useState<string | null>(null);
   // Text pushed into the Orders input; `id` makes repeated identical inserts still apply
   const [dispatchInsert, setDispatchInsert] = useState<DispatchInsert | null>(null);

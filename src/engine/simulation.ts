@@ -1,5 +1,6 @@
-import { Unit, ManeuverOrder, Scenario, TerrainFeature, CombatLogEntry, BattleStateSnapshot, HistoricalEvent, HistoricalDispatch, Vector2D, OperationalGraphic, ActiveEngagement, TargetReferencePoint, SectorForceRatios, WargameSymbology, TacticalObjective, Formation, CampaignEra, OrderCondition, OrderSource, ContactType, SitrepNotification, ERA_WEAPON_PROFILES } from '../types/game';
+import { Unit, ManeuverOrder, Scenario, TerrainFeature, CombatLogEntry, BattleStateSnapshot, HistoricalEvent, HistoricalDispatch, Vector2D, OperationalGraphic, ActiveEngagement, TargetReferencePoint, SectorForceRatios, WargameSymbology, TacticalObjective, Formation, EnemyIntel, CampaignEra, OrderCondition, OrderSource, ContactType, SitrepNotification, ERA_WEAPON_PROFILES } from '../types/game';
 import { toMgrs } from './grid';
+import { AUSTERLITZ_CONTROL_MEASURES } from '../data/controlMeasures';
 import { sounds } from './soundEffects';
 
 export interface SimulationState {
@@ -30,6 +31,8 @@ export interface SimulationState {
   showArtilleryKillzones: boolean;
   showTopography: boolean;
   operationalGraphics: OperationalGraphic[];
+  /** Fog of war: the player's last known picture of each enemy formation, keyed by unit id. */
+  enemyIntel: Record<string, EnemyIntel>;
   snapshots: BattleStateSnapshot[];
   lastHistoricalEventIndex: number;
   artilleryImpacts: {
@@ -64,6 +67,9 @@ export interface SimulationState {
  * all rates are tuned to that. The UI presents true time compression: compression = multiplier x 30.
  */
 export const BASE_TIME_COMPRESSION = 30;
+
+/** Battle minutes after which a lost contact is dropped from the enemy picture. */
+export const ENEMY_INTEL_MAX_AGE = 90;
 
 export class BattleEngine {
   private scenario: Scenario;
@@ -205,43 +211,8 @@ export class BattleEngine {
       sitrepNotifications: [],
       fogOfWarEnabled: false,
       showOperationalGraphics: true,
-      operationalGraphics: [
-        {
-          id: 'pl_goldbach',
-          type: 'phase_line',
-          name: 'PL GOLDBACH',
-          color: '#2563eb',
-          points: [{ x: 1050, y: 100 }, { x: 1010, y: 700 }, { x: 940, y: 1250 }],
-        },
-        {
-          id: 'pl_pratzen',
-          type: 'phase_line',
-          name: 'PL PRATZEN',
-          color: '#2563eb',
-          points: [{ x: 1590, y: 400 }, { x: 1500, y: 735 }, { x: 1300, y: 1200 }],
-        },
-        {
-          id: 'obj_pratzen',
-          type: 'objective',
-          name: 'OBJ PRATZEN',
-          color: '#dc2626',
-          points: [{ x: 1500, y: 735 }],
-        },
-        {
-          id: 'obj_sokolnitz',
-          type: 'objective',
-          name: 'OBJ SOKOLNITZ',
-          color: '#dc2626',
-          points: [{ x: 960, y: 990 }],
-        },
-        {
-          id: 'fscl_north',
-          type: 'fscl',
-          name: 'FSCL BLASOWITZ',
-          color: '#ea580c',
-          points: [{ x: 1470, y: 270 }, { x: 1950, y: 270 }],
-        },
-      ],
+      operationalGraphics: AUSTERLITZ_CONTROL_MEASURES,
+      enemyIntel: {},
       snapshots: [],
       lastHistoricalEventIndex: -1,
       artilleryImpacts: [],
@@ -1566,6 +1537,8 @@ export class BattleEngine {
     this.squareFrom.clear();
     this.columnFireSince.clear();
     this.awaitingAmmo.clear();
+    // The enemy picture belongs to the timeline being discarded; it rebuilds from the next observation
+    this.state.enemyIntel = {};
     const restorable = this.state.snapshots.filter((snap) => snap.timeMinutes <= targetMinutes);
     if (restorable.length === 0) {
       this.resetBattle();
@@ -3526,6 +3499,7 @@ export class BattleEngine {
       for (const unit of this.state.units) {
         unit.detectionState = 'identified';
       }
+      this.state.enemyIntel = {};
       return;
     }
 
@@ -3606,6 +3580,28 @@ export class BattleEngine {
         const low = Math.max(500, base - 1500);
         const high = base + 1500;
         enemy.estimatedStrength = `~${low.toLocaleString()} - ${high.toLocaleString()}`;
+      }
+
+      // Keep the last known picture; once identified, a formation stays identified in the record
+      if (bestState !== 'hidden') {
+        const prev = this.state.enemyIntel[enemy.id];
+        this.state.enemyIntel[enemy.id] = {
+          unitId: enemy.id,
+          position: { ...enemy.position },
+          heading: enemy.heading,
+          moving: enemy.status === 'marching' || enemy.status === 'charging' || enemy.status === 'routing',
+          seenAt: this.state.timeMinutes,
+          level: bestState === 'identified' || prev?.level === 'identified' ? 'identified' : 'contact',
+          estimatedStrength: enemy.estimatedStrength,
+        };
+      }
+    }
+
+    // Reports older than an hour and a half are no longer worth plotting; destroyed units drop out
+    for (const [id, report] of Object.entries(this.state.enemyIntel)) {
+      const unit = this.state.units.find((u) => u.id === id);
+      if (!unit || unit.status === 'shattered' || this.state.timeMinutes - report.seenAt > ENEMY_INTEL_MAX_AGE) {
+        delete this.state.enemyIntel[id];
       }
     }
   }

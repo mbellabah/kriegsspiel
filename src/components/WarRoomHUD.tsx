@@ -385,13 +385,13 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
                   {menuHeader('Map')}
                   {checkRow('Relief and contours', 'T', state.showTopography !== false, () => engine.toggleTopography())}
                   {checkRow('Control measures', null, !!state.showOperationalGraphics, () => engine.toggleOperationalGraphics())}
+                  {onToggleCorpsOverlay && checkRow('Boundaries', 'C', showCorpsOverlay, onToggleCorpsOverlay)}
                   {checkRow('Fog of war', null, !!state.fogOfWarEnabled, () => engine.toggleFogOfWar())}
 
                   {menuHeader('Overlays')}
                   {checkRow('Line of sight, selected unit', 'V', showLineOfSight, onToggleLineOfSight)}
                   {checkRow('Weapon ranges, all units', 'R', showRangeRings, onToggleRangeRings)}
                   {checkRow('Artillery target areas', 'K', !!state.showArtilleryKillzones, () => engine.toggleArtilleryKillzones())}
-                  {onToggleCorpsOverlay && checkRow('Corps boundaries', 'C', showCorpsOverlay, onToggleCorpsOverlay)}
 
                   {menuHeader('Simulation')}
                   {checkRow(

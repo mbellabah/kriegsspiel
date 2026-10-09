@@ -155,6 +155,31 @@ describe('historical replay', () => {
   });
 });
 
+describe('enemy situation (fog of war)', () => {
+  it('keeps the last known position of a contact that drops out of sight, and forgets it on rewind', () => {
+    const { engine, state, run } = createBattle();
+    engine.toggleFogOfWar();
+    const seen = unit(engine, 'al_kollowrat');
+    const observer = unit(engine, 'fr_vandamme');
+    seen.position = { x: observer.position.x + 40, y: observer.position.y };
+    engine.setRunning(true);
+    run(0.5);
+    expect(seen.detectionState).toBe('identified');
+    const lastKnown = { ...state.enemyIntel[seen.id].position };
+
+    seen.position = { x: 2380, y: 20 }; // slips away out of sight
+    run(2);
+    expect(seen.detectionState).toBe('hidden');
+    const report = state.enemyIntel[seen.id];
+    expect(report.position).toEqual(lastKnown);
+    expect(report.level).toBe('identified');
+    expect(report.seenAt).toBeLessThan(state.timeMinutes);
+
+    engine.scrubToTime(state.timeMinutes - 0.5);
+    expect(state.enemyIntel).toEqual({});
+  });
+});
+
 describe('contact reports', () => {
   it('does not identify an enemy that fog of war has not identified', () => {
     const { engine, state } = createBattle();

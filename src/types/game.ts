@@ -186,6 +186,26 @@ export interface OperationalGraphic {
   points: Vector2D[];
   color: string;
   labelOffset?: number;
+  /** Whose overlay this belongs to; graphics without one are shown to either side. */
+  faction?: Faction;
+  /** Additional role shown under a phase line's name (LD, LOA). */
+  role?: string;
+  /** Boundary echelon amplifier (XXX for corps) and the formations to the left and right of the line. */
+  echelon?: string;
+  leftUnit?: string;
+  rightUnit?: string;
+}
+
+/** Last known picture of an enemy formation (fog of war). Positions go stale when contact is lost. */
+export interface EnemyIntel {
+  unitId: string;
+  position: Vector2D;
+  heading: number;
+  moving: boolean;
+  /** Battle minute of the last observation. */
+  seenAt: number;
+  level: 'contact' | 'identified';
+  estimatedStrength?: string;
 }
 
 export interface TerrainFeature {

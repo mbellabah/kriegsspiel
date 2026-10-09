@@ -207,12 +207,22 @@ export function drawUnitSymbol(
   }
 }
 
-/** Colour ramp for strength / morale bars: green → amber → red. */
-export function healthColor(ratio: number): string {
-  if (ratio > 0.66) return '#15803d';
-  if (ratio > 0.4) return '#ca8a04';
-  if (ratio > 0.2) return '#ea580c';
-  return '#b91c1c';
+/**
+ * Combat effectiveness for the operational condition amplifier: strength, discounted as cohesion
+ * falls (a full-strength unit at the point of breaking counts as half effective).
+ */
+export function combatEffectiveness(unit: Unit): number {
+  const strength = Math.max(0, Math.min(1, unit.strength / Math.max(1, unit.initialStrength)));
+  const cohesion = Math.max(0, Math.min(1, (unit.morale - 25) / 50));
+  return strength * (0.5 + 0.5 * cohesion);
+}
+
+/** Usual NATO effectiveness bands: green 85%+, amber 70-84%, red 50-69%, black below 50%. */
+export function conditionColor(effectiveness: number): string {
+  if (effectiveness >= 0.85) return '#16a34a';
+  if (effectiveness >= 0.7) return '#eab308';
+  if (effectiveness >= 0.5) return '#dc2626';
+  return MAP.ink;
 }
 
 /** Draw text with a soft paper halo for legibility over terrain. */
