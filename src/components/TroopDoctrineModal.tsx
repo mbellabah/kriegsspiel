@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Shield, Swords, Flame, Flag, HelpCircle } from 'lucide-react';
+import { GlyphClose } from './glyphs';
 
 interface TroopDoctrineModalProps {
   isOpen: boolean;
@@ -13,14 +13,13 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
-      <div className="bg-[#f4f4f5] border-2 border-[#1e3a8a] shadow-2xl max-w-2xl w-full flex flex-col max-h-[85vh] font-sans text-neutral-900">
+      <div className="bg-[#f4f4f5] border-2 border-[#1e3a8a] shadow-sm max-w-2xl w-full flex flex-col max-h-[85vh] font-sans text-neutral-900">
         {/* Header */}
         <div className="bg-[#1e3a8a] text-white px-4 py-3 flex items-center justify-between border-b border-[#1e40af]">
           <div className="flex items-center gap-2">
-            <HelpCircle size={18} className="text-yellow-400" />
             <div>
-              <h2 className="text-sm font-bold uppercase tracking-wider">
-                WARGAMING DOCTRINE & TROOP CAPABILITIES MANUAL
+              <h2 className="text-sm font-bold">
+                Doctrine & troop capabilities
               </h2>
               <p className="text-[10px] text-blue-200">
                 Staff College Guide to Combined Arms, Formations & NATO APP-6 Symbology
@@ -29,9 +28,9 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
           </div>
           <button
             onClick={onClose}
-            className="text-white/80 hover:text-white p-1 hover:bg-white/10 rounded transition-colors"
+            className="text-white/80 hover:text-white p-1 hover:bg-white/10 transition-colors"
           >
-            <X size={18} />
+            <GlyphClose size={12} />
           </button>
         </div>
 
@@ -45,7 +44,6 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
                 : 'border-transparent text-neutral-600 hover:text-neutral-900'
             }`}
           >
-            <Swords size={13} />
             <span>Infantry [ X ]</span>
           </button>
           <button
@@ -56,7 +54,6 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
                 : 'border-transparent text-neutral-600 hover:text-neutral-900'
             }`}
           >
-            <Shield size={13} />
             <span>Cavalry [ / ]</span>
           </button>
           <button
@@ -67,7 +64,6 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
                 : 'border-transparent text-neutral-600 hover:text-neutral-900'
             }`}
           >
-            <Flame size={13} />
             <span>Artillery [ ART ]</span>
           </button>
           <button
@@ -78,7 +74,6 @@ export const TroopDoctrineModal: React.FC<TroopDoctrineModalProps> = ({ isOpen, 
                 : 'border-transparent text-neutral-600 hover:text-neutral-900'
             }`}
           >
-            <Flag size={13} />
             <span>HQ & Supply</span>
           </button>
           <button

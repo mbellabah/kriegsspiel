@@ -1,26 +1,6 @@
 import React, { useState } from 'react';
 import { BattleEngine, SimulationState } from '../engine/simulation';
-import {
-  Play,
-  Pause,
-  RotateCcw,
-  Users,
-  MessageSquare,
-  Eye,
-  EyeOff,
-  Shield,
-  Map,
-  Crosshair,
-  Target,
-  BookOpen,
-  Layers,
-  ChevronDown,
-  Check,
-  ShieldAlert,
-  Send,
-  Scale,
-  Mountain,
-} from 'lucide-react';
+import { GlyphChevron, GlyphCheck, GlyphClose } from './glyphs';
 import { REALISTIC_AUSTERLITZ_SCENARIO } from '../data/austerlitzScenario';
 import { sounds } from '../engine/soundEffects';
 import { TroopFilterType } from '../types/game';
@@ -152,8 +132,7 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
           className="flex items-center gap-1.5 px-3 py-1 bg-[#d4d4d8] border border-[#a1a1aa] text-black text-xs shadow-sm hover:bg-[#e4e4e7] cursor-pointer"
           title="Exit Broadcast Mode (Hotkey: C)"
         >
-          <Eye size={13} />
-          <span>SHOW UI (C)</span>
+          <span>Show UI (C)</span>
         </button>
       </div>
     );
@@ -172,10 +151,7 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
       {/* CLUSTER 1: Pace & Chronograph (Brand, Run/Pause, Speed Popover, Clock, Scrubber) */}
       <div className="flex items-center gap-2.5">
         {/* Brand Pill */}
-        <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#1e3a8a] text-white border border-[#1e40af] text-[10px] tracking-wider uppercase shadow-inner">
-          <Shield size={11} />
-          <span className="font-bold">AUSTERLITZ 1805</span>
-        </div>
+        <div className="text-[11px] font-bold tracking-tight pr-1">Austerlitz 1805</div>
 
         {/* Sim Controls Pill */}
         <div className="flex items-center gap-1 bg-[#d4d4d8] border border-[#a1a1aa] p-0.5 shadow-inner">
@@ -183,15 +159,14 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
           <button
             type="button"
             onClick={handleTogglePlay}
-            className={`flex items-center gap-1 px-2.5 py-0.5 text-[10px] uppercase font-bold border transition-all cursor-pointer active:scale-95 select-none ${
+            className={`w-12 py-0.5 text-[10px] font-semibold border transition-colors cursor-pointer select-none ${
               state.isRunning
-                ? 'bg-[#dc2626] border-[#b91c1c] text-white shadow-inner'
-                : 'bg-[#15803d] border-[#166534] text-white hover:bg-[#16a34a]'
+                ? 'bg-[#1e3a8a] border-[#1e3a8a] text-white'
+                : 'bg-white border-[#a1a1aa] text-black hover:bg-[#f4f4f5]'
             }`}
             title="Start / Pause Simulation (Spacebar)"
           >
-            {state.isRunning ? <Pause size={11} /> : <Play size={11} />}
-            <span>{state.isRunning ? 'PAUSE' : 'RUN'}</span>
+            <span>{state.isRunning ? 'Pause' : 'Run'}</span>
           </button>
 
           {/* Compact Speed Dropdown Selector */}
@@ -202,14 +177,14 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
               className="flex items-center gap-1 px-1.5 py-0.5 text-xs font-mono font-bold uppercase bg-[#f4f4f5] hover:bg-white text-neutral-800 border border-[#a1a1aa] transition-colors cursor-pointer select-none"
               title="Simulation Speed Multiplier"
             >
-              <span>{state.speedMultiplier === 0.5 ? '0.5X' : `${state.speedMultiplier}X`}</span>
-              <ChevronDown size={10} className={`transition-transform ${isSpeedOpen ? 'rotate-180' : ''}`} />
+              <span>{`${state.speedMultiplier}×`}</span>
+              <GlyphChevron dir={isSpeedOpen ? 'up' : 'down'} size={10} />
             </button>
 
             {isSpeedOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setIsSpeedOpen(false)} />
-                <div className="absolute left-0 top-full mt-1 z-50 w-36 bg-[#f4f4f5] border-2 border-[#a1a1aa] shadow-xl p-1 flex flex-col gap-0.5 text-black text-xs font-mono">
+                <div className="absolute left-0 top-full mt-1 z-50 w-36 bg-[#f4f4f5] border-2 border-[#a1a1aa] shadow-sm p-1 flex flex-col gap-0.5 text-black text-xs font-mono">
                   <div className="text-[9px] font-bold text-neutral-500 uppercase px-1.5 py-0.5 border-b border-[#a1a1aa]">
                     Pace Multiplier
                   </div>
@@ -223,12 +198,12 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
                           setIsSpeedOpen(false);
                           try { sounds.playClick(); } catch {}
                         }}
-                        className={`flex items-center justify-between px-2 py-1 text-left rounded text-[11px] font-bold cursor-pointer transition-colors ${
+                        className={`flex items-center justify-between px-2 py-1 text-left text-[11px] font-bold cursor-pointer transition-colors ${
                           isActive ? 'bg-[#1e3a8a] text-white' : 'hover:bg-white text-neutral-800'
                         }`}
                       >
-                        <span>{s === 0.5 ? '0.5X (Tactical)' : s === 1 ? '1.0X (Real)' : s === 2 ? '2.0X (Brisk)' : '5.0X (Fast)'}</span>
-                        {isActive && <Check size={11} />}
+                        <span>{`${s}×`}</span>
+                        {isActive && <GlyphCheck size={11} />}
                       </button>
                     );
                   })}
@@ -238,10 +213,9 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
                       engine.resetBattle();
                       setIsSpeedOpen(false);
                     }}
-                    className="flex items-center gap-1.5 px-2 py-1 text-left rounded text-[10px] font-bold text-neutral-700 hover:bg-white cursor-pointer"
+                    className="flex items-center gap-1.5 px-2 py-1 text-left text-[10px] font-bold text-neutral-700 hover:bg-white cursor-pointer"
                     title="Reset Simulation to 07:00 AM"
                   >
-                    <RotateCcw size={11} />
                     <span>Reset (07:00)</span>
                   </button>
                 </div>
@@ -253,10 +227,10 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
           <button
             type="button"
             onClick={() => engine.resetBattle()}
-            className="p-1 text-neutral-600 hover:text-black hover:bg-white rounded transition-colors cursor-pointer"
+            className="px-1.5 py-0.5 text-[10px] font-bold text-neutral-600 hover:text-black hover:bg-white transition-colors cursor-pointer"
             title="Reset Simulation to 07:00 AM"
           >
-            <RotateCcw size={11} />
+            Reset
           </button>
         </div>
 
@@ -289,14 +263,13 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
               className="flex items-center gap-1.5 px-2 py-0.5 bg-[#f4f4f5] hover:bg-white border border-[#a1a1aa] text-[10px] font-mono shadow-inner select-none cursor-pointer"
               title="Click to view detailed 3:1 Sector Force Ratios"
             >
-              <Scale size={11} className="text-[#1e3a8a]" />
-              <span className="font-bold text-[#1e3a8a] tracking-tight">RATIOS:</span>
+              <span className="text-neutral-500 font-sans">Force ratio</span>
               <span
-                className={`px-1 rounded text-[9px] font-bold ${
+                className={`px-1 text-[9px] font-bold ${
                   state.sectorForceRatios.north.status === 'favorable'
                     ? 'bg-blue-100 text-blue-800'
                     : state.sectorForceRatios.north.status === 'critical'
-                    ? 'bg-red-100 text-red-700 animate-pulse'
+                    ? 'bg-red-100 text-red-700 '
                     : 'text-neutral-700'
                 }`}
               >
@@ -304,11 +277,11 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
               </span>
               <span className="text-neutral-300">|</span>
               <span
-                className={`px-1 rounded text-[9px] font-bold ${
+                className={`px-1 text-[9px] font-bold ${
                   state.sectorForceRatios.center.status === 'favorable'
                     ? 'bg-blue-100 text-blue-800'
                     : state.sectorForceRatios.center.status === 'critical'
-                    ? 'bg-red-100 text-red-700 animate-pulse'
+                    ? 'bg-red-100 text-red-700 '
                     : 'text-neutral-700'
                 }`}
               >
@@ -316,26 +289,25 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
               </span>
               <span className="text-neutral-300">|</span>
               <span
-                className={`px-1 rounded text-[9px] font-bold ${
+                className={`px-1 text-[9px] font-bold ${
                   state.sectorForceRatios.south.status === 'favorable'
                     ? 'bg-blue-100 text-blue-800'
                     : state.sectorForceRatios.south.status === 'critical'
-                    ? 'bg-red-100 text-red-700 animate-pulse'
+                    ? 'bg-red-100 text-red-700 '
                     : 'text-neutral-700'
                 }`}
               >
                 S {state.sectorForceRatios.south.ratio.toFixed(1)}:1
               </span>
-              <ChevronDown size={10} className={`transition-transform ${isRatiosOpen ? 'rotate-180' : ''}`} />
+              <GlyphChevron dir={isRatiosOpen ? 'up' : 'down'} size={10} />
             </button>
 
             {isRatiosOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setIsRatiosOpen(false)} />
-                <div className="absolute left-0 top-full mt-1 z-50 w-64 bg-[#f4f4f5] border-2 border-[#a1a1aa] shadow-xl p-2 flex flex-col gap-1.5 text-black font-sans text-xs">
+                <div className="absolute left-0 top-full mt-1 z-50 w-64 bg-[#f4f4f5] border-2 border-[#a1a1aa] shadow-sm p-2 flex flex-col gap-1.5 text-black font-sans text-xs">
                   <div className="text-[10px] font-bold text-neutral-600 uppercase border-b border-[#a1a1aa] pb-1 flex items-center justify-between">
                     <span>NATO 3:1 Combat Power Assessment</span>
-                    <Scale size={11} className="text-[#1e3a8a]" />
                   </div>
                   <div className="space-y-1 text-[11px] font-mono">
                     <div className="flex justify-between items-center bg-white p-1 border border-neutral-300">
@@ -362,7 +334,8 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
 
         {/* Casualty Box */}
         <div className="flex items-center gap-2 text-[10px] font-mono bg-[#f4f4f5] px-2 py-0.5 border border-[#a1a1aa] shadow-inner font-bold uppercase tracking-tight">
-          <span className="text-[#1d4ed8]">FRA {Math.floor(state.frenchLosses).toLocaleString()}</span>
+          <span className="text-neutral-500 font-sans normal-case font-normal">Losses</span>
+          <span className="text-[#1e3a8a]">FRA {Math.floor(state.frenchLosses).toLocaleString()}</span>
           <span className="text-neutral-400">|</span>
           <span className="text-[#b91c1c]">ALL {Math.floor(state.alliedLosses).toLocaleString()}</span>
         </div>
@@ -374,40 +347,32 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
         <div className="relative">
           <button
             onClick={() => setIsLayersOpen((prev) => !prev)}
-            className={`flex items-center gap-1 px-2 py-0.5 text-[10px] uppercase font-bold border transition-colors cursor-pointer ${
-              isLayersOpen || showHexGrid || state.fogOfWarEnabled || showRangeRings || state.showOperationalGraphics || activeFilter !== 'all'
-                ? 'bg-[#1e3a8a] text-white border-[#1e40af]'
-                : 'bg-[#f4f4f5] text-neutral-700 border-[#a1a1aa] hover:bg-white'
+            className={`flex items-center gap-1 h-6 px-2.5 text-[10px] font-semibold border transition-colors cursor-pointer ${
+              isLayersOpen ? 'bg-[#1e3a8a] text-white border-[#1e3a8a]' : 'bg-white text-neutral-700 border-[#a1a1aa] hover:bg-[#f4f4f5]'
             }`}
             title="Configure Map Overlays, Troop Filters, and Symbology"
           >
-            <Layers size={11} />
-            <span>VIEW & LAYERS{activeFilter !== 'all' ? ` (${activeFilter.toUpperCase()})` : ''}</span>
-            <ChevronDown size={11} className={`transition-transform ${isLayersOpen ? 'rotate-180' : ''}`} />
+            <span>Layers{activeFilter !== 'all' ? ` · ${activeFilter}` : ''}</span>
+            <GlyphChevron dir={isLayersOpen ? 'up' : 'down'} size={10} />
           </button>
 
           {isLayersOpen && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setIsLayersOpen(false)} />
 
-              <div className="absolute right-0 top-full mt-1.5 z-50 w-64 bg-[#f4f4f5] border-2 border-[#a1a1aa] shadow-xl p-2 flex flex-col gap-1.5 text-black font-sans text-xs">
-                {/* 1. Troop Category Filter Rail */}
-                <div className="text-[10px] font-bold text-neutral-600 uppercase px-1 border-b border-[#a1a1aa] pb-1">
-                  Troop Filter
-                </div>
-                <div className="grid grid-cols-5 gap-1 bg-[#d4d4d8] p-1 border border-[#a1a1aa]">
-                  {(['all', 'infantry', 'cavalry', 'artillery', 'headquarters'] as TroopFilterType[]).map((f) => {
-                    const label = f === 'all' ? `ALL (${aliveUnits.length})` : f === 'infantry' ? `INF (${infCount})` : f === 'cavalry' ? `CAV (${cavCount})` : f === 'artillery' ? `ART (${artCount})` : `HQ (${hqCount})`;
-                    const shortLabel = f === 'all' ? 'ALL' : f === 'infantry' ? 'INF' : f === 'cavalry' ? 'CAV' : f === 'artillery' ? 'ART' : 'HQ';
+              <div className="absolute right-0 top-full mt-1 z-50 w-64 bg-[#fbfbfa] border border-[#a1a1aa] shadow-sm text-black font-sans text-[11px]">
+                <div className="px-2 pt-2 pb-1 text-[9px] font-mono font-bold uppercase tracking-wider text-neutral-500">Show friendly</div>
+                <div className="grid grid-cols-5 mx-2 border border-[#a1a1aa]">
+                  {(['all', 'infantry', 'cavalry', 'artillery', 'headquarters'] as TroopFilterType[]).map((f, i) => {
+                    const count = f === 'all' ? aliveUnits.length : f === 'infantry' ? infCount : f === 'cavalry' ? cavCount : f === 'artillery' ? artCount : hqCount;
+                    const shortLabel = f === 'all' ? 'All' : f === 'infantry' ? 'Inf' : f === 'cavalry' ? 'Cav' : f === 'artillery' ? 'Arty' : 'HQ';
                     return (
                       <button
                         key={f}
                         onClick={() => onSelectFilter(f)}
-                        title={label}
-                        className={`py-0.5 text-[9px] uppercase font-bold text-center border transition-colors cursor-pointer ${
-                          activeFilter === f
-                            ? 'bg-[#1e3a8a] text-white border-[#1e40af]'
-                            : 'bg-[#f4f4f5] text-neutral-700 border-transparent hover:bg-white'
+                        title={`${shortLabel} (${count})`}
+                        className={`h-5 text-[10px] text-center cursor-pointer ${i > 0 ? 'border-l border-[#a1a1aa]' : ''} ${
+                          activeFilter === f ? 'bg-[#1e3a8a] text-white' : 'bg-white text-neutral-700 hover:bg-[#f4f4f5]'
                         }`}
                       >
                         {shortLabel}
@@ -416,214 +381,112 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
                   })}
                 </div>
 
-                {/* 2. Tactical Symbology Mode */}
-                <div className="text-[10px] font-bold text-neutral-600 uppercase px-1 border-b border-[#a1a1aa] pb-1 mt-1">
-                  Symbology & Doctrine
-                </div>
-                <button
-                  onClick={() => engine.toggleSymbologyMode()}
-                  className="flex items-center justify-between px-2 py-1 text-left text-[11px] font-semibold hover:bg-white border border-transparent hover:border-[#a1a1aa] cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-neutral-600 font-bold text-xs">◇</span>
-                    <span>NATO APP-6 (◇ OPFOR)</span>
-                  </div>
-                  {state.wargameSymbology === 'nato' && <Check size={13} className="text-[#1e3a8a]" />}
-                </button>
-
-                <button
-                  onClick={() => engine.toggleFullHistoricalReplay()}
-                  className="flex items-center justify-between px-2 py-1 text-left text-[11px] font-semibold hover:bg-white border border-transparent hover:border-[#a1a1aa] cursor-pointer"
-                  title="Player Direct Command: French units stand fast awaiting orders. Historical Demo Replay: AI executes Napoleon's maneuvers automatically."
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-neutral-600 font-bold text-xs">⚑</span>
-                    <span>{state.isFullHistoricalReplay ? 'Demo: Historical Replay' : 'Player Direct Command'}</span>
-                  </div>
-                  {!state.isFullHistoricalReplay && <Check size={13} className="text-[#1e3a8a]" />}
-                </button>
-
-                {/* 3. Cartographic & Tactical Overlays */}
-                <div className="text-[10px] font-bold text-neutral-600 uppercase px-1 border-b border-[#a1a1aa] pb-1 mt-1">
-                  Map Overlays
-                </div>
-
-                {/* Topography */}
-                <button
-                  onClick={() => engine.toggleTopography()}
-                  className="flex items-center justify-between px-2 py-1 text-left text-[11px] font-semibold hover:bg-white border border-transparent hover:border-[#a1a1aa] cursor-pointer"
-                  title="Toggle NATO Military Topographic Contour Levels, Spot Elevations & Hypsometric Relief (T)"
-                >
-                  <div className="flex items-center gap-2">
-                    <Mountain size={12} className="text-amber-800" />
-                    <span>Topography & Contours (T)</span>
-                  </div>
-                  {state.showTopography !== false && <Check size={13} className="text-[#1e3a8a]" />}
-                </button>
-
-                {/* Range Rings */}
-                <button
-                  onClick={onToggleRangeRings}
-                  className="flex items-center justify-between px-2 py-1 text-left text-[11px] font-semibold hover:bg-white border border-transparent hover:border-[#a1a1aa] cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    <Crosshair size={12} />
-                    <span>Range Rings (R)</span>
-                  </div>
-                  {showRangeRings && <Check size={13} className="text-[#1e3a8a]" />}
-                </button>
-
-                {/* Killzones */}
-                <button
-                  onClick={() => engine.toggleArtilleryKillzones()}
-                  className="flex items-center justify-between px-2 py-1 text-left text-[11px] font-semibold hover:bg-white border border-transparent hover:border-[#a1a1aa] cursor-pointer"
-                  title="Toggle Artillery Killzone & Dispersion Footprints (K)"
-                >
-                  <div className="flex items-center gap-2">
-                    <Target size={12} />
-                    <span>Artillery Killzones (K)</span>
-                  </div>
-                  {state.showArtilleryKillzones && <Check size={13} className="text-[#1e3a8a]" />}
-                </button>
-
-                {/* C2 Graphics & TRPs */}
-                <button
-                  onClick={() => engine.toggleOperationalGraphics()}
-                  className="flex items-center justify-between px-2 py-1 text-left text-[11px] font-semibold hover:bg-white border border-transparent hover:border-[#a1a1aa] cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    <Map size={12} />
-                    <span>C2 Graphics & TRPs</span>
-                  </div>
-                  {state.showOperationalGraphics && <Check size={13} className="text-[#1e3a8a]" />}
-                </button>
-
-                {/* Corps & C2 Overlay */}
-                {onToggleCorpsOverlay && (
+                <div className="px-2 pt-3 pb-1 text-[9px] font-mono font-bold uppercase tracking-wider text-neutral-500">Layers</div>
+                {[
+                  { label: 'Contours and relief', key: 'T', on: state.showTopography !== false, toggle: () => engine.toggleTopography() },
+                  { label: 'Control measures', key: '', on: state.showOperationalGraphics, toggle: () => engine.toggleOperationalGraphics() },
+                  { label: 'Range rings (all units)', key: 'R', on: showRangeRings, toggle: onToggleRangeRings },
+                  { label: 'Artillery beaten zones', key: 'K', on: !!state.showArtilleryKillzones, toggle: () => engine.toggleArtilleryKillzones() },
+                  ...(onToggleCorpsOverlay ? [{ label: 'Corps boundaries and C2 links', key: 'C', on: showCorpsOverlay, toggle: onToggleCorpsOverlay }] : []),
+                  { label: 'Hex grid', key: '', on: showHexGrid, toggle: onToggleHexGrid },
+                  { label: 'Fog of war', key: '', on: state.fogOfWarEnabled, toggle: () => engine.toggleFogOfWar() },
+                  { label: 'Hostile frames as diamonds', key: '', on: state.wargameSymbology === 'nato', toggle: () => engine.toggleSymbologyMode() },
+                ].map((l) => (
                   <button
-                    onClick={onToggleCorpsOverlay}
-                    className="flex items-center justify-between px-2 py-1 text-left text-[11px] font-semibold hover:bg-white border border-transparent hover:border-[#a1a1aa] cursor-pointer"
+                    key={l.label}
+                    onClick={l.toggle}
+                    className="w-full flex items-center gap-2 px-2 h-6 text-left hover:bg-[#f4f4f5] cursor-pointer"
                   >
-                    <div className="flex items-center gap-2">
-                      <Users size={12} />
-                      <span>Corps & C2 Links (C)</span>
-                    </div>
-                    {showCorpsOverlay && <Check size={13} className="text-[#1e3a8a]" />}
+                    <span className={`w-3 h-3 border flex items-center justify-center flex-shrink-0 ${l.on ? 'bg-[#1e3a8a] border-[#1e3a8a] text-white' : 'bg-white border-[#71717a]'}`}>
+                      {l.on && <GlyphCheck size={9} />}
+                    </span>
+                    <span className="flex-1">{l.label}</span>
+                    {l.key && <span className="font-mono text-[9px] text-neutral-400">{l.key}</span>}
                   </button>
-                )}
+                ))}
 
-                {/* Tactical Grid */}
-                <button
-                  onClick={onToggleHexGrid}
-                  className="flex items-center justify-between px-2 py-1 text-left text-[11px] font-semibold hover:bg-white border border-transparent hover:border-[#a1a1aa] cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-neutral-500">#</span>
-                    <span>Tactical Grid</span>
-                  </div>
-                  {showHexGrid && <Check size={13} className="text-[#1e3a8a]" />}
-                </button>
+                <div className="px-2 pt-3 pb-1 flex items-baseline justify-between">
+                  <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-neutral-500">Control measures</span>
+                  <span className="text-[9px] text-neutral-400">draw from the status bar</span>
+                </div>
+                <div className="max-h-40 overflow-y-auto custom-scrollbar border-t border-[#e4e4e7]">
+                  {(state.operationalGraphics || []).map((g) => (
+                    <div key={g.id} className="flex items-center gap-2 px-2 h-6 border-b border-[#e4e4e7] hover:bg-[#f4f4f5]">
+                      <span className="font-mono text-[9px] text-neutral-400 w-8">
+                        {g.type === 'phase_line' ? 'PL' : g.type === 'objective' ? 'OBJ' : g.type === 'fscl' ? 'FSCL' : 'BDY'}
+                      </span>
+                      <span className="flex-1 truncate">{g.name}</span>
+                      <button
+                        onClick={() => engine.removeOperationalGraphic(g.id)}
+                        className="p-0.5 text-neutral-400 hover:text-black cursor-pointer"
+                        title="Delete"
+                      >
+                        <GlyphClose size={9} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
 
-                {/* Fog of War */}
-                <button
-                  onClick={() => engine.toggleFogOfWar()}
-                  className="flex items-center justify-between px-2 py-1 text-left text-[11px] font-semibold hover:bg-white border border-transparent hover:border-[#a1a1aa] cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    {state.fogOfWarEnabled ? <EyeOff size={12} /> : <Eye size={12} />}
-                    <span>Fog of War (Mist)</span>
-                  </div>
-                  {state.fogOfWarEnabled && <Check size={13} className="text-[#1e3a8a]" />}
-                </button>
+                <div className="px-2 py-1.5 border-t border-[#a1a1aa] mt-1">
+                  <button
+                    onClick={() => engine.toggleFullHistoricalReplay()}
+                    className="w-full flex items-center gap-2 h-5 text-left hover:bg-[#f4f4f5] cursor-pointer"
+                    title="Off: French units wait for your orders. On: the AI replays Napoleon's historical manoeuvres."
+                  >
+                    <span className={`w-3 h-3 border flex items-center justify-center flex-shrink-0 ${state.isFullHistoricalReplay ? 'bg-[#1e3a8a] border-[#1e3a8a] text-white' : 'bg-white border-[#71717a]'}`}>
+                      {state.isFullHistoricalReplay && <GlyphCheck size={9} />}
+                    </span>
+                    <span>Historical replay (AI commands France)</span>
+                  </button>
+                </div>
               </div>
             </>
           )}
         </div>
 
-        {/* CLUSTER 4: Staff Hubs (SITREP, DISPATCH, ORBAT, LOG, MANUAL) */}
-        <div className="flex items-center gap-1 bg-[#d4d4d8] border border-[#a1a1aa] p-0.5 shadow-inner">
-          {/* SITREP Trigger */}
-          <button
-            type="button"
-            onClick={() => handleTabClick('sitrep')}
-            className={`flex items-center gap-1 px-2 py-0.5 text-[10px] uppercase font-bold border transition-colors relative cursor-pointer ${
-              isTabActive('sitrep')
-                ? 'bg-[#1e3a8a] text-white border-[#1e40af] shadow-xs'
-                : unreadContactsCount > 0
-                ? 'bg-red-50 text-red-700 border-red-500 hover:bg-red-100 animate-pulse'
-                : needsReinforcementsCount > 0
-                ? 'bg-amber-50 text-amber-800 border-amber-400 hover:bg-amber-100 animate-pulse'
-                : 'bg-[#f4f4f5] text-neutral-700 border-transparent hover:bg-white'
-            }`}
-            title="Toggle General SITREP (Active Contacts & Sector Engagements)"
-          >
-            <ShieldAlert size={11} className={unreadContactsCount > 0 || needsReinforcementsCount > 0 ? 'text-red-600' : ''} />
-            <span>SITREP</span>
-            {unreadContactsCount > 0 ? (
-              <span className="px-1 py-0.1 rounded text-[8px] font-bold bg-red-600 text-white animate-bounce">
-                {unreadContactsCount} NEW
-              </span>
-            ) : activeEngagementsCount > 0 ? (
-              <span
-                className={`px-1 py-0.1 rounded text-[8px] font-bold ${
-                  needsReinforcementsCount > 0 ? 'bg-red-600 text-white' : 'bg-[#1e3a8a] text-white'
+        {/* Staff panels */}
+        <div className="flex items-stretch h-6 border border-[#a1a1aa] bg-white">
+          {([
+            { id: 'sitrep', label: 'SITREP', title: 'Contacts and sector engagements' },
+            { id: 'dispatch', label: 'Orders', title: 'Write and transmit orders (Alt+D or `)' },
+            { id: 'orbat', label: 'ORBAT', title: 'Order of battle' },
+            { id: 'log', label: 'Log', title: 'Battle log' },
+          ] as const).map((t, i) => {
+            const active = isTabActive(t.id);
+            const badge =
+              t.id === 'sitrep'
+                ? unreadContactsCount > 0
+                  ? { text: `${unreadContactsCount}`, alert: true }
+                  : activeEngagementsCount > 0
+                  ? { text: `${activeEngagementsCount}`, alert: needsReinforcementsCount > 0 }
+                  : null
+                : null;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => handleTabClick(t.id)}
+                title={t.title}
+                className={`flex items-center gap-1.5 px-2.5 text-[10px] font-semibold cursor-pointer transition-colors ${i > 0 ? 'border-l border-[#a1a1aa]' : ''} ${
+                  active ? 'bg-[#1e3a8a] text-white' : 'text-neutral-700 hover:bg-[#f4f4f5]'
                 }`}
               >
-                {activeEngagementsCount}
-              </span>
-            ) : null}
-          </button>
-
-          {/* DISPATCH Trigger */}
-          <button
-            type="button"
-            onClick={() => handleTabClick('dispatch')}
-            className={`flex items-center gap-1.5 px-2.5 py-0.5 text-[10px] uppercase font-bold border transition-all cursor-pointer select-none active:scale-95 ${
-              isTabActive('dispatch')
-                ? 'bg-[#1e3a8a] text-white border-[#1e40af] shadow-xs'
-                : 'bg-blue-100 text-[#1e3a8a] border-blue-300 hover:bg-blue-200'
-            }`}
-            title="Operational Dispatch Desk: Dictate orders to field commanders (Alt+D or `)"
-          >
-            <Send size={11} />
-            <span>DISPATCH</span>
-          </button>
-
-          {/* ORBAT Trigger */}
-          <button
-            type="button"
-            onClick={() => handleTabClick('orbat')}
-            className={`flex items-center gap-1 px-2 py-0.5 text-[10px] uppercase font-bold border transition-colors cursor-pointer ${
-              isTabActive('orbat') ? 'bg-[#1e3a8a] text-white border-[#1e40af]' : 'bg-[#f4f4f5] text-neutral-700 border-transparent hover:bg-white'
-            }`}
-            title="Toggle Order of Battle (ORBAT)"
-          >
-            <Users size={11} />
-            <span>ORBAT</span>
-          </button>
-
-          {/* LOG Trigger */}
-          <button
-            type="button"
-            onClick={() => handleTabClick('log')}
-            className={`flex items-center gap-1 px-2 py-0.5 text-[10px] uppercase font-bold border transition-colors cursor-pointer ${
-              isTabActive('log') ? 'bg-[#1e3a8a] text-white border-[#1e40af]' : 'bg-[#f4f4f5] text-neutral-700 border-transparent hover:bg-white'
-            }`}
-            title="Toggle Combat Dispatches & Event Log"
-          >
-            <MessageSquare size={11} />
-            <span>LOG</span>
-          </button>
-
-          {/* MANUAL Trigger */}
+                <span>{t.label}</span>
+                {badge && (
+                  <span className={`min-w-[14px] px-1 text-[8.5px] font-mono font-bold leading-[13px] text-white ${badge.alert ? 'bg-[#b91c1c]' : 'bg-[#52525b]'}`}>
+                    {badge.text}
+                  </span>
+                )}
+              </button>
+            );
+          })}
           <button
             type="button"
             onClick={onToggleDoctrine}
-            title="Open Tactical Doctrine & Symbology Manual"
-            className="flex items-center gap-1 px-2 py-0.5 text-[10px] uppercase font-bold border bg-[#f4f4f5] text-neutral-700 border-transparent hover:bg-white cursor-pointer"
+            title="Doctrine and symbology reference"
+            className="px-2.5 text-[10px] font-semibold border-l border-[#a1a1aa] text-neutral-700 hover:bg-[#f4f4f5] cursor-pointer"
           >
-            <BookOpen size={11} />
-            <span>MANUAL</span>
+            Manual
           </button>
         </div>
       </div>

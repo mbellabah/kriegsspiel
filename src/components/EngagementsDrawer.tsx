@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ActiveEngagement, Vector2D, SitrepNotification } from '../types/game';
-import { Crosshair, AlertTriangle, Users, Flame, X, ChevronLeft, ChevronRight, Radio } from 'lucide-react';
+import { GlyphClose, GlyphChevron } from './glyphs';
 
 interface EngagementsDrawerProps {
   isOpen: boolean;
@@ -49,7 +49,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
       <div className="fixed top-12 left-3 z-30 select-none font-sans">
         <button
           onClick={() => setIsMinimized(false)}
-          className={`flex items-center gap-1.5 px-2.5 py-1 border-2 text-[10px] font-bold uppercase tracking-wider transition-colors shadow-md ${
+          className={`flex items-center gap-1.5 px-2.5 py-1 border-2 text-[10px] font-bold uppercase tracking-wider transition-colors shadow-sm ${
             totalThreats > 0
               ? 'bg-red-50 border-red-500 text-red-800 animate-pulse'
               : 'bg-[#e4e4e7] hover:bg-white border-[#a1a1aa] text-black'
@@ -59,11 +59,11 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
           <span className="w-1.5 h-1.5 rounded-full bg-[#1e3a8a] inline-block" />
           <span>SITREP ({engagements.length})</span>
           {totalThreats > 0 && (
-            <span className="px-1 py-0.2 rounded bg-red-600 text-white text-[8px] font-bold">
+            <span className="px-1 py-0.2 bg-red-600 text-white text-[8px] font-bold">
               {totalThreats} REINFORCE
             </span>
           )}
-          <ChevronRight size={13} className="text-neutral-600" />
+          <GlyphChevron dir="right" size={11} className="text-neutral-600" />
         </button>
       </div>
     );
@@ -71,7 +71,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
 
   const containerClasses = embedded
     ? "flex-1 min-h-0 flex flex-col overflow-hidden bg-[#f4f4f5] text-black font-sans select-none"
-    : "fixed top-12 left-3 z-30 w-72 max-h-[calc(100vh-64px)] bg-[#f4f4f5] border-2 border-[#a1a1aa] shadow-2xl rounded text-black font-sans select-none flex flex-col overflow-hidden animate-in slide-in-from-left-2 duration-150";
+    : "fixed top-12 left-3 z-30 w-72 max-h-[calc(100vh-64px)] bg-[#f4f4f5] border-2 border-[#a1a1aa] shadow-sm text-black font-sans select-none flex flex-col overflow-hidden animate-in slide-in-from-left-2 duration-150";
 
   const ContainerTag = embedded ? 'div' : 'aside';
 
@@ -94,17 +94,17 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
           <div className="flex items-center gap-1">
             <button
               onClick={() => setIsMinimized(true)}
-              className="p-1 text-neutral-600 hover:text-black hover:bg-[#d4d4d8] rounded transition-colors"
+              className="p-1 text-neutral-600 hover:text-black hover:bg-[#d4d4d8] transition-colors"
               title="Minimize SITREP"
             >
-              <ChevronLeft size={13} />
+              <GlyphChevron dir="left" size={11} />
             </button>
             <button
               onClick={onClose}
-              className="p-1 text-neutral-600 hover:text-black hover:bg-[#d4d4d8] rounded transition-colors"
+              className="p-1 text-neutral-600 hover:text-black hover:bg-[#d4d4d8] transition-colors"
               title="Close SITREP"
             >
-              <X size={13} />
+              <GlyphClose size={11} />
             </button>
           </div>
         </div>
@@ -125,8 +125,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
       {/* Urgent Reinforcement Banner if any */}
       {totalThreats > 0 && (
         <div className="px-2.5 py-1 bg-red-50 border-b border-red-300 flex items-center gap-1.5 text-red-800 text-[10px] font-bold tracking-wide animate-pulse">
-          <AlertTriangle size={12} className="text-red-600 flex-shrink-0" />
-          <span>{totalThreats} {totalThreats === 1 ? 'SECTOR REQUIRES' : 'SECTORS REQUIRE'} REINFORCEMENTS!</span>
+          <span>{totalThreats} {totalThreats === 1 ? 'sector requires' : 'sectors require'} reinforcements</span>
         </div>
       )}
 
@@ -150,7 +149,6 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
               : 'text-neutral-700 hover:bg-[#e4e4e7]'
           }`}
         >
-          <Radio size={10} className={sitreps.length > 0 ? 'text-red-600' : 'text-neutral-500'} />
           <span>Contacts ({sitreps.length})</span>
           {sitreps.some((s) => !s.read) && (
             <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-ping inline-block" />
@@ -164,8 +162,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
           /* Tactical In-Contact SITREPs List */
           sitreps.length === 0 ? (
             <div className="py-6 px-3 text-center text-neutral-500">
-              <Radio className="w-6 h-6 mx-auto mb-1.5 opacity-40 text-neutral-600" />
-              <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-600">No Contacts Reported</p>
+              <p className="text-[11px] font-bold text-neutral-600">No contacts reported</p>
               <p className="text-[9px] text-neutral-500 mt-0.5 leading-relaxed">
                 Battalions are not currently taking fire or in close melee contact.
               </p>
@@ -178,10 +175,10 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
                   <button
                     type="button"
                     onClick={onDismissAllSitreps}
-                    className="px-1.5 py-0.5 bg-white hover:bg-neutral-200 border border-neutral-300 text-neutral-800 text-[8.5px] font-bold uppercase rounded cursor-pointer transition-colors shadow-2xs"
+                    className="px-1.5 py-0.5 bg-white hover:bg-neutral-200 border border-neutral-300 text-neutral-800 text-[8.5px] font-bold cursor-pointer transition-colors"
                     title="Clear all contact reports"
                   >
-                    CLEAR ALL
+                    Clear all
                   </button>
                 </div>
               )}
@@ -199,14 +196,14 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
                 return (
                   <div
                     key={s.id}
-                    className={`p-2 bg-white border rounded shadow-xs transition-all ${
+                    className={`p-2 bg-white border shadow-xs transition-all ${
                       isCrisis ? 'border-red-400 bg-red-50' : 'border-[#a1a1aa]'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-1 mb-1">
                       <div className="flex items-center gap-1 min-w-0">
                         <span className="text-[9px] font-mono font-bold text-neutral-500">{s.formattedTime}</span>
-                        <span className={`px-1.5 py-0.2 rounded text-[8px] font-bold uppercase tracking-wider truncate ${badgeStyle}`}>
+                        <span className={`px-1.5 py-0.2 text-[8px] font-bold uppercase tracking-wider truncate ${badgeStyle}`}>
                           {s.headline.replace('IN CONTACT: ', '')}
                         </span>
                       </div>
@@ -219,10 +216,10 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
                               e.stopPropagation();
                               onDismissSitrep(s.id);
                             }}
-                            className="p-0.5 text-neutral-400 hover:text-black rounded transition-colors cursor-pointer"
+                            className="p-0.5 text-neutral-400 hover:text-black transition-colors cursor-pointer"
                             title="Dismiss contact report"
                           >
-                            <X size={11} />
+                            <GlyphClose size={10} />
                           </button>
                         )}
                       </div>
@@ -250,11 +247,10 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
                           onFocusSector(s.position);
                         }
                       }}
-                      className="px-2 py-0.5 bg-[#1e3a8a] hover:bg-[#1d4ed8] text-white text-[9px] font-bold uppercase tracking-wider rounded flex items-center gap-1 shadow-xs transition-transform active:scale-95 cursor-pointer"
+                      className="px-2 py-0.5 bg-[#1e3a8a] hover:bg-[#1d4ed8] text-white text-[9px] font-bold flex items-center gap-1 transition-transform active:scale-95 cursor-pointer"
                       title="Center camera on this unit and select it"
                     >
-                      <Crosshair size={10} />
-                      <span>LOCATE</span>
+                      <span>Locate</span>
                     </button>
                   </div>
                 </div>
@@ -266,8 +262,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
           /* Sector Engagements List */
           engagements.length === 0 ? (
             <div className="py-6 px-3 text-center text-neutral-500">
-              <Users className="w-6 h-6 mx-auto mb-1.5 opacity-40" />
-              <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-600">No Active Clashes</p>
+              <p className="text-[11px] font-bold text-neutral-600">No active clashes</p>
               <p className="text-[9px] text-neutral-500 mt-0.5 leading-relaxed">
                 Troops are wheeling into position or maintaining standoff distances.
               </p>
@@ -289,34 +284,32 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
               return (
                 <div
                   key={eng.id}
-                  className={`p-2 bg-white border rounded shadow-sm transition-all ${
+                  className={`p-2 bg-white border shadow-sm transition-all ${
                     eng.needsReinforcements ? 'border-red-400 bg-red-50' : 'border-[#a1a1aa]'
                   }`}
                 >
                   {/* Sector Title & Badge */}
                   <div className="flex items-center justify-between gap-1 mb-1">
                     <div className="flex items-center gap-1 min-w-0">
-                      <Flame size={12} className="text-amber-600 flex-shrink-0" />
                       <span className="text-[11px] font-bold text-black truncate" title={eng.name}>
                         {eng.name.split('(')[0]}
                       </span>
                     </div>
 
-                    <span className={`px-1.5 py-0.2 rounded text-[8px] font-bold uppercase tracking-wider ${urgencyBadge.style}`}>
+                    <span className={`px-1.5 py-0.2 text-[8px] font-bold uppercase tracking-wider ${urgencyBadge.style}`}>
                       {urgencyBadge.text}
                     </span>
                   </div>
 
                   {/* Reinforcement tag */}
                   {eng.needsReinforcements && (
-                    <div className="my-1 bg-red-100 border border-red-400 text-red-800 text-[9px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 animate-pulse">
-                      <AlertTriangle size={10} className="text-red-600 flex-shrink-0" />
-                      <span>REINFORCEMENTS NEEDED</span>
+                    <div className="my-1 bg-red-100 border border-red-400 text-red-800 text-[9px] font-bold px-1.5 py-0.5 flex items-center gap-1 animate-pulse">
+                      <span>Reinforcements needed</span>
                     </div>
                   )}
 
                   {/* Force Strength & Ratio */}
-                  <div className="bg-[#f4f4f5] border border-[#d4d4d8] rounded p-1.5 my-1">
+                  <div className="bg-[#f4f4f5] border border-[#d4d4d8] p-1.5 my-1">
                     <div className="flex justify-between items-center text-[9px] font-mono mb-1">
                       <span className="text-[#1d4ed8] font-bold">
                         FRA {Math.round(friendlyTotal).toLocaleString()}
@@ -329,7 +322,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
                     </div>
 
                     {/* Ratio bar */}
-                    <div className="h-1 w-full bg-red-200 rounded-full overflow-hidden flex">
+                    <div className="h-1 w-full bg-red-200 overflow-hidden flex">
                       <div className="h-full bg-blue-600" style={{ width: `${friendlyPct}%` }} />
                       <div className="h-full bg-red-600" style={{ width: `${100 - friendlyPct}%` }} />
                     </div>
@@ -340,7 +333,7 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
                     {eng.friendlyUnits.map((u) => (
                       <span
                         key={u.id}
-                        className={`px-1 py-0.1 border text-[8px] font-mono font-bold rounded ${
+                        className={`px-1 py-0.1 border text-[8px] font-mono font-bold ${
                           u.status === 'routing'
                             ? 'bg-red-100 border-red-400 text-red-800'
                             : (u.status === 'wavering' || (u.morale <= 50 && u.morale > 25))
@@ -361,10 +354,9 @@ export const EngagementsDrawer: React.FC<EngagementsDrawerProps> = ({
                   {/* Focus Button */}
                   <button
                     onClick={() => onFocusSector(eng.sectorLocation)}
-                    className="w-full mt-1 py-0.5 px-2 bg-[#f4f4f5] hover:bg-[#e4e4e7] active:bg-[#d4d4d8] border border-[#a1a1aa] text-[9px] font-bold uppercase tracking-wider text-black flex items-center justify-center gap-1 transition shadow-xs cursor-pointer"
+                    className="w-full mt-1 py-0.5 px-2 bg-[#f4f4f5] hover:bg-[#e4e4e7] active:bg-[#d4d4d8] border border-[#a1a1aa] text-[9px] font-bold text-black flex items-center justify-center gap-1 transition cursor-pointer"
                   >
-                    <Crosshair size={11} className="text-[#1e3a8a]" />
-                    <span>FOCUS SECTOR</span>
+                    <span>Focus sector</span>
                   </button>
                 </div>
               );

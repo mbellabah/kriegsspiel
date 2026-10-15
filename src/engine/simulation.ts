@@ -201,35 +201,35 @@ export class BattleEngine {
           id: 'pl_goldbach',
           type: 'phase_line',
           name: 'PL GOLDBACH',
-          color: '#2563eb',
+          color: '#1e3a8a',
           points: [{ x: 1050, y: 100 }, { x: 1010, y: 700 }, { x: 940, y: 1250 }],
         },
         {
           id: 'pl_pratzen',
           type: 'phase_line',
           name: 'PL PRATZEN',
-          color: '#2563eb',
+          color: '#1e3a8a',
           points: [{ x: 1590, y: 400 }, { x: 1500, y: 735 }, { x: 1300, y: 1200 }],
         },
         {
           id: 'obj_pratzen',
           type: 'objective',
           name: 'OBJ PRATZEN',
-          color: '#dc2626',
+          color: '#1e3a8a',
           points: [{ x: 1500, y: 735 }],
         },
         {
           id: 'obj_sokolnitz',
           type: 'objective',
           name: 'OBJ SOKOLNITZ',
-          color: '#dc2626',
+          color: '#1e3a8a',
           points: [{ x: 960, y: 990 }],
         },
         {
           id: 'fscl_north',
           type: 'fscl',
           name: 'FSCL BLASOWITZ',
-          color: '#ea580c',
+          color: '#111111',
           points: [{ x: 1470, y: 270 }, { x: 1950, y: 270 }],
         },
       ],
@@ -574,6 +574,36 @@ export class BattleEngine {
     }
 
     return result as SectorForceRatios;
+  }
+
+  public addOperationalGraphic(graphic: OperationalGraphic) {
+    this.state.operationalGraphics = [...this.state.operationalGraphics, graphic];
+    this.state.showOperationalGraphics = true;
+    this.notify();
+  }
+
+  public removeOperationalGraphic(id: string) {
+    this.state.operationalGraphics = this.state.operationalGraphics.filter((g) => g.id !== id);
+    this.notify();
+  }
+
+  // Battle minutes for a formed body to march a straight route in column, sampling terrain every 20 px
+  public estimateMarchMinutes(from: Vector2D, to: Vector2D, unitType: Unit['type'] = 'infantry'): number {
+    const dist = Math.hypot(to.x - from.x, to.y - from.y);
+    if (dist < 1) return 0;
+    const heading = Math.atan2(to.y - from.y, to.x - from.x);
+    const baseVelocity = unitType === 'cavalry' ? 6.5 : unitType === 'artillery' ? 2.6 : unitType === 'headquarters' ? 5.0 : 3.8;
+    const columnMod = 1.25;
+    const steps = Math.max(1, Math.ceil(dist / 20));
+    let seconds = 0;
+    for (let i = 0; i < steps; i++) {
+      const t = (i + 0.5) / steps;
+      const p = { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
+      const mod = Math.max(0.05, this.getTerrainSpeedModifier(p, heading));
+      seconds += dist / steps / (baseVelocity * columnMod * mod);
+    }
+    // 1 real second at 1x = 0.5 battle minutes
+    return seconds * 0.5;
   }
 
   public toggleOperationalGraphics() {
@@ -1466,12 +1496,15 @@ export class BattleEngine {
   private addLog(message: string, faction: Unit['faction'], importance: CombatLogEntry['importance']) {
     this.logIdCounter++;
     const formatted = this.formatTime(this.state.timeMinutes);
+    // Attach the position of the first unit named in the entry so the log can jump the map there
+    const subject = this.state.units.find((u) => message.includes(u.name));
     this.state.combatLogs.unshift({
       id: `log_${this.logIdCounter}`,
       timeFormatted: formatted,
       message,
       faction,
       importance,
+      location: subject ? { ...subject.position } : undefined,
     });
     if (this.state.combatLogs.length > 60) {
       this.state.combatLogs.pop();

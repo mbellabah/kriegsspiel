@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Vector2D, Unit } from '../types/game';
 import { headingToBearing, getCardinalDirection } from '../engine/tacticalNavigation';
-import { Compass, ChevronDown, ChevronUp, Navigation, ArrowUpRight, Copy, Check } from 'lucide-react';
+import { GlyphChevron } from './glyphs';
 
 interface TacticalCompassProps {
   selectedUnit?: Unit | null;
@@ -98,23 +98,22 @@ export const TacticalCompass: React.FC<TacticalCompassProps> = ({
   return (
     <aside
       aria-label="Tactical Compass"
-      className={`bg-[#fbfbfa] border border-[#a1a1aa] shadow-md rounded text-neutral-900 font-sans select-none overflow-hidden transition-all duration-150 pointer-events-auto w-52 ${className}`}
+      className={`bg-[#fbfbfa] border border-[#a1a1aa] shadow-sm text-neutral-900 font-sans select-none overflow-hidden transition-all duration-150 pointer-events-auto w-52 ${className}`}
     >
       {/* Header Strip */}
       <div className="flex items-center justify-between px-2 py-1 bg-[#e4e4e7] border-b border-[#a1a1aa] text-[10px] font-mono">
         <div className="flex items-center gap-1.5 font-bold text-neutral-800">
-          <Compass size={12} className="text-[#1e3a8a]" />
-          <span className="uppercase tracking-wider">Tactical Compass</span>
+          <span>Compass</span>
         </div>
 
         <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={() => setIsMinimized((prev) => !prev)}
-            className="p-0.5 hover:bg-[#d4d4d8] text-neutral-600 hover:text-black rounded transition-colors cursor-pointer"
+            className="p-0.5 hover:bg-[#d4d4d8] text-neutral-600 hover:text-black transition-colors cursor-pointer"
             title={isMinimized ? 'Expand Compass' : 'Minimize Compass'}
           >
-            {isMinimized ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            <GlyphChevron dir={isMinimized ? 'up' : 'down'} size={11} />
           </button>
         </div>
       </div>
@@ -189,7 +188,7 @@ export const TacticalCompass: React.FC<TacticalCompassProps> = ({
                 {displayCardinal.mils} mil
               </div>
               {formattedDistance && (
-                <div className="text-[9px] font-mono font-bold text-blue-700 bg-blue-50 px-1 rounded mt-0.5 border border-blue-200">
+                <div className="text-[9px] font-mono font-bold text-blue-700 bg-blue-50 px-1 mt-0.5 border border-blue-200">
                   {formattedDistance}
                 </div>
               )}
@@ -201,15 +200,14 @@ export const TacticalCompass: React.FC<TacticalCompassProps> = ({
             <button
               type="button"
               onClick={onToggleDrawBearing}
-              className={`w-full flex items-center justify-center gap-1.5 py-1 px-1.5 text-[9px] font-mono font-bold uppercase transition-colors cursor-pointer border shadow-2xs ${
+              className={`w-full flex items-center justify-center gap-1.5 py-1 px-1.5 text-[9px] font-mono font-bold transition-colors cursor-pointer border ${
                 isDrawingBearing
                   ? 'bg-[#ea580c] hover:bg-[#c2410c] text-white border-[#9a3412] animate-pulse'
                   : 'bg-white hover:bg-neutral-100 text-neutral-800 border-neutral-300'
               }`}
               title="Click on map to draw bearing arrow (Hotkey: B)"
             >
-              <Navigation size={10} className={isDrawingBearing ? 'rotate-45' : ''} />
-              <span>{isDrawingBearing ? 'DRAWING ARROW... (ESC)' : 'DRAW BEARING (B)'}</span>
+              <span>{isDrawingBearing ? 'Drawing bearing… (Esc)' : 'Draw bearing (B)'}</span>
             </button>
 
             {/* Quick Actions Strip: Copy & Insert into Dispatch */}
@@ -220,8 +218,7 @@ export const TacticalCompass: React.FC<TacticalCompassProps> = ({
                 className="flex-1 flex items-center justify-center gap-1 py-0.5 px-1 bg-white hover:bg-neutral-100 border border-neutral-300 text-[8.5px] font-mono font-bold text-neutral-700 transition-colors cursor-pointer"
                 title="Copy bearing text to clipboard"
               >
-                {copied ? <Check size={9} className="text-green-600" /> : <Copy size={9} />}
-                <span>{copied ? 'COPIED' : 'COPY'}</span>
+                <span>{copied ? 'Copied' : 'Copy'}</span>
               </button>
 
               <button
@@ -231,8 +228,7 @@ export const TacticalCompass: React.FC<TacticalCompassProps> = ({
                 className="flex-1 flex items-center justify-center gap-1 py-0.5 px-1 bg-[#eff6ff] hover:bg-[#dbeafe] border border-[#93c5fd] text-[8.5px] font-mono font-bold text-[#1e3a8a] transition-colors cursor-pointer disabled:opacity-50"
                 title="Send bearing directly to Imperial Dispatch Desk"
               >
-                <ArrowUpRight size={9} />
-                <span>+ DISPATCH</span>
+                <span>To dispatch</span>
               </button>
             </div>
           </div>

@@ -445,6 +445,7 @@ export interface CombatLogEntry {
   message: string;
   faction: Faction;
   importance: 'normal' | 'highlight' | 'critical';
+  location?: Vector2D;
 }
 
 export interface BattleStateSnapshot {

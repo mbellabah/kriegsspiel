@@ -1,5 +1,7 @@
 import { Unit, ManeuverOrder, Vector2D, OperationalGraphic, TroopFilterType, TargetReferencePoint, Faction, ERA_WEAPON_PROFILES } from '../types/game';
 import { SimulationState, BattleEngine } from './simulation';
+import { eastingKm, northingKm, gridLineLabel, GRID_ZONE, GRID_SQUARE, PX_PER_KM, distanceMetres, gridBearing, degreesToMils, formatDistance, toGridRef } from './grid';
+import { getUnitSymbolFields, conditionColor, primaryStatusCode, APP6_FRAME, APP6_FRIEND_FILL, APP6_HOSTILE_FILL } from './symbology';
 
 export interface SmokeParticle {
   x: number;
@@ -51,6 +53,7 @@ export class SandtableRenderer {
 
   private smokeParticles: SmokeParticle[] = [];
   private animFrame: number = 0;
+  private viewZoom: number = 1;
   public showHexGrid: boolean = false;
   public showRangeRings: boolean = false;
   public showCorpsOverlay: boolean = false;
@@ -70,6 +73,8 @@ export class SandtableRenderer {
     }
   }
   public symbology: 'tactical' | 'nato' = 'nato';
+  public measure: { a: Vector2D; b: Vector2D; marchMinutes?: { infantry: number; cavalry: number; artillery: number } } | null = null;
+  public graphicDraft: { type: 'phase_line' | 'boundary' | 'objective'; name: string; points: Vector2D[]; cursor: Vector2D | null } | null = null;
   public activeFilter: TroopFilterType = 'all';
   public mapTheme: 'classic' | 'dark' | 'slate' = 'classic';
   private fowCanvas: HTMLCanvasElement | null = null;
@@ -96,6 +101,7 @@ export class SandtableRenderer {
     const { ctx, canvas } = this;
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     this.animFrame++;
+    this.viewZoom = camera.zoom;
 
     // Ensure physical canvas backing store matches CSS dimensions * DPR (avoids getBoundingClientRect layout thrashing)
     const cssW = canvas.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 2400);
@@ -195,6 +201,10 @@ export class SandtableRenderer {
 
     // 13. Gunpowder Smoke Drifting with Cold Winter Winds
     this.updateAndRenderEffects(ctx, state);
+
+    // 13.5 Operator tools: control measure being drawn and the ruler
+    this.renderGraphicDraft(ctx);
+    this.renderMeasureLine(ctx);
 
     // 14. Authentic Lower-Right Cartouche & Map Legend
     this.renderAtlasCartouche(ctx, state);
@@ -877,7 +887,7 @@ export class SandtableRenderer {
 
     // Easting coordinates (X-axis)
     for (let x = gridSpacing; x < 2400; x += gridSpacing) {
-      const label = String(x).padStart(4, '0');
+      const label = gridLineLabel(eastingKm(x));
       // Top tick
       ctx.beginPath();
       ctx.moveTo(x, -5); ctx.lineTo(x, 5); ctx.stroke();
@@ -892,7 +902,7 @@ export class SandtableRenderer {
 
     // Northing coordinates (Y-axis)
     for (let y = gridSpacing; y < 1500; y += gridSpacing) {
-      const label = String(y).padStart(4, '0');
+      const label = gridLineLabel(northingKm(y));
       // Left tick
       ctx.beginPath();
       ctx.moveTo(-5, y); ctx.lineTo(5, y); ctx.stroke();
@@ -910,7 +920,7 @@ export class SandtableRenderer {
     ctx.font = 'bold 8px Arial, sans-serif';
     ctx.fillStyle = '#64748b';
     ctx.textAlign = 'left';
-    ctx.fillText('NATO STANAG 3677 TLM • 1km MGRS GRID • CONTOUR INTERVAL 40m • SERIES 1:50,000', 8, -8);
+    ctx.fillText(`GRID ZONE ${GRID_ZONE}  ·  100 KM SQUARE ${GRID_SQUARE}  ·  1 KM GRID  ·  CONTOUR INTERVAL 40 M  ·  1:50,000`, 8, -8);
 
     ctx.restore();
   }
@@ -3414,20 +3424,14 @@ export class SandtableRenderer {
           ctx.arc(eng.sectorLocation.x, eng.sectorLocation.y, radius, 0, Math.PI * 2);
           ctx.stroke();
 
-          // Sector Alert Label
-          const tag = `ENGAGEMENT: ${eng.name.split(' ')[0]}`;
-          ctx.font = 'bold 8px Arial, sans-serif';
-          const tw = ctx.measureText(tag).width;
-          ctx.fillStyle = 'rgba(153, 27, 27, 0.88)';
-          ctx.fillRect(eng.sectorLocation.x - tw / 2 - 4, eng.sectorLocation.y - radius - 14, tw + 8, 14);
-          ctx.strokeStyle = '#ef4444';
-          ctx.lineWidth = 0.8;
-          ctx.strokeRect(eng.sectorLocation.x - tw / 2 - 4, eng.sectorLocation.y - radius - 14, tw + 8, 14);
-
-          ctx.fillStyle = '#ffffff';
+          // Sector label (constant screen size)
+          const s = this.symbolScale();
+          const tag = `Reinforce ${eng.name.split(' ')[0]}`;
+          ctx.font = `bold ${8 * s}px Arial, sans-serif`;
           ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(tag, eng.sectorLocation.x, eng.sectorLocation.y - radius - 7);
+          ctx.textBaseline = 'bottom';
+          ctx.setLineDash([]);
+          this.strokedText(ctx, tag, eng.sectorLocation.x, eng.sectorLocation.y - radius - 3, '#b91c1c');
           ctx.restore();
         }
       }
@@ -3437,89 +3441,225 @@ export class SandtableRenderer {
   // =========================================================================
   // 11.5 NATO OPERATIONAL GRAPHICS (PHASE LINES, OBJECTIVES, FSCL)
   // =========================================================================
+  // APP-6 control measures. Lines carry their name at both ends; objectives are a closed
+  // irregular outline with the name inside. Line weight and text stay constant on screen.
   private renderOperationalGraphics(ctx: CanvasRenderingContext2D, graphics: OperationalGraphic[]) {
+    const s = this.symbolScale();
     ctx.save();
     for (const g of graphics) {
       if (g.type === 'phase_line' || g.type === 'fscl' || g.type === 'boundary') {
         if (g.points.length < 2) continue;
-        ctx.save();
-        ctx.strokeStyle = g.color;
-        ctx.lineWidth = g.type === 'fscl' ? 2.2 : 1.8;
-        ctx.setLineDash(g.type === 'fscl' ? [8, 4] : [14, 7]);
-
-        ctx.beginPath();
-        ctx.moveTo(g.points[0].x, g.points[0].y);
-        for (let i = 1; i < g.points.length; i++) {
-          ctx.lineTo(g.points[i].x, g.points[i].y);
-        }
-        ctx.stroke();
-
-        // Draw military label along the line
-        ctx.font = 'bold 9px Arial, sans-serif';
-        for (let i = 0; i < g.points.length - 1; i++) {
-          const midX = (g.points[i].x + g.points[i + 1].x) / 2;
-          const midY = (g.points[i].y + g.points[i + 1].y) / 2;
-          const angle = Math.atan2(g.points[i + 1].y - g.points[i].y, g.points[i + 1].x - g.points[i].x);
-          
-          ctx.save();
-          ctx.translate(midX, midY);
-          ctx.rotate(angle);
-          
-          const tw = ctx.measureText(g.name).width;
-          ctx.fillStyle = 'rgba(244, 244, 245, 0.92)';
-          ctx.fillRect(-tw / 2 - 4, -13, tw + 8, 12);
-          ctx.strokeStyle = g.color;
-          ctx.lineWidth = 0.8;
-          ctx.strokeRect(-tw / 2 - 4, -13, tw + 8, 12);
-          
-          ctx.fillStyle = g.color;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(g.name, 0, -7);
-          ctx.restore();
-        }
-        ctx.restore();
+        this.renderControlLine(ctx, g.type, g.name, g.points, g.color, s);
       } else if (g.type === 'objective') {
         const pt = g.points[0];
         if (!pt) continue;
-        ctx.save();
-        ctx.strokeStyle = g.color;
-        ctx.lineWidth = 1.6;
-        
-        // Concentric target reticle
-        ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 14, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
-        ctx.stroke();
-        
-        // Crosshair ticks
-        ctx.beginPath();
-        ctx.moveTo(pt.x - 18, pt.y);
-        ctx.lineTo(pt.x - 14, pt.y);
-        ctx.moveTo(pt.x + 14, pt.y);
-        ctx.lineTo(pt.x + 18, pt.y);
-        ctx.moveTo(pt.x, pt.y - 18);
-        ctx.lineTo(pt.x, pt.y - 14);
-        ctx.moveTo(pt.x, pt.y + 14);
-        ctx.lineTo(pt.x, pt.y + 18);
-        ctx.stroke();
-
-        // Objective label pill
-        ctx.font = 'bold 9px Arial, sans-serif';
-        const tw = ctx.measureText(g.name).width;
-        ctx.fillStyle = 'rgba(244, 244, 245, 0.92)';
-        ctx.fillRect(pt.x - tw / 2 - 3, pt.y + 16, tw + 6, 12);
-        ctx.strokeStyle = g.color;
-        ctx.lineWidth = 0.8;
-        ctx.strokeRect(pt.x - tw / 2 - 3, pt.y + 16, tw + 6, 12);
-        ctx.fillStyle = g.color;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(g.name, pt.x, pt.y + 22);
-        ctx.restore();
+        this.renderObjective(ctx, g.id, g.name, pt, g.color, s);
       }
+    }
+    ctx.restore();
+  }
+
+  private renderControlLine(
+    ctx: CanvasRenderingContext2D,
+    type: OperationalGraphic['type'],
+    name: string,
+    points: Vector2D[],
+    color: string,
+    s: number
+  ) {
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = (type === 'boundary' ? 1.8 : 1.5) * s;
+    ctx.setLineDash(type === 'fscl' ? [10 * s, 4 * s] : []);
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.font = `bold ${8 * s}px Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    const ends = [
+      { at: points[0], from: points[1] },
+      { at: points[points.length - 1], from: points[points.length - 2] },
+    ];
+    for (const { at, from } of ends) {
+      // Label just beyond the end of the line, along its direction
+      const len = Math.max(1, Math.hypot(at.x - from.x, at.y - from.y));
+      const ux = (at.x - from.x) / len;
+      const uy = (at.y - from.y) / len;
+      const lx = at.x + ux * 6 * s;
+      const ly = at.y + uy * 6 * s + (Math.abs(uy) > 0.7 ? (uy > 0 ? 9 * s : 0) : 4 * s);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+      ctx.lineWidth = 2.5 * s;
+      ctx.lineJoin = 'round';
+      ctx.strokeText(name, lx, ly);
+      ctx.fillStyle = color;
+      ctx.fillText(name, lx, ly);
+    }
+
+    // Boundaries carry the echelon of the formations they separate at their midpoint
+    if (type === 'boundary') {
+      const mid = Math.floor((points.length - 1) / 2);
+      const a = points[mid];
+      const b = points[mid + 1];
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      ctx.save();
+      ctx.translate(mx, my);
+      let angle = Math.atan2(b.y - a.y, b.x - a.x);
+      if (angle > Math.PI / 2 || angle < -Math.PI / 2) angle += Math.PI;
+      ctx.rotate(angle);
+      ctx.textBaseline = 'middle';
+      const tw = ctx.measureText('XX').width;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-tw / 2 - 2 * s, -5 * s, tw + 4 * s, 10 * s);
+      ctx.fillStyle = color;
+      ctx.fillText('XX', 0, 0);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  private renderObjective(ctx: CanvasRenderingContext2D, id: string, name: string, pt: Vector2D, color: string, s: number) {
+    // Deterministic irregular outline seeded from the graphic id
+    let seed = 0;
+    for (let i = 0; i < id.length; i++) seed = (seed * 31 + id.charCodeAt(i)) >>> 0;
+    const rand = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 4294967296;
+    };
+    const r = 30 * s;
+    const n = 9;
+    const pts: Vector2D[] = [];
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const rr = r * (0.82 + rand() * 0.3);
+      pts.push({ x: pt.x + Math.cos(a) * rr * 1.25, y: pt.y + Math.sin(a) * rr });
+    }
+
+    ctx.save();
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const p0 = pts[i];
+      const p1 = pts[(i + 1) % n];
+      const mx = (p0.x + p1.x) / 2;
+      const my = (p0.y + p1.y) / 2;
+      if (i === 0) ctx.moveTo(mx, my);
+      else ctx.quadraticCurveTo(p0.x, p0.y, mx, my);
+    }
+    const first = pts[0];
+    const second = pts[1];
+    ctx.quadraticCurveTo(first.x, first.y, (first.x + second.x) / 2, (first.y + second.y) / 2);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5 * s;
+    ctx.stroke();
+
+    const parts = name.replace(/^OBJ\s+/i, '');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = color;
+    ctx.font = `bold ${7.5 * s}px Arial, sans-serif`;
+    ctx.fillText('OBJ', pt.x, pt.y - 5 * s);
+    ctx.font = `bold ${8 * s}px Arial, sans-serif`;
+    ctx.fillText(parts, pt.x, pt.y + 5 * s);
+    ctx.restore();
+  }
+
+  // Ruler: distance, grid bearing (degrees and mils) and march time by arm along the line
+  private renderMeasureLine(ctx: CanvasRenderingContext2D) {
+    const m = this.measure;
+    if (!m) return;
+    const s = this.symbolScale();
+    const { a, b } = m;
+    const dist = distanceMetres(a, b);
+    const brg = gridBearing(a, b);
+
+    ctx.save();
+    ctx.strokeStyle = '#111111';
+    ctx.lineWidth = 1.2 * s;
+    ctx.setLineDash([6 * s, 3 * s]);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Ticks every 500 m
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len > 1) {
+      const ux = (b.x - a.x) / len;
+      const uy = (b.y - a.y) / len;
+      const tick = 4 * s;
+      ctx.beginPath();
+      for (let d = 0; d <= len; d += PX_PER_KM / 2) {
+        const px = a.x + ux * d;
+        const py = a.y + uy * d;
+        ctx.moveTo(px - uy * tick, py + ux * tick);
+        ctx.lineTo(px + uy * tick, py - ux * tick);
+      }
+      ctx.stroke();
+    }
+    for (const p of [a, b]) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2.5 * s, 0, Math.PI * 2);
+      ctx.fillStyle = '#111111';
+      ctx.fill();
+    }
+
+    const lines = [
+      `${formatDistance(dist)}  ${String(brg).padStart(3, '0')}°  ${String(degreesToMils(brg)).padStart(4, '0')} mils`,
+      `${toGridRef(a)} → ${toGridRef(b)}`,
+    ];
+    if (m.marchMinutes) {
+      const fmt = (mins: number) => (mins >= 60 ? `${Math.floor(mins / 60)} h ${Math.round(mins % 60)} min` : `${Math.round(mins)} min`);
+      lines.push(`March: inf ${fmt(m.marchMinutes.infantry)} · cav ${fmt(m.marchMinutes.cavalry)} · arty ${fmt(m.marchMinutes.artillery)}`);
+    }
+
+    ctx.font = `${8.5 * s}px "SF Mono", Menlo, Consolas, monospace`;
+    const pad = 4 * s;
+    const lh = 11 * s;
+    const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + pad * 2;
+    const h = lines.length * lh + pad * 2 - 2 * s;
+    const bx = b.x + 10 * s;
+    const by = b.y + 10 * s;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.fillRect(bx, by, w, h);
+    ctx.strokeStyle = '#111111';
+    ctx.lineWidth = 1 * s;
+    ctx.strokeRect(bx, by, w, h);
+    ctx.fillStyle = '#111111';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    lines.forEach((l, i) => ctx.fillText(l, bx + pad, by + pad + i * lh));
+    ctx.restore();
+  }
+
+  // Control measure being drawn by the operator
+  private renderGraphicDraft(ctx: CanvasRenderingContext2D) {
+    const d = this.graphicDraft;
+    if (!d) return;
+    const s = this.symbolScale();
+    const pts = d.cursor ? [...d.points, d.cursor] : d.points;
+    if (d.type === 'objective') {
+      const p = d.cursor || d.points[0];
+      if (p) this.renderObjective(ctx, 'draft', d.name, p, '#1e3a8a', s);
+      return;
+    }
+    if (pts.length >= 2) {
+      ctx.save();
+      ctx.globalAlpha = 0.75;
+      this.renderControlLine(ctx, d.type, d.name, pts, '#1e3a8a', s);
+      ctx.restore();
+    }
+    ctx.save();
+    ctx.fillStyle = '#1e3a8a';
+    for (const p of d.points) {
+      ctx.fillRect(p.x - 2.5 * s, p.y - 2.5 * s, 5 * s, 5 * s);
     }
     ctx.restore();
   }
@@ -3894,69 +4034,225 @@ export class SandtableRenderer {
     }
   }
 
-  // Contact Marker (Hostile Red Diamond with ? for Fog of War)
+  // Symbols and their amplifiers are drawn at a constant on-screen size (like a C2 display),
+  // only growing once the operator zooms well in.
+  private symbolScale(): number {
+    return Math.min(3, Math.max(0.5, 1 / this.viewZoom));
+  }
+
+  private strokedText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, fill: string) {
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = fill;
+    ctx.fillText(text, x, y);
+  }
+
+  // Suspected enemy contact under fog of war: dashed hostile frame with an unknown icon
   private renderContactDiamond(ctx: CanvasRenderingContext2D, unit: Unit, isHovered: boolean) {
+    const s = this.symbolScale();
     ctx.save();
     ctx.translate(unit.position.x, unit.position.y);
+    ctx.scale(s, s);
 
-    const size = 8.5;
-    ctx.fillStyle = 'rgba(204, 17, 17, 0.88)';
-    ctx.strokeStyle = isHovered ? '#fef08a' : '#ffffff';
-    ctx.lineWidth = 1.1;
-
+    const r = 11;
     ctx.beginPath();
-    ctx.moveTo(0, -size);
-    ctx.lineTo(size, 0);
-    ctx.lineTo(0, size);
-    ctx.lineTo(-size, 0);
+    ctx.moveTo(0, -r);
+    ctx.lineTo(r, 0);
+    ctx.lineTo(0, r);
+    ctx.lineTo(-r, 0);
     ctx.closePath();
+    ctx.fillStyle = 'rgba(255, 128, 128, 0.55)';
     ctx.fill();
+    ctx.strokeStyle = APP6_FRAME;
+    ctx.lineWidth = 1.1;
+    ctx.setLineDash([2.5, 2]);
     ctx.stroke();
+    ctx.setLineDash([]);
 
-    // Bold Question Mark
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 8.5px Arial, sans-serif';
+    if (isHovered) {
+      ctx.strokeStyle = '#0284c7';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(-r - 3, -r - 3, 2 * r + 6, 2 * r + 6);
+    }
+
+    ctx.font = 'bold 10px Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    ctx.fillStyle = APP6_FRAME;
     ctx.fillText('?', 0, 0.5);
 
-    // Contact text
-    ctx.font = 'bold 6.5px Arial, sans-serif';
-    ctx.fillStyle = '#cc1111';
-    ctx.textBaseline = 'top';
-    ctx.fillText('CONTACT', 0, size + 1.5);
-    ctx.fillStyle = '#4b5563';
-    ctx.fillText(unit.estimatedStrength || 'EST. UNKNOWN', 0, size + 8);
+    if (isHovered || this.viewZoom >= 1.25) {
+      ctx.font = '7px Arial, sans-serif';
+      ctx.textAlign = 'left';
+      this.strokedText(ctx, unit.estimatedStrength || 'Str unknown', r + 3, 0, '#52525b');
+    }
 
     ctx.restore();
   }
 
-  // =========================================================================
-  // 12. MILITARY UNIT CHITS (EXACT NATO / WEST POINT SYMBOLOGY)
-  // French Royal Blue (#0033cc) vs Allied Red (#cc1111)
-  // Upright, sharp typography matching media_1789975155849.png
-  // =========================================================================
+  // Formation footprint at true world scale, rotated to the unit's facing. The front edge is
+  // emphasised so facing reads at a glance; firing, charging and fieldwork effects attach to it.
+  private renderFormationFootprint(ctx: CanvasRenderingContext2D, unit: Unit, isFrench: boolean) {
+    if (unit.type === 'headquarters') return;
+    const depth = Math.max(6, unit.depth || 12);
+    const width = Math.max(8, unit.width || 40);
+    const frontX = depth / 2;
+    const spanY = width / 2;
+    const tone = isFrench ? '0, 51, 204' : '204, 17, 17';
+
+    ctx.save();
+    ctx.rotate(unit.heading);
+
+    ctx.fillStyle = `rgba(${tone}, 0.12)`;
+    ctx.strokeStyle = `rgba(${tone}, 0.4)`;
+    ctx.lineWidth = 0.8;
+    ctx.fillRect(-depth / 2, -spanY, depth, width);
+    ctx.strokeRect(-depth / 2, -spanY, depth, width);
+
+    ctx.strokeStyle = `rgba(${tone}, 0.85)`;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(frontX, -spanY);
+    ctx.lineTo(frontX, spanY);
+    ctx.stroke();
+
+    if (unit.type === 'artillery') {
+      ctx.fillStyle = `rgba(${tone}, 0.85)`;
+      for (let g = -spanY + 3; g <= spanY - 2; g += 6) {
+        ctx.fillRect(frontX, g - 0.6, 3.5, 1.2);
+      }
+    }
+
+    // Fieldworks: abatis along the front while holding
+    if (unit.status === 'holding') {
+      ctx.strokeStyle = '#3f6212';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(frontX + 2, -spanY);
+      for (let y = -spanY; y < spanY; y += 6) {
+        ctx.lineTo(frontX + 4.5, y + 3);
+        ctx.lineTo(frontX + 2, Math.min(spanY, y + 6));
+      }
+      ctx.stroke();
+    }
+
+    // Skirmish screen: dotted picket line ahead of the main body
+    if (unit.isSkirmishScreenActive) {
+      const screenX = frontX + 16;
+      ctx.strokeStyle = `rgba(${tone}, 0.7)`;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(screenX, -spanY - 4);
+      ctx.lineTo(screenX, spanY + 4);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Direct fire: faint sector, front-rank pulse and short tracer ticks
+    if (unit.status === 'engaging' && unit.ammo !== undefined && unit.ammo > 0) {
+      const fireArcRange = Math.min(85, unit.range || 100);
+      const arcHalfAngle = 0.28;
+      const xFar = frontX + fireArcRange * Math.cos(arcHalfAngle);
+      const yTop = -spanY * 0.5 - fireArcRange * Math.sin(arcHalfAngle);
+      const yBottom = spanY * 0.5 + fireArcRange * Math.sin(arcHalfAngle);
+
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.04)';
+      ctx.beginPath();
+      ctx.moveTo(frontX, -spanY * 0.5);
+      ctx.lineTo(xFar, yTop);
+      ctx.arcTo(frontX + fireArcRange + 4, 0, xFar, yBottom, fireArcRange);
+      ctx.lineTo(frontX, spanY * 0.5);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
+      ctx.lineWidth = 0.8;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(frontX, -spanY * 0.5);
+      ctx.lineTo(xFar, yTop);
+      ctx.moveTo(frontX, spanY * 0.5);
+      ctx.lineTo(xFar, yBottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const pulse = 0.5 + 0.5 * Math.sin((Date.now() + unit.id.charCodeAt(0) * 120) / 140);
+      ctx.strokeStyle = `rgba(234, 179, 8, ${0.8 * pulse})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(frontX + 1, -spanY);
+      ctx.lineTo(frontX + 1, spanY);
+      ctx.stroke();
+
+      if (pulse > 0.6) {
+        ctx.strokeStyle = `rgba(234, 179, 8, ${0.9 * pulse})`;
+        ctx.lineWidth = 1.0;
+        for (let y = -spanY * 0.7; y <= spanY * 0.7; y += 6) {
+          const startDist = frontX + 3 + Math.random() * 6;
+          const tracerLen = 6 + Math.random() * 8;
+          ctx.beginPath();
+          ctx.moveTo(startDist, y);
+          ctx.lineTo(startDist + tracerLen, y);
+          ctx.stroke();
+        }
+      }
+    }
+
+    if (unit.status === 'melee') {
+      const pulse = 0.5 + 0.5 * Math.sin(this.animFrame / 4);
+      ctx.strokeStyle = `rgba(185, 28, 28, ${0.85 * pulse})`;
+      ctx.lineWidth = 2.0;
+      ctx.strokeRect(-depth / 2 - 3, -spanY - 3, depth + 6, width + 6);
+    }
+
+    if (unit.status === 'charging') {
+      ctx.strokeStyle = '#c2410c';
+      ctx.lineWidth = 1.6;
+      const pulseX = (this.animFrame % 14) * 0.7;
+      for (let i = 0; i < 2; i++) {
+        const cx = frontX + 4 + i * 5 + pulseX;
+        ctx.beginPath();
+        ctx.moveTo(cx, -5.5);
+        ctx.lineTo(cx + 4, 0);
+        ctx.lineTo(cx, 5.5);
+        ctx.stroke();
+      }
+    }
+
+    ctx.restore();
+  }
+
   private renderMilitaryUnits(
     ctx: CanvasRenderingContext2D,
     state: SimulationState,
     hoveredUnitId: string | null
   ) {
-    for (const unit of state.units) {
-      // 1. Remove shattered or completely destroyed units from the map
+    const s = this.symbolScale();
+    const zoom = this.viewZoom;
+    const isNatoMode = state.wargameSymbology === 'nato';
+    const isSelectedUnit = (u: Unit) => state.selectedUnitIds?.includes(u.id) || u.id === state.selectedUnitId;
+
+    // Selected and hovered symbols draw last so they sit on top of neighbours
+    const ordered = [
+      ...state.units.filter((u) => !isSelectedUnit(u) && u.id !== hoveredUnitId),
+      ...state.units.filter((u) => isSelectedUnit(u) || u.id === hoveredUnitId),
+    ];
+
+    for (const unit of ordered) {
       if (unit.status === 'shattered' || unit.strength <= 0) continue;
 
-      // 2. Fog of War detection check for enemy units
       if (state.fogOfWarEnabled && unit.faction !== state.playerFaction) {
-        if (unit.detectionState === 'hidden') {
-          continue; // Completely shrouded in fog of war!
-        }
+        if (unit.detectionState === 'hidden') continue;
         if (unit.detectionState === 'contact') {
           this.renderContactDiamond(ctx, unit, hoveredUnitId === unit.id);
-          continue; // Vague contact marker
+          continue;
         }
       }
 
-      // 3. Troop Filter Check (Friendly player forces only)
+      // Troop filter (friendly forces only); non-matching symbols are dimmed
       let matchesFilter = true;
       if (this.activeFilter !== 'all') {
         if (unit.faction !== state.playerFaction) {
@@ -3972,613 +4268,198 @@ export class SandtableRenderer {
         }
       }
 
-      // 4. Health & Depletion Visual Metrics
       const healthRatio = Math.max(0, Math.min(1, unit.strength / Math.max(1, unit.initialStrength)));
-      const isDepleted = healthRatio < 0.50;
-      const isCritical = healthRatio < 0.25;
-      const isLowAmmo = unit.ammo !== undefined && (unit.ammo / Math.max(1, unit.maxAmmo)) < 0.20;
-      const isRouting = unit.status === 'routing';
-      const isWavering = unit.status === 'wavering' || (unit.morale <= 50 && unit.morale > 25 && !isRouting);
-
-      const isSelected = state.selectedUnitIds?.includes(unit.id) || unit.id === state.selectedUnitId;
+      const isSelected = isSelectedUnit(unit);
       const isHovered = unit.id === hoveredUnitId;
       const isFrench = unit.faction === 'french';
-
-      const primaryColor = isFrench ? '#0033cc' : '#cc1111';
+      const fields = getUnitSymbolFields(unit);
 
       ctx.save();
       ctx.translate(unit.position.x, unit.position.y);
+      ctx.globalAlpha = matchesFilter ? 1.0 : 0.25;
 
-      // Visual Fading for Filter Dimming or Depleted Troops
-      let alpha = 1.0;
-      if (!matchesFilter) {
-        alpha = 0.20; // Dim non-filtered units
-      } else if (isDepleted) {
-        alpha = Math.max(0.42, 0.45 + 0.55 * healthRatio); // Weakened units visually fade out
-      }
-      ctx.globalAlpha = alpha;
+      this.renderFormationFootprint(ctx, unit, isFrench);
 
-      // Rotated Unit Block (Orientation of battle line)
-      ctx.save();
-      ctx.rotate(unit.heading);
-
-      // Subtle Chit Drop Shadow
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
-      ctx.shadowBlur = 3;
-      ctx.shadowOffsetX = 1.5;
-      ctx.shadowOffsetY = 1.5;
-
-      // Draw exact physical footprint so array dimensions are always clear under the NATO chip
-      if (unit.type !== 'headquarters') {
-        ctx.fillStyle = isFrench ? 'rgba(0, 51, 204, 0.18)' : 'rgba(204, 17, 17, 0.18)';
-        ctx.strokeStyle = isFrench ? 'rgba(0, 51, 204, 0.45)' : 'rgba(204, 17, 17, 0.45)';
-        ctx.lineWidth = 0.8;
-        if (unit.type === 'artillery') {
-          const lw = 28;
-          const lh = 14;
-          ctx.fillRect(-lw / 2, -lh / 2, lw, lh);
-          ctx.strokeRect(-lw / 2, -lh / 2, lw, lh);
-          // Gun barrel ticks
-          ctx.fillStyle = isFrench ? '#1e3a8a' : '#991b1b';
-          for (let g = -4.5; g <= 4.5; g += 4.5) {
-            ctx.fillRect(lw / 2 - 1.5, g - 0.75, 4.5, 1.5);
-          }
-        } else if (unit.formation === 'line') {
-          const lw = 32;
-          const lh = 6;
-          ctx.fillRect(-lw / 2, -lh / 2, lw, lh);
-          ctx.strokeRect(-lw / 2, -lh / 2, lw, lh);
-        } else if (unit.formation === 'column') {
-          const cw = 8;
-          const ch = 22;
-          ctx.fillRect(-cw / 2, -ch / 2, cw, ch);
-          ctx.strokeRect(-cw / 2, -ch / 2, cw, ch);
-        } else if (unit.formation === 'square') {
-          ctx.fillRect(-9, -9, 18, 18);
-          ctx.strokeRect(-9, -9, 18, 18);
-        } else {
-          ctx.fillRect(-12, -4, 24, 8);
-          ctx.strokeRect(-12, -4, 24, 8);
-        }
-      }
-
-      // ==========================================
-      // NATO STANDARD OPERATIONAL COUNTER (Pure APP-6 Tabletop Standard)
-      // ==========================================
-      const isNatoMode = state.wargameSymbology === 'nato';
-      const isOpforDiamond = isNatoMode && !isFrench;
-
-      const natoW = unit.type === 'headquarters' ? 28 : 24;
-      const natoH = 14;
-
-      if (isOpforDiamond) {
-        // NATO APP-6 Hostile OPFOR Diamond
-        const halfW = 16;
-        const halfH = 16;
-
+      // Supply radius only for the unit in focus
+      if (unit.type === 'supply' && (isSelected || isHovered)) {
+        ctx.strokeStyle = 'rgba(22, 101, 52, 0.5)';
+        ctx.lineWidth = 1.0;
+        ctx.setLineDash([4, 4]);
         ctx.beginPath();
+        ctx.arc(0, 0, unit.supplyRadius || 180, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      ctx.save();
+      ctx.scale(s, s);
+
+      const hostileFrame = isNatoMode && !isFrench;
+      const halfW = hostileFrame ? 13 : 12;
+      const halfH = hostileFrame ? 13 : 8;
+      const iconX = hostileFrame ? 7 : 12;
+      const iconY = hostileFrame ? 7 : 8;
+
+      // APP-6 direction of movement: arrow out of the frame along the line of march
+      if (unit.status === 'marching' || unit.status === 'charging') {
+        const len = 30;
+        const ex = Math.cos(unit.heading) * len;
+        const ey = Math.sin(unit.heading) * len;
+        ctx.strokeStyle = APP6_FRAME;
+        ctx.fillStyle = APP6_FRAME;
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+        ctx.save();
+        ctx.translate(ex, ey);
+        ctx.rotate(unit.heading);
+        ctx.beginPath();
+        ctx.moveTo(1, 0);
+        ctx.lineTo(-5, -3);
+        ctx.lineTo(-5, 3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Headquarters staff from the left side of the frame
+      if (fields.isHQ) {
+        ctx.strokeStyle = APP6_FRAME;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(-halfW, hostileFrame ? 0 : halfH);
+        ctx.lineTo(-halfW, halfH + 12);
+        ctx.stroke();
+      }
+
+      // Frame
+      ctx.beginPath();
+      if (hostileFrame) {
         ctx.moveTo(0, -halfH);
         ctx.lineTo(halfW, 0);
         ctx.lineTo(0, halfH);
         ctx.lineTo(-halfW, 0);
         ctx.closePath();
-
-        ctx.fillStyle = primaryColor;
-        ctx.fill();
-
-        ctx.strokeStyle = isRouting
-          ? (this.animFrame % 20 < 10 ? '#dc2626' : '#f59e0b')
-          : '#ffffff';
-        ctx.lineWidth = isRouting ? 1.4 : 1.0;
-        if (isDepleted) {
-          ctx.setLineDash([3, 2]);
-        } else {
-          ctx.setLineDash([]);
-        }
-        ctx.stroke();
       } else {
-        ctx.fillStyle = primaryColor;
-        ctx.fillRect(-natoW / 2, -natoH / 2, natoW, natoH);
-
-        // Border: Dashed if depleted, flashing red/amber if routing
-        ctx.strokeStyle = isRouting
-          ? (this.animFrame % 20 < 10 ? '#dc2626' : '#f59e0b')
-          : '#ffffff';
-        ctx.lineWidth = isRouting ? 1.4 : 1.0;
-        if (isDepleted) {
-          ctx.setLineDash([3, 2]); // Dashed border visually indicating depleted company ranks
-        } else {
-          ctx.setLineDash([]);
-        }
-        ctx.strokeRect(-natoW / 2, -natoH / 2, natoW, natoH);
+        ctx.rect(-halfW, -halfH, halfW * 2, halfH * 2);
       }
+      ctx.fillStyle = isFrench ? APP6_FRIEND_FILL : APP6_HOSTILE_FILL;
+      ctx.fill();
+      ctx.strokeStyle = APP6_FRAME;
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
 
-      // Critical damage diagonal warning stripes
-      if (isCritical) {
-        ctx.save();
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
-        ctx.lineWidth = 1.0;
-        ctx.setLineDash([]);
-        for (let x = -natoW / 2; x <= natoW / 2; x += 5) {
-          ctx.beginPath();
-          ctx.moveTo(x, -natoH / 2);
-          ctx.lineTo(x + 4, natoH / 2);
-          ctx.stroke();
-        }
-        ctx.restore();
-      }
-
-      ctx.shadowColor = 'transparent';
-      ctx.setLineDash([]);
-
-      // NATO Symbology inside chit
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.1;
+      // Branch icon
+      ctx.strokeStyle = APP6_FRAME;
+      ctx.fillStyle = APP6_FRAME;
+      ctx.lineWidth = 1;
       if (unit.type === 'infantry' || unit.type === 'guard') {
-        // Infantry Cross (X)
         ctx.beginPath();
-        ctx.moveTo(-natoW / 2 + 4, -natoH / 2 + 2.5);
-        ctx.lineTo(natoW / 2 - 4, natoH / 2 - 2.5);
-        ctx.moveTo(natoW / 2 - 4, -natoH / 2 + 2.5);
-        ctx.lineTo(-natoW / 2 + 4, natoH / 2 - 2.5);
+        ctx.moveTo(-iconX, -iconY);
+        ctx.lineTo(iconX, iconY);
+        ctx.moveTo(iconX, -iconY);
+        ctx.lineTo(-iconX, iconY);
         ctx.stroke();
-        if (unit.type === 'guard') {
-          ctx.fillStyle = '#fde047';
-          ctx.beginPath();
-          ctx.arc(0, 0, 2.2, 0, Math.PI * 2);
-          ctx.fill();
-        }
       } else if (unit.type === 'cavalry') {
-        // Cavalry diagonal slash (/)
         ctx.beginPath();
-        ctx.moveTo(-natoW / 2 + 4, natoH / 2 - 2.5);
-        ctx.lineTo(natoW / 2 - 4, -natoH / 2 + 2.5);
+        ctx.moveTo(-iconX, iconY);
+        ctx.lineTo(iconX, -iconY);
         ctx.stroke();
       } else if (unit.type === 'artillery') {
-        // Artillery symbol: solid projectile with carriage wheels
-        ctx.fillStyle = '#ffffff';
         ctx.beginPath();
-        ctx.arc(0, 0, 2.6, 0, Math.PI * 2);
+        ctx.arc(0, 0, 2.8, 0, Math.PI * 2);
         ctx.fill();
-
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 0.9;
-        ctx.beginPath();
-        ctx.arc(-5.5, 0, 2.2, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(5.5, 0, 2.2, 0, Math.PI * 2);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(-2.6, 0); ctx.lineTo(-5.5, 0);
-        ctx.moveTo(2.6, 0); ctx.lineTo(5.5, 0);
-        ctx.stroke();
       } else if (unit.type === 'supply') {
         ctx.beginPath();
-        ctx.moveTo(-natoW / 2 + 5, 0); ctx.lineTo(natoW / 2 - 5, 0);
-        ctx.moveTo(0, -natoH / 2 + 3); ctx.lineTo(0, natoH / 2 - 3);
-        ctx.stroke();
-      } else {
-        // HQ flagpole
-        ctx.beginPath();
-        ctx.moveTo(-natoW / 2 + 5, natoH / 2 - 3);
-        ctx.lineTo(-natoW / 2 + 5, -natoH / 2 + 3);
-        ctx.lineTo(0, -natoH / 2 + 6);
-        ctx.lineTo(-natoW / 2 + 5, 0);
+        ctx.moveTo(-iconX, iconY * 0.45);
+        ctx.lineTo(iconX, iconY * 0.45);
         ctx.stroke();
       }
 
-      // Forward march direction indicator pip
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.moveTo(natoW / 2 + 3.5, 0);
-      ctx.lineTo(natoW / 2 - 0.5, -2.5);
-      ctx.lineTo(natoW / 2 - 0.5, 2.5);
-      ctx.closePath();
-      ctx.fill();
+      // Operational condition bar (combat effectiveness)
+      const barW = hostileFrame ? 18 : halfW * 2;
+      const barY = halfH + 2;
+      ctx.fillStyle = conditionColor(healthRatio);
+      ctx.fillRect(-barW / 2, barY, barW, 2.5);
 
-      // Entrenchment abatis if holding
-      if (unit.status === 'holding') {
-        ctx.save();
-        ctx.strokeStyle = '#15803d';
-        ctx.lineWidth = 1.8;
-        const frontX = natoW / 2 + 4;
-        const spanY = natoH / 2 + 2;
-
-        ctx.beginPath();
-        ctx.moveTo(frontX, -spanY);
-        for (let y = -spanY; y <= spanY; y += 8) {
-          ctx.lineTo(frontX + 3.5, y + 4);
-          ctx.lineTo(frontX, y + 8);
-        }
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      // Forward Skirmish Screen Picket Line (18px ahead along heading)
-      if (unit.isSkirmishScreenActive) {
-        ctx.save();
-        const screenX = natoW / 2 + 16;
-        const screenSpanY = natoH / 2 + 6;
-        ctx.strokeStyle = '#0d9488'; // Teal tactical screen line
-        ctx.lineWidth = 1.2;
-        ctx.setLineDash([3, 3]);
-        ctx.beginPath();
-        ctx.moveTo(screenX, -screenSpanY);
-        ctx.lineTo(screenX, screenSpanY);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // Picket markers along the screening line
-        ctx.fillStyle = '#0d9488';
-        for (let py = -screenSpanY; py <= screenSpanY; py += 7) {
-          ctx.beginPath();
-          ctx.arc(screenX, py, 1.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.restore();
-      }
-
-      // Supply Unit Logistical Replenishment Footprint
-      if (unit.type === 'supply') {
-        ctx.save();
-        const supplyR = unit.supplyRadius || 180;
-        ctx.strokeStyle = 'rgba(22, 163, 74, 0.45)';
-        ctx.lineWidth = 1.0;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.arc(0, 0, supplyR, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = 'rgba(22, 163, 74, 0.03)';
-        ctx.fill();
-        ctx.restore();
-      }
-
-      // Clean NATO Directional Fire Sector & Frontage Volley Flash if engaging
-      if (unit.status === 'engaging' && unit.ammo !== undefined && unit.ammo > 0) {
-        ctx.save();
-        const frontX = natoW / 2 + 1;
-        const spanY = natoH / 2;
-        const fireArcRange = Math.min(85, unit.range || 100);
-        const arcHalfAngle = 0.28; // ~16 degrees half-width (32 deg sector)
-
-        // 1. Directional Tactical Sector Cone
-        const xFar = frontX + fireArcRange * Math.cos(arcHalfAngle);
-        const yTop = -spanY * 0.5 - fireArcRange * Math.sin(arcHalfAngle);
-        const yBottom = spanY * 0.5 + fireArcRange * Math.sin(arcHalfAngle);
-
-        ctx.fillStyle = 'rgba(245, 158, 11, 0.04)';
-        ctx.beginPath();
-        ctx.moveTo(frontX, -spanY * 0.5);
-        ctx.lineTo(xFar, yTop);
-        ctx.arcTo(frontX + fireArcRange + 4, 0, xFar, yBottom, fireArcRange);
-        ctx.lineTo(frontX, spanY * 0.5);
-        ctx.closePath();
-        ctx.fill();
-
-        // 2. Crisp dashed sector boundary rays
-        ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
-        ctx.lineWidth = 0.8;
-        ctx.setLineDash([3, 4]);
-        ctx.beginPath();
-        ctx.moveTo(frontX, -spanY * 0.5);
-        ctx.lineTo(xFar, yTop);
-        ctx.moveTo(frontX, spanY * 0.5);
-        ctx.lineTo(xFar, yBottom);
-        ctx.stroke();
-
-        // 3. Frontline Platoon Volley Pulse
-        ctx.setLineDash([]);
-        const pulse = 0.5 + 0.5 * Math.sin((Date.now() + unit.id.charCodeAt(0) * 120) / 140);
-        ctx.strokeStyle = `rgba(254, 240, 138, ${0.75 * pulse})`;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(frontX + 1, -spanY);
-        ctx.lineTo(frontX + 1, spanY);
-        ctx.stroke();
-
-        // 4. Clean NATO micro-tracers along firing lines
-        if (pulse > 0.6) {
-          ctx.strokeStyle = `rgba(254, 240, 138, ${0.9 * pulse})`;
-          ctx.lineWidth = 1.0;
-          for (let y = -spanY * 0.7; y <= spanY * 0.7; y += 6) {
-            const startDist = frontX + 3 + (Math.random() * 6);
-            const tracerLen = 6 + Math.random() * 8;
-            ctx.beginPath();
-            ctx.moveTo(startDist, y);
-            ctx.lineTo(startDist + tracerLen, y);
-            ctx.stroke();
-          }
-        }
-
-        ctx.restore();
-      }
-
-      // Melee Hand-to-Hand Contact Box
-      if (unit.status === 'melee') {
-        ctx.save();
-        const pulse = 0.5 + 0.5 * Math.sin(this.animFrame / 4);
-        ctx.strokeStyle = `rgba(185, 28, 28, ${0.85 * pulse})`;
-        ctx.lineWidth = 2.0;
-        ctx.strokeRect(-natoW / 2 - 3, -natoH / 2 - 3, natoW + 6, natoH + 6);
-        ctx.restore();
-      }
-
-      // Charge Shock Chevrons surging forward ahead of the unit
-      if (unit.status === 'charging') {
-        ctx.save();
-        ctx.strokeStyle = '#ea580c';
-        ctx.lineWidth = 1.6;
-        const frontX = natoW / 2 + 4;
-        const pulseX = (this.animFrame % 14) * 0.7;
-        for (let i = 0; i < 2; i++) {
-          const cx = frontX + i * 5 + pulseX;
-          ctx.beginPath();
-          ctx.moveTo(cx, -5.5);
-          ctx.lineTo(cx + 4, 0);
-          ctx.lineTo(cx, 5.5);
-          ctx.stroke();
-        }
-        ctx.restore();
-      }
-
-      ctx.restore(); // Restore orientation for strictly upright typography!
-
-      const drawW = natoW;
-      const drawH = natoH;
-
-      // Selection Halo
-      if (isSelected || isHovered) {
-        ctx.strokeStyle = isSelected ? '#eab308' : '#38bdf8';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(-drawW / 2 - 2.5, -drawH / 2 - 2.5, drawW + 5, drawH + 5);
-      }
-
-      // Tactical SITREP [LOCATE] Pulsing Target Reticle & Radar Beacon
-      if (unit.id === state.locatedUnitId && state.locatedUnitHighlightUntil && Date.now() < state.locatedUnitHighlightUntil) {
-        ctx.save();
-        const pulseCycle = (this.animFrame % 40) / 40; // 0 to 1
-        const rWave = 24 + pulseCycle * 32;
-        const waveAlpha = Math.max(0, 1 - pulseCycle);
-
-        // Expanding radar circle
-        ctx.strokeStyle = `rgba(239, 68, 68, ${waveAlpha})`;
-        ctx.lineWidth = 2.0;
-        ctx.beginPath();
-        ctx.arc(0, 0, rWave, 0, Math.PI * 2);
-        ctx.stroke();
-
-        // Inner solid focus ring
-        ctx.strokeStyle = '#f59e0b';
-        ctx.lineWidth = 2.0;
-        ctx.beginPath();
-        ctx.arc(0, 0, 22, 0, Math.PI * 2);
-        ctx.stroke();
-
-        // 4 High-contrast Tactical Crosshair ticks
-        ctx.strokeStyle = '#ef4444';
-        ctx.lineWidth = 2.2;
-        ctx.beginPath();
-        ctx.moveTo(0, -32); ctx.lineTo(0, -18);
-        ctx.moveTo(0, 18);  ctx.lineTo(0, 32);
-        ctx.moveTo(-32, 0); ctx.lineTo(-18, 0);
-        ctx.moveTo(18, 0);  ctx.lineTo(32, 0);
-        ctx.stroke();
-
-        // Military Alert Tag
-        ctx.fillStyle = '#dc2626';
-        ctx.font = 'bold 9px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('⚡ CONTACT LOCATED', 0, -36);
-
-        ctx.restore();
-      }
-
-      // Troop Filter Pulsing Focus Brackets
-      if (matchesFilter && this.activeFilter !== 'all') {
-        ctx.save();
-        const pulse = Math.sin(this.animFrame / 12) * 1.5;
-        const bw = drawW + 7 + pulse;
-        const bh = drawH + 7 + pulse;
-        ctx.strokeStyle = '#06b6d4';
-        ctx.lineWidth = 1.6;
-        const clen = 4;
-        ctx.beginPath();
-        ctx.moveTo(-bw/2, -bh/2 + clen); ctx.lineTo(-bw/2, -bh/2); ctx.lineTo(-bw/2 + clen, -bh/2);
-        ctx.moveTo(bw/2 - clen, -bh/2); ctx.lineTo(bw/2, -bh/2); ctx.lineTo(bw/2, -bh/2 + clen);
-        ctx.moveTo(bw/2, bh/2 - clen); ctx.lineTo(bw/2, bh/2); ctx.lineTo(bw/2 - clen, bh/2);
-        ctx.moveTo(-bw/2 + clen, bh/2); ctx.lineTo(-bw/2, bh/2); ctx.lineTo(-bw/2, bh/2 - clen);
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      // Reset drop shadow to avoid blurred unit text or borders
-      ctx.shadowColor = 'transparent';
-      ctx.shadowBlur = 0;
-      ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 0;
-
-      // Echelon Markings above unit block (****, ***, **, GD, [BTY])
-      let echelon = 'XX';
-      if (unit.type === 'artillery') echelon = 'II [BTY]';
-      else if (unit.type === 'headquarters') echelon = 'XXXX';
-      else if (unit.corps.includes('Corps') || unit.corps.includes('Reserve') || unit.corps.includes('Wing')) echelon = 'XXX';
-      else if (unit.type === 'guard') echelon = 'GD';
-
-      ctx.font = 'bold 8px Arial, sans-serif';
+      // Echelon above the frame
+      ctx.font = 'bold 7.5px Arial, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-      ctx.lineWidth = 2.0;
-      ctx.lineJoin = 'round';
-      ctx.strokeText(echelon, 0, -drawH / 2 - 1.5);
-      ctx.fillStyle = primaryColor;
-      ctx.fillText(echelon, 0, -drawH / 2 - 1.5);
+      this.strokedText(ctx, fields.echelon, 0, -halfH - 1, APP6_FRAME);
 
-      // EXTERNAL UNIT LABELS (Razor-sharp, authentic military wargame scale)
-      ctx.font = 'bold 9.5px Arial, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      const labelText = isNatoMode
-        ? (isFrench ? `[BLUFOR] ${unit.name}` : `[OPFOR] ${unit.name}`)
-        : unit.name;
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-      ctx.lineWidth = 2.4;
-      ctx.lineJoin = 'round';
-      ctx.strokeText(labelText, 0, drawH / 2 + 2);
-      ctx.fillStyle = '#0f172a';
-      ctx.fillText(labelText, 0, drawH / 2 + 2);
-
-      // Status Indicators (Ammo, Combat, Entrenching, Delivering, Routing, Depleted)
-      let statusY = drawH / 2 + 13;
-      ctx.font = 'bold 7px Arial, sans-serif';
-
-      const drawStatusBadge = (text: string, fill: string) => {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-        ctx.lineWidth = 2.0;
-        ctx.lineJoin = 'round';
-        ctx.strokeText(text, 0, statusY);
-        ctx.fillStyle = fill;
-        ctx.fillText(text, 0, statusY);
-        statusY += 8.5;
-      };
-      
-      if (isRouting) {
-        drawStatusBadge('ROUTING', '#b91c1c');
-      } else if (isWavering) {
-        drawStatusBadge('WAVERING', '#d97706');
+      // Selection / hover box
+      if (isSelected || isHovered) {
+        ctx.strokeStyle = isSelected ? '#d97706' : '#0284c7';
+        ctx.lineWidth = isSelected ? 1.6 : 1;
+        ctx.strokeRect(-halfW - 3.5, -halfH - 11, halfW * 2 + 7, halfH * 2 + 17);
       }
 
-      if (isCritical) {
-        drawStatusBadge('CRITICAL [-75%]', '#dc2626');
-      } else if (isDepleted) {
-        drawStatusBadge('DEPLETED [-50%]', '#ea580c');
-      }
+      // Amplifiers: designation (left), higher formation and status (right), strength under designation
+      const showDesignation = isSelected || isHovered || fields.isHQ || zoom >= 0.95;
+      const showHigher = isSelected || isHovered || zoom >= 1.25;
+      const showStrength = isSelected || isHovered || zoom >= 1.8;
+      const status = primaryStatusCode(unit);
 
-      if (isLowAmmo) {
-        drawStatusBadge('LOW AMMO', '#dc2626');
-      }
-      
-      if (unit.status === 'melee') {
-        ctx.font = 'bold 7.5px Arial, sans-serif';
-        drawStatusBadge('CLOSE COMBAT', '#7f1d1d');
-        ctx.font = 'bold 7px Arial, sans-serif';
-      } else if (unit.status === 'charging') {
-        ctx.font = 'bold 7.5px Arial, sans-serif';
-        drawStatusBadge('CHARGING', '#ea580c');
-        ctx.font = 'bold 7px Arial, sans-serif';
-      } else if (unit.status === 'entrenching') {
-        drawStatusBadge('ENTRENCHING', '#ca8a04');
-      } else if (unit.currentOrder?.type === 'bombard' && unit.currentOrder.status === 'executing') {
-        drawStatusBadge('BOMBARDING [CFF]', '#ea580c');
-      } else if (unit.currentOrder?.status === 'delivering') {
-        drawStatusBadge('DISPATCH PENDING', '#2563eb');
-      }
-
-      if (unit.isEncircled) {
-        drawStatusBadge('ISOLATED', '#dc2626');
-      }
-
-      if (unit.type === 'artillery') {
-        if (unit.canisterActive) {
-          drawStatusBadge('CANISTER [DEFENSE]', '#ea580c');
-        } else if (unit.directDefenseActive || (unit.status === 'engaging' && unit.currentOrder?.type !== 'bombard')) {
-          drawStatusBadge('DIRECT FIRE [DEFENSE]', '#b45309');
+      ctx.textBaseline = 'middle';
+      if (showDesignation) {
+        ctx.textAlign = 'right';
+        ctx.font = 'bold 8px Arial, sans-serif';
+        this.strokedText(ctx, fields.designation, -halfW - 3, showStrength ? -4 : 0, '#111111');
+        if (showStrength) {
+          ctx.font = '7px Arial, sans-serif';
+          const str = unit.strength >= 1000 ? `${(unit.strength / 1000).toFixed(1)}k` : `${Math.round(unit.strength)}`;
+          this.strokedText(ctx, str, -halfW - 3, 5, '#52525b');
         }
       }
 
-      if (unit.isGarrisoned) {
-        ctx.fillStyle = '#059669';
-        ctx.fillText('GARRISON [80%]', 0, statusY);
-        statusY += 7.5;
+      ctx.textAlign = 'left';
+      const rightX = halfW + 3;
+      const showHigherText = showHigher && !!fields.higher;
+      if (showHigherText) {
+        ctx.font = '7.5px Arial, sans-serif';
+        this.strokedText(ctx, fields.higher, rightX, status ? -4 : 0, '#3f3f46');
+      }
+      if (status) {
+        ctx.font = 'bold 7px Arial, sans-serif';
+        this.strokedText(ctx, status.code, rightX, showHigherText ? 5 : 0, status.severe ? '#b91c1c' : '#3f3f46');
       }
 
-      if (unit.isWadingRiver) {
-        ctx.fillStyle = '#0284c7';
-        ctx.fillText('WADING STREAM [-75%]', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.isForcedMarch) {
-        ctx.fillStyle = '#b45309';
-        ctx.fillText('FORCED MARCH', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.volleyReady) {
-        ctx.fillStyle = '#b45309';
-        ctx.fillText('VOLLEY READY', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.suppressingTargetId || unit.currentOrder?.type === 'suppress') {
-        ctx.fillStyle = '#c2410c';
-        ctx.fillText('COVERING FIRE', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.isEnfiladed) {
-        ctx.fillStyle = '#b91c1c';
-        ctx.fillText('ENFILADED [CROSSFIRE]', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.observerForBatteryId) {
-        ctx.fillStyle = '#0284c7';
-        ctx.fillText('FORWARD OBSERVER [C2]', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.ammo !== undefined && unit.ammo <= 0) {
-        drawStatusBadge('OUT OF AMMO', '#7f1d1d');
-        ctx.fillStyle = '#991b1b';
-        ctx.fillText('[MELEE ONLY]', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.isSkirmishScreenActive) {
-        ctx.fillStyle = '#0f766e';
-        ctx.fillText('SKIRMISH SCREEN', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.isGrandBatteryLeader) {
-        drawStatusBadge('GB LEADER', '#b45309');
-      } else if (unit.grandBatteryGroupId) {
-        ctx.fillStyle = '#b45309';
-        ctx.fillText('GRAND BATTERY', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.isResupplying) {
-        ctx.fillStyle = '#15803d';
-        ctx.fillText('RESUPPLYING (+CLASS V)', 0, statusY);
-        statusY += 7.5;
-      }
-
-      if (unit.gunsDisabled && unit.gunsDisabled > 0) {
-        ctx.fillStyle = '#dc2626';
-        ctx.fillText(`GUNS KO: -${unit.gunsDisabled}`, 0, statusY);
-        statusY += 7.5;
-      }
-      
-      // In Combat Clashing Indicator (Clean crossed tactical strokes on right side of unit block)
-      if (unit.status === 'melee' || unit.status === 'engaging') {
-        const isMelee = unit.status === 'melee';
-        ctx.save();
-        ctx.translate(drawW / 2 + 7, 0);
-        ctx.strokeStyle = isMelee ? '#7f1d1d' : '#b91c1c';
-        ctx.lineWidth = 1.2;
-        const s = isMelee ? 3.5 : 2.5;
+      // Located-unit beacon (from staff panels)
+      if (unit.id === state.locatedUnitId && state.locatedUnitHighlightUntil && Date.now() < state.locatedUnitHighlightUntil) {
+        const pulseCycle = (this.animFrame % 40) / 40;
+        ctx.strokeStyle = `rgba(217, 119, 6, ${Math.max(0, 1 - pulseCycle)})`;
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(-s, -s); ctx.lineTo(s, s);
-        ctx.moveTo(-s, s); ctx.lineTo(s, -s);
+        ctx.arc(0, 0, 22 + pulseCycle * 26, 0, Math.PI * 2);
         ctx.stroke();
-        ctx.restore();
+        ctx.strokeStyle = '#d97706';
+        ctx.beginPath();
+        ctx.moveTo(0, -32); ctx.lineTo(0, -20);
+        ctx.moveTo(0, 20); ctx.lineTo(0, 32);
+        ctx.moveTo(-32, 0); ctx.lineTo(-20, 0);
+        ctx.moveTo(20, 0); ctx.lineTo(32, 0);
+        ctx.stroke();
       }
 
+      // Filter focus corners
+      if (matchesFilter && this.activeFilter !== 'all') {
+        const bw = halfW * 2 + 10;
+        const bh = halfH * 2 + 10;
+        const clen = 4;
+        ctx.strokeStyle = '#0369a1';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(-bw / 2, -bh / 2 + clen); ctx.lineTo(-bw / 2, -bh / 2); ctx.lineTo(-bw / 2 + clen, -bh / 2);
+        ctx.moveTo(bw / 2 - clen, -bh / 2); ctx.lineTo(bw / 2, -bh / 2); ctx.lineTo(bw / 2, -bh / 2 + clen);
+        ctx.moveTo(bw / 2, bh / 2 - clen); ctx.lineTo(bw / 2, bh / 2); ctx.lineTo(bw / 2 - clen, bh / 2);
+        ctx.moveTo(-bw / 2 + clen, bh / 2); ctx.lineTo(-bw / 2, bh / 2); ctx.lineTo(-bw / 2, bh / 2 - clen);
+        ctx.stroke();
+      }
+
+      ctx.restore();
       ctx.restore();
     }
   }

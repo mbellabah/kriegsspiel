@@ -15,7 +15,7 @@ export const App: React.FC = () => {
   const [state, setState] = useState<SimulationState>(engine.getState());
   const [isBriefingOpen, setIsBriefingOpen] = useState(false);
   const [showHexGrid, setShowHexGrid] = useState(false);
-  const [showRangeRings, setShowRangeRings] = useState(true);
+  const [showRangeRings, setShowRangeRings] = useState(false);
   const [showCorpsOverlay, setShowCorpsOverlay] = useState(false);
   const [hoveredCorps, setHoveredCorps] = useState<string | null>(null);
   const [dispatchDeskInitialText, setDispatchDeskInitialText] = useState<string>('');
