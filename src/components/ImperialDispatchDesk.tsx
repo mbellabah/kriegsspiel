@@ -234,7 +234,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
         } else if (isCav) {
           badge = 'CAV';
           badgeColor = 'bg-sky-100 text-sky-900 border-sky-300';
-          subtitle = `${cleanUnitName} • ${unit.corps} (${unit.strength.toLocaleString()} sabres)`;
+          subtitle = `${cleanUnitName} • ${unit.corps} (${Math.round(unit.strength).toLocaleString()} sabres)`;
         } else if (isHq) {
           badge = 'HQ';
           badgeColor = 'bg-purple-100 text-purple-900 border-purple-300';
@@ -246,7 +246,7 @@ export const ImperialDispatchDesk: React.FC<ImperialDispatchDeskProps> = ({
           subtitle = `${unit.corps} • Logistics & Supply`;
         } else {
           // Infantry
-          subtitle = `${cleanUnitName} • ${unit.corps} (${unit.strength.toLocaleString()} men)`;
+          subtitle = `${cleanUnitName} • ${unit.corps} (${Math.round(unit.strength).toLocaleString()} men)`;
         }
 
         // Keywords: match commander surname, full commander name, unit name, corps, type

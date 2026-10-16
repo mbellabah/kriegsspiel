@@ -1,10 +1,26 @@
 import { Unit, ManeuverOrder, Scenario, TerrainFeature, CombatLogEntry, BattleStateSnapshot, HistoricalEvent, HistoricalDispatch, Vector2D, OperationalGraphic, ActiveEngagement, TargetReferencePoint, SectorForceRatios, WargameSymbology, TacticalObjective, Formation, CampaignEra, OrderCondition, OrderSource, ContactType, SitrepNotification, ERA_WEAPON_PROFILES } from '../types/game';
 import { sounds } from './soundEffects';
+import { getUnitSymbolFields } from './symbology';
+import { toGridRef } from './grid';
 
 export interface LossSample {
   t: number; // battle minutes since 07:00
   french: number;
   allies: number;
+}
+
+// Last intelligence held on an enemy formation; kept after contact is lost and aged on the map
+export interface LastKnownContact {
+  position: Vector2D;
+  time: number; // battle minutes when last observed
+  quality: 'contact' | 'identified';
+  estimatedStrength?: string;
+}
+
+export interface UnitLossSample {
+  t: number;
+  casualties: number; // cumulative casualties taken
+  kills: number; // cumulative casualties inflicted
 }
 
 export interface SimulationState {
@@ -25,6 +41,9 @@ export interface SimulationState {
   frenchLosses: number;
   alliedLosses: number;
   lossHistory: LossSample[];
+  unitLossHistory: Record<string, UnitLossSample[]>;
+  lastKnown: Record<string, LastKnownContact>;
+  keyEvents: CombatLogEntry[]; // uncapped-ish record of significant entries for the after-action review
   combatLogs: CombatLogEntry[];
   selectedUnitId: string | null;
   selectedUnitIds: string[]; // Multi-unit group selection
@@ -189,6 +208,9 @@ export class BattleEngine {
       frenchLosses: 0,
       alliedLosses: 0,
       lossHistory: [{ t: 0, french: 0, allies: 0 }],
+      unitLossHistory: {},
+      lastKnown: {},
+      keyEvents: [],
       combatLogs: [
         {
           id: 'log_0',
@@ -202,7 +224,7 @@ export class BattleEngine {
       selectedUnitIds: ['fr_sthilaire'],
       locatedUnitId: null,
       sitrepNotifications: [],
-      fogOfWarEnabled: false,
+      fogOfWarEnabled: true,
       showOperationalGraphics: true,
       operationalGraphics: [
         {
@@ -1000,6 +1022,8 @@ export class BattleEngine {
 
   public resetBattle() {
     this.state = this.createInitialState();
+    this.lastSitrepSlot = 0;
+    this.aiArtyLastTasked = {};
     this.saveSnapshot();
     this.notify();
   }
@@ -1520,22 +1544,39 @@ export class BattleEngine {
     this.notify();
   }
 
-  private addLog(message: string, faction: Unit['faction'], importance: CombatLogEntry['importance']) {
+  private addLog(
+    message: string,
+    faction: Unit['faction'],
+    importance: CombatLogEntry['importance'],
+    extra?: { kind?: CombatLogEntry['kind']; location?: Vector2D }
+  ) {
     this.logIdCounter++;
     const formatted = this.formatTime(this.state.timeMinutes);
     // Attach the position of the first unit named in the entry so the log can jump the map there
-    const subject = this.state.units.find((u) => message.includes(u.name));
+    const subject = extra?.location ? undefined : this.state.units.find((u) => message.includes(u.name));
     this.state.combatLogs.unshift({
       id: `log_${this.logIdCounter}`,
       timeFormatted: formatted,
       message,
       faction,
       importance,
-      location: subject ? { ...subject.position } : undefined,
+      location: extra?.location ? { ...extra.location } : subject ? { ...subject.position } : undefined,
+      kind: extra?.kind,
+      t: this.state.timeMinutes,
     });
-    if (this.state.combatLogs.length > 60) {
+    if (importance !== 'normal' || extra?.kind === 'order') {
+      this.state.keyEvents.push(this.state.combatLogs[0]);
+      if (this.state.keyEvents.length > 400) this.state.keyEvents.shift();
+    }
+    if (this.state.combatLogs.length > 200) {
       this.state.combatLogs.pop();
     }
+  }
+
+  // 24-hour clock, e.g. "0705" / "1330"
+  public formatMilitaryTime(minutesFromStart: number): string {
+    const total = 7 * 60 + Math.floor(minutesFromStart);
+    return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}${String(total % 60).padStart(2, '0')}`;
   }
 
   public formatTime(minutesFromStart: number): string {
@@ -1566,6 +1607,24 @@ export class BattleEngine {
     return { french, allies, frenchPerHour: (french / span) * 60, alliesPerHour: (allies / span) * 60 };
   }
 
+  // A single formation's casualties taken/inflicted over the trailing window, and per hour
+  public getUnitCasualtyRates(unitId: string, windowMinutes = 10): { taken: number; inflicted: number; takenPerHour: number; inflictedPerHour: number } {
+    const unit = this.state.units.find((u) => u.id === unitId);
+    const hist = this.state.unitLossHistory[unitId] || [];
+    const now = { t: this.state.timeMinutes, casualties: unit?.casualtiesTaken || 0, kills: unit?.kills || 0 };
+    let base = hist[0] || { t: 0, casualties: 0, kills: 0 };
+    for (let i = hist.length - 1; i >= 0; i--) {
+      if (now.t - hist[i].t >= windowMinutes) {
+        base = hist[i];
+        break;
+      }
+    }
+    const span = Math.max(1, now.t - base.t);
+    const taken = Math.max(0, now.casualties - base.casualties);
+    const inflicted = Math.max(0, now.kills - base.kills);
+    return { taken, inflicted, takenPerHour: (taken / span) * 60, inflictedPerHour: (inflicted / span) * 60 };
+  }
+
   // Scrubbing to specific time
   public scrubToTime(targetMinutes: number) {
     // Find closest snapshot <= targetMinutes
@@ -1578,6 +1637,14 @@ export class BattleEngine {
       this.state.frenchLosses = closest.frenchLosses;
       this.state.alliedLosses = closest.alliedLosses;
       this.state.lossHistory = this.state.lossHistory.filter((l) => l.t <= closest.timeMinutes);
+      this.lastSitrepSlot = Math.floor(closest.timeMinutes / 30);
+      this.state.keyEvents = this.state.keyEvents.filter((e) => (e.t ?? 0) <= closest.timeMinutes);
+      for (const id of Object.keys(this.state.lastKnown)) {
+        if (this.state.lastKnown[id].time > closest.timeMinutes) delete this.state.lastKnown[id];
+      }
+      for (const id of Object.keys(this.state.unitLossHistory)) {
+        this.state.unitLossHistory[id] = this.state.unitLossHistory[id].filter((l) => l.t <= closest.timeMinutes);
+      }
       this.state.combatLogs = JSON.parse(JSON.stringify(closest.combatLogs));
     } else {
       this.resetBattle();
@@ -1611,6 +1678,7 @@ export class BattleEngine {
 
     if (this.state.timeMinutes >= this.scenario.endTimeMinutes) {
       this.state.timeMinutes = this.scenario.endTimeMinutes;
+      this.saveSnapshot();
       this.state.isRunning = false;
       this.addLog('The Battle of Austerlitz has concluded!', 'french', 'critical');
       this.notify();
@@ -1659,6 +1727,13 @@ export class BattleEngine {
       this.state.sectorForceRatios = this.computeSectorRatios(this.state.units, this.state.playerFaction);
     }
 
+    // 3.8 Scheduled corps situation reports every 30 battle minutes
+    const sitrepSlot = Math.floor(this.state.timeMinutes / 30);
+    if (sitrepSlot > this.lastSitrepSlot) {
+      this.lastSitrepSlot = sitrepSlot;
+      this.issueCorpsSitreps();
+    }
+
     // 3.9 Sample cumulative casualties every battle minute for attrition rates
     const lastLoss = this.state.lossHistory[this.state.lossHistory.length - 1];
     if (!lastLoss || this.state.timeMinutes - lastLoss.t >= 1) {
@@ -1667,6 +1742,10 @@ export class BattleEngine {
         french: this.state.frenchLosses,
         allies: this.state.alliedLosses,
       });
+      for (const u of this.state.units) {
+        const hist = this.state.unitLossHistory[u.id] || (this.state.unitLossHistory[u.id] = [{ t: 0, casualties: 0, kills: 0 }]);
+        hist.push({ t: this.state.timeMinutes, casualties: u.casualtiesTaken || 0, kills: u.kills || 0 });
+      }
     }
 
     // 4. Save periodic snapshots (approx every 8 battle minutes)
@@ -1918,7 +1997,16 @@ export class BattleEngine {
         if (this.state.timeMinutes >= (order.dispatchArrivalTime || 0)) {
           if (order.startTime !== undefined && order.startTime > this.state.timeMinutes) {
             order.status = 'standby';
-            this.addLog(`${unit.name} received dispatch: standing by until ${this.formatTime(order.startTime)}.`, unit.faction, 'normal');
+            if (unit.faction === this.state.playerFaction) {
+              this.addLog(
+                `ACK ${getUnitSymbolFields(unit).designation}: WILCO. Standing by until ${this.formatMilitaryTime(order.startTime)}, then ${this.describeTask(order)}.`,
+                unit.faction,
+                'normal',
+                { kind: 'ack', location: unit.position }
+              );
+            } else {
+              this.addLog(`${unit.name} received dispatch: standing by until ${this.formatTime(order.startTime)}.`, unit.faction, 'normal');
+            }
             continue;
           } else {
             order.status = 'executing';
@@ -1935,7 +2023,11 @@ export class BattleEngine {
             if (order.targetFormation) {
               unit.formation = order.targetFormation;
             }
-            this.addLog(`${unit.name} received dispatch and is now executing orders.`, unit.faction, 'normal');
+            if (unit.faction === this.state.playerFaction) {
+              this.logAcknowledgement(unit, order);
+            } else {
+              this.addLog(`${unit.name} received dispatch and is now executing orders.`, unit.faction, 'normal');
+            }
           }
         } else {
           continue; // Wait for the order to arrive
@@ -2195,6 +2287,17 @@ export class BattleEngine {
           unit.heading = arrivalFacing;
         }
 
+        if (!order.arrivalReported && unit.faction === this.state.playerFaction && order.source === 'player') {
+          order.arrivalReported = true;
+          const pct = Math.round((unit.strength / Math.max(1, unit.initialStrength)) * 100);
+          this.addLog(
+            `REPORT ${getUnitSymbolFields(unit).designation}: in position ${order.objectiveName ? `at ${order.objectiveName} ` : ''}(${toGridRef(unit.position)}). Strength ${pct}%, ammunition ${Math.round((unit.ammo / Math.max(1, unit.maxAmmo)) * 100)}%.`,
+            unit.faction,
+            'normal',
+            { kind: 'report', location: unit.position }
+          );
+        }
+
         // If this is a hold order, maintain defensive stance at destination
         if (order.type === 'hold') {
           unit.status = 'holding';
@@ -2223,7 +2326,9 @@ export class BattleEngine {
         unit.currentOrder = undefined;
         unit.status = order.targetUnitId ? (dist <= 42 ? 'melee' : 'engaging') : 'idle';
         this.state.activeOrders = this.state.activeOrders.filter((o) => o.id !== order.id);
-        this.addLog(`${unit.name} has completed maneuver to destination.`, unit.faction, 'normal');
+        if (!order.arrivalReported) {
+          this.addLog(`${unit.name} has completed maneuver to destination.`, unit.faction, 'normal');
+        }
         continue;
       }
 
@@ -2796,6 +2901,8 @@ export class BattleEngine {
     }
   }
 
+  private aiArtyLastTasked: Record<string, number> = {};
+
   private updateAIArtillery(_deltaMinutes: number) {
     if (!this.state.isRunning) return;
 
@@ -2811,6 +2918,15 @@ export class BattleEngine {
     );
 
     for (const arty of aiArtillery) {
+      // Re-tasking cooldown: other AI layers also task batteries, so without this the two
+      // re-issue fire missions to each other every tick (and flood the log)
+      const lastIssued = this.aiArtyLastTasked[arty.id];
+      if (lastIssued !== undefined && this.state.timeMinutes - lastIssued < 5) continue;
+      if (arty.currentOrder?.type === 'bombard' && arty.currentOrder.status !== 'completed' && arty.currentOrder.status !== 'cancelled') {
+        const tgt = arty.currentOrder.targetUnitId ? this.state.units.find((u) => u.id === arty.currentOrder?.targetUnitId) : undefined;
+        if (!arty.currentOrder.targetUnitId || (tgt && tgt.status !== 'shattered' && tgt.strength > 0)) continue;
+      }
+
       // If already executing a valid bombardment on a live target in range, let it continue
       if (arty.currentOrder?.type === 'bombard' && arty.currentOrder.status === 'executing') {
         const dest = arty.currentOrder.destination;
@@ -2853,6 +2969,7 @@ export class BattleEngine {
       }
 
       if (bestTarget) {
+        this.aiArtyLastTasked[arty.id] = this.state.timeMinutes;
         this.issueOrder(arty.id, {
           unitId: arty.id,
           type: 'bombard',
@@ -3475,6 +3592,17 @@ export class BattleEngine {
         const high = base + 1500;
         enemy.estimatedStrength = `~${low.toLocaleString()} - ${high.toLocaleString()}`;
       }
+      if (bestState !== 'hidden') {
+        this.state.lastKnown[enemy.id] = {
+          position: { ...enemy.position },
+          time: this.state.timeMinutes,
+          quality: bestState,
+          estimatedStrength:
+            bestState === 'identified'
+              ? `~${(Math.round(enemy.strength / 500) * 500).toLocaleString()}`
+              : enemy.estimatedStrength,
+        };
+      }
     }
   }
 
@@ -3686,7 +3814,7 @@ export class BattleEngine {
     return feat?.cover ?? 0.0;
   }
 
-  private getDirectEngagementRange(u: Unit): number {
+  public getDirectEngagementRange(u: Unit): number {
     // Direct line-of-sight firefight range:
     // Artillery direct point defense:
     // - If actively executing a distant Call-For-Fire (CFF) bombardment mission: 60px (emergency overrun canister range)
@@ -4445,6 +4573,105 @@ export class BattleEngine {
       occludingElevation: maxOcclusion,
       occludingPoint,
     };
+  }
+
+  private lastSitrepSlot = 0;
+
+  // One SITREP per friendly corps: strength, ammunition, losses since the last report, contact and task
+  private issueCorpsSitreps() {
+    const player = this.state.playerFaction;
+    const byCorps = new Map<string, Unit[]>();
+    for (const u of this.state.units) {
+      if (u.faction !== player) continue;
+      const list = byCorps.get(u.corps) || [];
+      list.push(u);
+      byCorps.set(u.corps, list);
+    }
+    const since = this.state.timeMinutes - 30;
+    for (const [corps, all] of byCorps) {
+      const alive = all.filter((u) => u.status !== 'shattered' && u.strength > 0);
+      if (alive.length === 0) continue;
+      const str = alive.reduce((a, u) => a + u.strength, 0);
+      const init = all.reduce((a, u) => a + u.initialStrength, 0);
+      const shooters = alive.filter((u) => u.type !== 'supply' && u.maxAmmo > 0);
+      const ammo = shooters.length
+        ? Math.round((shooters.reduce((a, u) => a + Math.min(1, u.ammo / u.maxAmmo), 0) / shooters.length) * 100)
+        : 100;
+      let lost = 0;
+      for (const u of all) {
+        const hist = this.state.unitLossHistory[u.id] || [];
+        const base = [...hist].reverse().find((h) => h.t <= since) || hist[0];
+        lost += Math.max(0, (u.casualtiesTaken || 0) - (base?.casualties || 0));
+      }
+      const engaged = alive.filter((u) => u.status === 'engaging' || u.status === 'melee' || u.status === 'charging').length;
+      const routing = alive.filter((u) => u.status === 'routing').length;
+      const tasks = alive.filter((u) => u.currentOrder).map((u) => this.describeTask(u.currentOrder!));
+      const task = tasks.length
+        ? tasks.sort((a, b) => tasks.filter((t) => t === b).length - tasks.filter((t) => t === a).length)[0]
+        : engaged > 0
+        ? 'in contact, holding'
+        : 'holding position';
+      const centroid = {
+        x: alive.reduce((a, u) => a + u.position.x, 0) / alive.length,
+        y: alive.reduce((a, u) => a + u.position.y, 0) / alive.length,
+      };
+      const name = corps.replace(/\s*\([^)]*\)/g, '');
+      this.addLog(
+        `SITREP ${name} ${this.formatMilitaryTime(this.state.timeMinutes)}: ${alive.length} formations at ${toGridRef(centroid)}, ` +
+          `strength ${Math.round(str).toLocaleString()} (${Math.round((str / Math.max(1, init)) * 100)}%), ammunition ${ammo}%, ` +
+          `losses last 30 min ${Math.round(lost).toLocaleString()}. In contact ${engaged}, routing ${routing}. ${task[0].toUpperCase()}${task.slice(1)}.`,
+        player,
+        routing > 0 || ammo < 25 ? 'highlight' : 'normal',
+        { kind: 'sitrep', location: centroid }
+      );
+    }
+  }
+
+  public get endTimeMinutes(): number {
+    return this.scenario.endTimeMinutes;
+  }
+
+  // Record a transmitted order in the log (shown with the order marker, clickable to its objective)
+  public logOrder(text: string, location?: Vector2D) {
+    this.addLog(text, this.state.playerFaction, 'highlight', { kind: 'order', location });
+    this.notify();
+  }
+
+  private describeTask(order: ManeuverOrder): string {
+    const where = order.objectiveName || toGridRef(order.destination);
+    switch (order.type) {
+      case 'assault':
+        return `attacking ${where}`;
+      case 'charge':
+        return `charging ${where}`;
+      case 'hold':
+        return `holding ${where}`;
+      case 'entrench':
+        return `digging in at ${where}`;
+      case 'bombard':
+        return `firing on ${where}`;
+      case 'retreat':
+        return `withdrawing to ${where}`;
+      case 'flank':
+        return `flanking toward ${where}`;
+      default:
+        return `moving to ${where}`;
+    }
+  }
+
+  // Acknowledgement returned when a courier delivers an order: task, objective and ETA
+  private logAcknowledgement(unit: Unit, order: ManeuverOrder) {
+    const task = this.describeTask(order);
+    const minutes = order.type === 'bombard' || (order.type === 'hold' && Math.hypot(order.destination.x - unit.position.x, order.destination.y - unit.position.y) < 10)
+      ? 0
+      : this.estimateMarchMinutes(unit.position, order.destination, unit.type);
+    const eta = minutes > 1 ? ` ETA ${this.formatMilitaryTime(this.state.timeMinutes + minutes)}.` : '';
+    this.addLog(
+      `ACK ${getUnitSymbolFields(unit).designation}: WILCO. ${task[0].toUpperCase()}${task.slice(1)}.${eta}`,
+      unit.faction,
+      'normal',
+      { kind: 'ack', location: unit.position }
+    );
   }
 
   // Facing to adopt on arrival: track a designated enemy, else the nearest one, else the drafted heading

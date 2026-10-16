@@ -7,6 +7,7 @@ import { GlyphClose, GlyphSign, GlyphSound } from './glyphs';
 import { TacticalContextMenu } from './TacticalContextMenu';
 import { headingToBearing, getCardinalDirection } from '../engine/tacticalNavigation';
 import { toGridRef, formatDistance } from '../engine/grid';
+import { unitsAtTime } from '../engine/replay';
 
 interface SandtableCanvasProps {
   engine: BattleEngine;
@@ -28,6 +29,7 @@ interface SandtableCanvasProps {
   isDispatchDeskOpen?: boolean;
   onInsertCompassText?: (text: string) => void;
   onOpenSitrep?: () => void;
+  replayTime?: number | null; // when set, the map shows the recorded battle at this time
 }
 
 export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
@@ -49,6 +51,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
   onCancelPickCoordinates,
   isDispatchDeskOpen = false,
   onInsertCompassText,
+  replayTime = null,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<SandtableRenderer | null>(null);
@@ -230,6 +233,9 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
   const handleQuickCopyRef = useRef<(coords: Vector2D, screenPos: { x: number; y: number } | null, includeBearing?: boolean) => void>(() => {});
 
 
+
+  const replayTimeRef = useRef(replayTime);
+  replayTimeRef.current = replayTime;
 
   const drawingOrderRef = useRef(drawingOrder);
   drawingOrderRef.current = drawingOrder;
@@ -640,8 +646,14 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
               }
             : null;
 
+          const rt = replayTimeRef.current;
+          const replayUnits = rt !== null && rt !== undefined ? unitsAtTime(liveState.snapshots, rt) : null;
+          const frameState = replayUnits
+            ? { ...liveState, units: replayUnits, activeOrders: [], artilleryImpacts: [], timeMinutes: rt as number, isRunning: false }
+            : liveState;
+
           rendererRef.current.render(
-            liveState,
+            frameState,
             cameraRef.current,
             drawingOrderRef.current,
             hoveredUnitIdRef.current
@@ -1456,6 +1468,12 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
           />
         );
       })()}
+
+      {replayTime !== null && replayTime !== undefined && (
+        <div className="fixed top-12 right-[532px] z-30 pointer-events-none bg-white border border-[#111111] px-3 py-1 text-[11px] font-mono shadow-sm">
+          Replay {engine.formatMilitaryTime(replayTime)} · map shows the recorded battle
+        </div>
+      )}
 
       {/* Status bar: prompt, map tools, measurement, cursor grid reference, view controls */}
       <footer className="fixed bottom-0 left-0 right-0 z-30 h-7 bg-[#e4e4e7] border-t border-[#a1a1aa] flex items-stretch justify-between text-black text-[10px] select-none pointer-events-auto">

@@ -1,13 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { BattleEngine, SimulationState } from '../engine/simulation';
 import { Vector2D } from '../types/game';
 import { EngagementsDrawer } from './EngagementsDrawer';
 import { ImperialDispatchDesk } from './ImperialDispatchDesk';
+import { OpordComposer } from './OpordComposer';
+import { DecisionBoard } from './DecisionBoard';
 import { OrderOfBattle } from './OrderOfBattle';
 import { CombatDispatches } from './CombatDispatches';
 import { GlyphClose } from './glyphs';
 
-export type StaffTab = 'sitrep' | 'dispatch' | 'orbat' | 'log';
+export type StaffTab = 'sitrep' | 'board' | 'dispatch' | 'orbat' | 'log';
 
 interface LeftStaffRailProps {
   engine: BattleEngine;
@@ -40,6 +42,8 @@ export const LeftStaffRail: React.FC<LeftStaffRailProps> = React.memo(({
   onHoverCorps,
   onDispatchCorps,
 }) => {
+  const [orderMode, setOrderMode] = useState<'opord' | 'free'>('opord');
+
   if (!activeTab) return null;
 
   const activeEngagementsCount = state.activeEngagements?.length || 0;
@@ -58,6 +62,7 @@ export const LeftStaffRail: React.FC<LeftStaffRailProps> = React.memo(({
           ? { text: `${activeEngagementsCount}`, alert: needsReinforcementsCount > 0 }
           : undefined,
     },
+    { id: 'board', label: 'Decisions', title: 'Decision support board' },
     { id: 'dispatch', label: 'Orders', title: 'Write and transmit orders (Alt+D or `)' },
     { id: 'orbat', label: 'ORBAT', title: 'Order of battle' },
     { id: 'log', label: 'Log', title: 'Battle log' },
@@ -129,7 +134,37 @@ export const LeftStaffRail: React.FC<LeftStaffRailProps> = React.memo(({
           />
         )}
 
+        {activeTab === 'board' && <DecisionBoard engine={engine} state={state} onFocusLocation={onFocusLocation} />}
+
         {activeTab === 'dispatch' && (
+          <div className="flex items-stretch h-6 border-b border-[#d4d4d8] text-[10px] flex-shrink-0">
+            {(['opord', 'free'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setOrderMode(m)}
+                className={`px-3 cursor-pointer border-r border-[#d4d4d8] ${
+                  orderMode === m ? 'bg-white text-black font-semibold' : 'text-neutral-600 hover:text-black hover:bg-[#f4f4f5]'
+                }`}
+              >
+                {m === 'opord' ? 'Five-paragraph order' : 'Free text'}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {activeTab === 'dispatch' && orderMode === 'opord' && (
+          <OpordComposer
+            engine={engine}
+            state={state}
+            isPickingCoordinates={isPickingCoordinates}
+            onTogglePickCoordinates={onTogglePickCoordinates}
+            pinpointedCoords={pinpointedCoords}
+            onClearPinpointedCoords={onClearPinpointedCoords}
+          />
+        )}
+
+        {activeTab === 'dispatch' && orderMode === 'free' && (
           <ImperialDispatchDesk
             engine={engine}
             state={state}

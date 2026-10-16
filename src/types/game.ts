@@ -50,6 +50,8 @@ export interface ManeuverOrder {
   targetUnitId?: string;
   faceUnitId?: string; // On arrival, square the firing edge onto this enemy's current position
   faceNearestEnemy?: boolean; // On arrival, square the firing edge onto whichever enemy is nearest then
+  objectiveName?: string; // Named objective / control measure, used in acknowledgements and reports
+  arrivalReported?: boolean;
   targetFormation?: Formation;
   plannedTime: number; // in battle minutes from start (e.g. 0 to 540 for 9 hours)
   dispatchArrivalTime?: number; // Time (in battle minutes) when the courier reaches the unit
@@ -448,6 +450,8 @@ export interface CombatLogEntry {
   faction: Faction;
   importance: 'normal' | 'highlight' | 'critical';
   location?: Vector2D;
+  kind?: 'order' | 'ack' | 'report' | 'sitrep';
+  t?: number; // battle minutes since 07:00
 }
 
 export interface BattleStateSnapshot {

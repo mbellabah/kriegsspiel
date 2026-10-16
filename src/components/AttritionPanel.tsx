@@ -1,61 +1,77 @@
 import React, { useMemo, useState } from 'react';
-import { BattleEngine, SimulationState, LossSample } from '../engine/simulation';
+import { BattleEngine, SimulationState } from '../engine/simulation';
 
 // Series colours validated for CVD separation on the light surface (dataviz validator)
-const FRA_COLOR = '#2c4fb8';
-const ALL_COLOR = '#b91c1c';
+export const FRA_COLOR = '#2c4fb8';
+export const ALL_COLOR = '#b91c1c';
+const SIDE_SERIES = [
+  { label: 'FRA', color: FRA_COLOR },
+  { label: 'ALL', color: ALL_COLOR },
+];
 
-const fmt = (n: number) => Math.round(n).toLocaleString();
-const clock = (t: number) => {
+export const fmt = (n: number) => Math.round(n).toLocaleString();
+export const clock = (t: number) => {
   const total = 7 * 60 + Math.floor(t);
   return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}${String(total % 60).padStart(2, '0')}`;
 };
 
-// Cumulative casualties over battle time, one line per side, crosshair tooltip on hover
-const CasualtyChart: React.FC<{ history: LossSample[] }> = ({ history }) => {
+export interface ChartSeries {
+  label: string;
+  color: string;
+}
+
+// Cumulative values over battle time, one line per series, crosshair tooltip on hover
+export const TimeSeriesChart: React.FC<{
+  points: { t: number; values: number[] }[];
+  series: ChartSeries[];
+  width?: number;
+  height?: number;
+  ariaLabel: string;
+  markerT?: number | null; // optional vertical marker (e.g. replay time)
+}> = ({ points, series, width = 300, height = 120, ariaLabel, markerT }) => {
   const [hover, setHover] = useState<number | null>(null);
-  const W = 300;
-  const H = 120;
-  const pad = { l: 36, r: 34, t: 8, b: 18 };
+  const W = width;
+  const H = height;
+  // Right margin sized to the longest end label
+  const pad = { l: 36, r: Math.max(34, Math.max(...series.map((sr) => sr.label.length)) * 5.4 + 8), t: 8, b: 18 };
   const iw = W - pad.l - pad.r;
   const ih = H - pad.t - pad.b;
 
-  const tMax = Math.max(30, history[history.length - 1]?.t || 0);
-  const yMaxRaw = Math.max(100, ...history.map((h) => Math.max(h.french, h.allies)));
+  const tMax = Math.max(30, points[points.length - 1]?.t || 0);
+  const yMaxRaw = Math.max(10, ...points.flatMap((p) => p.values));
   const step = Math.pow(10, Math.floor(Math.log10(yMaxRaw)));
   const yMax = Math.ceil(yMaxRaw / step) * step;
   const x = (t: number) => pad.l + (t / tMax) * iw;
   const y = (v: number) => pad.t + ih - (v / yMax) * ih;
 
-  const path = (key: 'french' | 'allies') =>
-    history.map((h, i) => `${i === 0 ? 'M' : 'L'}${x(h.t).toFixed(1)},${y(h[key]).toFixed(1)}`).join(' ');
+  const path = (si: number) =>
+    points.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.t).toFixed(1)},${y(p.values[si]).toFixed(1)}`).join(' ');
 
-  const last = history[history.length - 1];
-  const hovered = hover !== null ? history[hover] : null;
+  const last = points[points.length - 1];
+  const hovered = hover !== null ? points[hover] : null;
 
   const onMove = (e: React.MouseEvent<SVGRectElement>) => {
     const rect = (e.currentTarget as SVGRectElement).getBoundingClientRect();
     const t = ((e.clientX - rect.left) / rect.width) * tMax;
     let best = 0;
-    for (let i = 0; i < history.length; i++) {
-      if (Math.abs(history[i].t - t) < Math.abs(history[best].t - t)) best = i;
+    for (let i = 0; i < points.length; i++) {
+      if (Math.abs(points[i].t - t) < Math.abs(points[best].t - t)) best = i;
     }
     setHover(best);
   };
 
-  // Keep end labels from overlapping when the lines finish close together
-  let fraLabelY = last ? y(last.french) : 0;
-  let allLabelY = last ? y(last.allies) : 0;
-  if (Math.abs(fraLabelY - allLabelY) < 10) {
-    const mid = (fraLabelY + allLabelY) / 2;
-    const up = last && last.french >= last.allies;
-    fraLabelY = mid + (up ? -5 : 5);
-    allLabelY = mid + (up ? 5 : -5);
+  // End labels, nudged apart when lines finish close together
+  const labelYs = last ? series.map((_, si) => y(last.values[si])) : [];
+  if (labelYs.length === 2 && Math.abs(labelYs[0] - labelYs[1]) < 10) {
+    const mid = (labelYs[0] + labelYs[1]) / 2;
+    const firstHigher = last.values[0] >= last.values[1];
+    labelYs[0] = mid + (firstHigher ? -5 : 5);
+    labelYs[1] = mid + (firstHigher ? 5 : -5);
   }
 
   return (
     <div className="relative">
-      <svg width={W} height={H} className="block" role="img" aria-label="Cumulative casualties by side over battle time">
+      <svg width={W} height={H} className="block" role="img" aria-label={ariaLabel}>
         {[0, 0.5, 1].map((f) => (
           <g key={f}>
             <line x1={pad.l} x2={W - pad.r} y1={y(yMax * f)} y2={y(yMax * f)} stroke="#e4e4e7" strokeWidth="1" />
@@ -69,52 +85,56 @@ const CasualtyChart: React.FC<{ history: LossSample[] }> = ({ history }) => {
             {clock(t)}
           </text>
         ))}
-        <path d={path('french')} fill="none" stroke={FRA_COLOR} strokeWidth="2" strokeLinejoin="round" />
-        <path d={path('allies')} fill="none" stroke={ALL_COLOR} strokeWidth="2" strokeLinejoin="round" />
-        {last && (
-          <>
-            <text x={W - pad.r + 4} y={fraLabelY} dominantBaseline="middle" fontSize="9" fill="#3f3f46">FRA</text>
-            <text x={W - pad.r + 4} y={allLabelY} dominantBaseline="middle" fontSize="9" fill="#3f3f46">ALL</text>
-          </>
+        {markerT != null && (
+          <line x1={x(markerT)} x2={x(markerT)} y1={pad.t} y2={pad.t + ih} stroke="#111111" strokeWidth="1" strokeDasharray="3 2" />
         )}
+        {series.map((sr, si) => (
+          <path key={sr.label} d={path(si)} fill="none" stroke={sr.color} strokeWidth="2" strokeLinejoin="round" />
+        ))}
+        {last &&
+          series.map((sr, si) => (
+            <text key={sr.label} x={W - pad.r + 4} y={labelYs[si]} dominantBaseline="middle" fontSize="9" fill="#3f3f46">
+              {sr.label}
+            </text>
+          ))}
         {hovered && (
           <g pointerEvents="none">
             <line x1={x(hovered.t)} x2={x(hovered.t)} y1={pad.t} y2={pad.t + ih} stroke="#a1a1aa" strokeWidth="1" />
-            <circle cx={x(hovered.t)} cy={y(hovered.french)} r="4" fill={FRA_COLOR} stroke="#fbfbfa" strokeWidth="2" />
-            <circle cx={x(hovered.t)} cy={y(hovered.allies)} r="4" fill={ALL_COLOR} stroke="#fbfbfa" strokeWidth="2" />
+            {series.map((sr, si) => (
+              <circle key={sr.label} cx={x(hovered.t)} cy={y(hovered.values[si])} r="4" fill={sr.color} stroke="#fbfbfa" strokeWidth="2" />
+            ))}
           </g>
         )}
-        <rect
-          x={pad.l}
-          y={pad.t}
-          width={iw}
-          height={ih}
-          fill="transparent"
-          onMouseMove={onMove}
-          onMouseLeave={() => setHover(null)}
-        />
+        <rect x={pad.l} y={pad.t} width={iw} height={ih} fill="transparent" onMouseMove={onMove} onMouseLeave={() => setHover(null)} />
       </svg>
       {hovered && (
         <div
           className="absolute pointer-events-none bg-white border border-[#a1a1aa] px-1.5 py-1 text-[10px] font-mono shadow-sm"
-          style={{ left: Math.min(x(hovered.t) + 8, W - 110), top: 4 }}
+          style={{ left: Math.min(x(hovered.t) + 8, W - 120), top: 4 }}
         >
           <div className="text-neutral-500">{clock(hovered.t)}</div>
-          <div className="flex items-center gap-1.5">
-            <span className="inline-block w-2 h-[2px]" style={{ background: FRA_COLOR }} />
-            <span className="text-neutral-600">FRA</span>
-            <span className="ml-auto pl-2 text-black">{fmt(hovered.french)}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="inline-block w-2 h-[2px]" style={{ background: ALL_COLOR }} />
-            <span className="text-neutral-600">ALL</span>
-            <span className="ml-auto pl-2 text-black">{fmt(hovered.allies)}</span>
-          </div>
+          {series.map((sr, si) => (
+            <div key={sr.label} className="flex items-center gap-1.5">
+              <span className="inline-block w-2 h-[2px]" style={{ background: sr.color }} />
+              <span className="text-neutral-600">{sr.label}</span>
+              <span className="ml-auto pl-2 text-black">{fmt(hovered.values[si])}</span>
+            </div>
+          ))}
         </div>
       )}
     </div>
   );
 };
+
+export const ChartLegend: React.FC<{ series: ChartSeries[] }> = ({ series }) => (
+  <div className="flex items-center gap-3 text-[10px] text-neutral-600 mt-1">
+    {series.map((sr) => (
+      <span key={sr.label} className="flex items-center gap-1">
+        <span className="inline-block w-3 h-[2px]" style={{ background: sr.color }} /> {sr.label}
+      </span>
+    ))}
+  </div>
+);
 
 interface AttritionPanelProps {
   engine: BattleEngine;
@@ -220,15 +240,12 @@ export const AttritionPanel: React.FC<AttritionPanelProps> = ({ engine, state })
             <p className="text-[10px] text-neutral-500 py-6 text-center">No casualties yet. Start the battle.</p>
           ) : (
             <>
-              <CasualtyChart history={state.lossHistory} />
-              <div className="flex items-center gap-3 text-[10px] text-neutral-600 mt-1">
-                <span className="flex items-center gap-1">
-                  <span className="inline-block w-3 h-[2px]" style={{ background: FRA_COLOR }} /> France
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="inline-block w-3 h-[2px]" style={{ background: ALL_COLOR }} /> Allies
-                </span>
-              </div>
+              <TimeSeriesChart
+                points={state.lossHistory.map((h) => ({ t: h.t, values: [h.french, h.allies] }))}
+                series={SIDE_SERIES}
+                ariaLabel="Cumulative casualties by side over battle time"
+              />
+              <ChartLegend series={[{ label: 'France', color: FRA_COLOR }, { label: 'Allies', color: ALL_COLOR }]} />
             </>
           )
         ) : (

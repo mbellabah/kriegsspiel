@@ -23,10 +23,12 @@ const toMilitaryTime = (t: string) => {
 };
 
 export const CombatDispatches: React.FC<CombatDispatchesProps> = ({ logs, isOpen, onClose, onFocusLocation, embedded = false }) => {
-  const [keyOnly, setKeyOnly] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'key' | 'traffic'>('all');
   if (!isOpen) return null;
 
-  const displayedLogs = logs.filter((l) => !keyOnly || l.importance !== 'normal').slice(0, 60);
+  const displayedLogs = logs
+    .filter((l) => (filter === 'key' ? l.importance !== 'normal' : filter === 'traffic' ? !!l.kind : true))
+    .slice(0, 120);
 
   const containerClasses = embedded
     ? 'flex-1 min-h-0 flex flex-col overflow-hidden bg-[#fbfbfa] text-black font-sans select-none'
@@ -38,15 +40,16 @@ export const CombatDispatches: React.FC<CombatDispatchesProps> = ({ logs, isOpen
     <ContainerTag className={containerClasses}>
       <div className="flex items-center justify-between h-6 px-2 border-b border-[#d4d4d8] text-[10px] text-neutral-600 flex-shrink-0">
         <div className="flex items-center">
-          {[
-            { v: false, label: 'All' },
-            { v: true, label: 'Key events' },
-          ].map((o) => (
+          {([
+            { v: 'all', label: 'All' },
+            { v: 'key', label: 'Key events' },
+            { v: 'traffic', label: 'Orders and reports' },
+          ] as const).map((o) => (
             <button
               key={o.label}
               type="button"
-              onClick={() => setKeyOnly(o.v)}
-              className={`px-1.5 h-5 cursor-pointer ${keyOnly === o.v ? 'text-black font-semibold underline underline-offset-2' : 'hover:text-black'}`}
+              onClick={() => setFilter(o.v)}
+              className={`px-1.5 h-5 cursor-pointer ${filter === o.v ? 'text-black font-semibold underline underline-offset-2' : 'hover:text-black'}`}
             >
               {o.label}
             </button>

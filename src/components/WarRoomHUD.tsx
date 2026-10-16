@@ -31,6 +31,8 @@ interface WarRoomHUDProps {
   isDispatchDeskOpen?: boolean;
   onToggleDispatchDesk?: () => void;
   onToggleDoctrine: () => void;
+  isAarOpen?: boolean;
+  onOpenAar?: () => void;
   isSitrepOpen?: boolean;
   onToggleSitrep?: () => void;
 }
@@ -57,6 +59,8 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
   isDispatchDeskOpen = false,
   onToggleDispatchDesk,
   onToggleDoctrine,
+  isAarOpen = false,
+  onOpenAar,
   isSitrepOpen = false,
   onToggleSitrep,
 }) => {
@@ -153,7 +157,10 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
       {/* CLUSTER 1: Pace & Chronograph (Brand, Run/Pause, Speed Popover, Clock, Scrubber) */}
       <div className="flex items-center gap-2.5">
         {/* Brand Pill */}
-        <div className="text-[11px] font-bold tracking-tight pr-1">Austerlitz 1805</div>
+        <div className="flex items-baseline gap-1.5 pr-1 leading-none">
+          <span className="text-[12px] font-bold tracking-tight">Kriegspiel</span>
+          <span className="text-[10px] text-neutral-500">Austerlitz 1805</span>
+        </div>
 
         {/* Sim Controls Pill */}
         <div className="flex items-center gap-1 bg-[#d4d4d8] border border-[#a1a1aa] p-0.5 shadow-inner">
@@ -419,7 +426,7 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
                   { label: 'Range rings (all units)', key: 'R', on: showRangeRings, toggle: onToggleRangeRings },
                   { label: 'Artillery beaten zones', key: 'K', on: !!state.showArtilleryKillzones, toggle: () => engine.toggleArtilleryKillzones() },
                   ...(onToggleCorpsOverlay ? [{ label: 'Corps boundaries and C2 links', key: 'C', on: showCorpsOverlay, toggle: onToggleCorpsOverlay }] : []),
-                  { label: 'Hex grid', key: '', on: showHexGrid, toggle: onToggleHexGrid },
+                  { label: 'Grid overlay (1 km)', key: 'G', on: showHexGrid, toggle: onToggleHexGrid },
                   { label: 'Fog of war', key: '', on: state.fogOfWarEnabled, toggle: () => engine.toggleFogOfWar() },
                   { label: 'Hostile frames as diamonds', key: '', on: state.wargameSymbology === 'nato', toggle: () => engine.toggleSymbologyMode() },
                 ].map((l) => (
@@ -479,6 +486,7 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
         <div className="flex items-stretch h-6 border border-[#a1a1aa] bg-white">
           {([
             { id: 'sitrep', label: 'SITREP', title: 'Contacts and sector engagements' },
+            { id: 'board', label: 'Decisions', title: 'Decision support board' },
             { id: 'dispatch', label: 'Orders', title: 'Write and transmit orders (Alt+D or `)' },
             { id: 'orbat', label: 'ORBAT', title: 'Order of battle' },
             { id: 'log', label: 'Log', title: 'Battle log' },
@@ -511,6 +519,16 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
               </button>
             );
           })}
+          <button
+            type="button"
+            onClick={onOpenAar}
+            title="After-action review and replay"
+            className={`px-2.5 text-[10px] font-semibold border-l border-[#a1a1aa] cursor-pointer ${
+              isAarOpen ? 'bg-[#1e3a8a] text-white' : 'text-neutral-700 hover:bg-[#f4f4f5]'
+            }`}
+          >
+            Review
+          </button>
           <button
             type="button"
             onClick={onToggleDoctrine}

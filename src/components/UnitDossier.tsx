@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
 import { Unit, ERA_WEAPON_PROFILES } from '../types/game';
-import { BattleEngine } from '../engine/simulation';
+import { BattleEngine, SimulationState } from '../engine/simulation';
 import { getUnitSymbolFields, APP6_FRIEND_FILL, APP6_HOSTILE_FILL } from '../engine/symbology';
 import { toGridRef } from '../engine/grid';
 import { GlyphClose } from './glyphs';
+import { TimeSeriesChart, ChartLegend, fmt } from './AttritionPanel';
 
 interface UnitDossierProps {
   unit: Unit | null;
   engine: BattleEngine;
+  // Passed so the memoised panel re-renders on every engine update (units are mutated in place)
+  state: SimulationState;
   onClose: () => void;
   onStartBombardTargeting?: (unitId: string) => void;
   isBombardTargeting?: boolean;
@@ -68,17 +71,24 @@ const Btn: React.FC<{
   onClick: () => void;
   active?: boolean;
   disabled?: boolean;
+  danger?: boolean; // offensive fires and assaults
   title?: string;
   className?: string;
   children: React.ReactNode;
-}> = ({ onClick, active, disabled, title, className = '', children }) => (
+}> = ({ onClick, active, disabled, danger, title, className = '', children }) => (
   <button
     type="button"
     onClick={onClick}
     disabled={disabled}
     title={title}
     className={`h-6 px-1.5 border text-[10px] font-semibold transition-colors cursor-pointer disabled:cursor-default disabled:text-neutral-400 disabled:bg-[#f4f4f5] ${
-      active ? 'bg-[#1e3a8a] border-[#1e3a8a] text-white' : 'bg-white border-[#a1a1aa] text-black hover:bg-[#f4f4f5]'
+      danger
+        ? active
+          ? 'bg-[#7f1d1d] border-[#7f1d1d] text-white'
+          : 'bg-[#b91c1c] border-[#b91c1c] text-white hover:bg-[#991b1b]'
+        : active
+        ? 'bg-[#1e3a8a] border-[#1e3a8a] text-white'
+        : 'bg-white border-[#a1a1aa] text-black hover:bg-[#f4f4f5]'
     } ${className}`}
   >
     {children}
@@ -89,9 +99,15 @@ const SectionLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   <div className="text-[9px] font-mono font-bold uppercase tracking-wider text-neutral-500 mt-3 mb-1">{children}</div>
 );
 
+const UNIT_SERIES = [
+  { label: 'Taken', color: '#b91c1c' },
+  { label: 'Inflicted', color: '#2c4fb8' },
+];
+
 export const UnitDossier: React.FC<UnitDossierProps> = React.memo(({
   unit,
   engine,
+  state,
   onClose,
   onStartBombardTargeting,
   isBombardTargeting = false,
@@ -103,7 +119,6 @@ export const UnitDossier: React.FC<UnitDossierProps> = React.memo(({
 
   if (!unit) return null;
 
-  const state = engine.getState();
   const hostileDiamond = state.wargameSymbology === 'nato' && unit.faction !== 'french';
   const era = state.era || 'napoleonic';
   const eraProfile = ERA_WEAPON_PROFILES[era] || ERA_WEAPON_PROFILES.napoleonic;
@@ -362,7 +377,7 @@ export const UnitDossier: React.FC<UnitDossierProps> = React.memo(({
       <SectionLabel>State</SectionLabel>
       <Row
         label={`Strength (${troopNoun.toLowerCase()})`}
-        value={`${unit.strength.toLocaleString()} / ${unit.initialStrength.toLocaleString()}`}
+        value={`${Math.round(unit.strength).toLocaleString()} / ${unit.initialStrength.toLocaleString()}`}
         alert={strengthRatio < 0.5}
       />
       <Meter
@@ -391,6 +406,59 @@ export const UnitDossier: React.FC<UnitDossierProps> = React.memo(({
         value={unit.type === 'artillery' ? eraProfile.artilleryType : eraProfile.directFireType}
         title={unit.type === 'artillery' ? eraProfile.artilleryType : eraProfile.directFireType}
       />
+
+      <SectionLabel>Attrition</SectionLabel>
+      {(() => {
+        const rates = engine.getUnitCasualtyRates(unit.id, 10);
+        const taken = Math.round(unit.casualtiesTaken || 0);
+        const inflicted = Math.round(unit.kills || 0);
+        const hist = state.unitLossHistory[unit.id] || [];
+        const points = [
+          ...hist.map((h) => ({ t: h.t, values: [h.casualties, h.kills] })),
+          { t: state.timeMinutes, values: [taken, inflicted] },
+        ];
+        return (
+          <>
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-3 text-[10px]">
+              <span />
+              <span className="text-right font-mono text-neutral-500">Taken</span>
+              <span className="text-right font-mono text-neutral-500">Inflicted</span>
+              <span className="text-neutral-500 py-[2px] border-t border-[#e4e4e7]">Total</span>
+              <span className="text-right font-mono py-[2px] border-t border-[#e4e4e7]">{fmt(taken)}</span>
+              <span className="text-right font-mono py-[2px] border-t border-[#e4e4e7]">{fmt(inflicted)}</span>
+              <span className="text-neutral-500 py-[2px] border-t border-[#e4e4e7]">Last 10 min</span>
+              <span className="text-right font-mono py-[2px] border-t border-[#e4e4e7]">{fmt(rates.taken)}</span>
+              <span className="text-right font-mono py-[2px] border-t border-[#e4e4e7]">{fmt(rates.inflicted)}</span>
+              <span className="text-neutral-500 py-[2px] border-t border-[#e4e4e7]">Rate per hour</span>
+              <span className={`text-right font-mono py-[2px] border-t border-[#e4e4e7] ${rates.takenPerHour > unit.strength * 0.5 ? 'text-[#b91c1c] font-bold' : ''}`}>
+                {fmt(rates.takenPerHour)}
+              </span>
+              <span className="text-right font-mono py-[2px] border-t border-[#e4e4e7]">{fmt(rates.inflictedPerHour)}</span>
+            </div>
+            {rates.takenPerHour > 0 && (
+              <Row
+                label="At this rate, ineffective in"
+                value={(() => {
+                  // Time until strength falls below half of establishment at the current loss rate
+                  const remaining = unit.strength - unit.initialStrength * 0.5;
+                  if (remaining <= 0) return 'now';
+                  const mins = (remaining / rates.takenPerHour) * 60;
+                  return mins >= 120 ? `${(mins / 60).toFixed(1)} h` : `${Math.round(mins)} min`;
+                })()}
+                alert={(unit.strength - unit.initialStrength * 0.5) / rates.takenPerHour < 0.5}
+              />
+            )}
+            {points.length >= 2 && (taken > 0 || inflicted > 0) ? (
+              <div className="mt-1.5">
+                <TimeSeriesChart points={points} series={UNIT_SERIES} width={276} height={100} ariaLabel={`Casualties taken and inflicted by ${unit.name}`} />
+                <ChartLegend series={UNIT_SERIES} />
+              </div>
+            ) : (
+              <p className="text-[10px] text-neutral-500 mt-1">No casualties taken or inflicted yet.</p>
+            )}
+          </>
+        );
+      })()}
 
       {conditions.length > 0 && (
         <>
@@ -433,8 +501,8 @@ export const UnitDossier: React.FC<UnitDossierProps> = React.memo(({
             <Btn onClick={() => handleQuickOrder('advance')}>Advance</Btn>
             <Btn onClick={() => handleQuickOrder('flank_right')}>Flank right</Btn>
             {canAssault && (
-              <Btn onClick={handleChargeOrder} title="Assault the nearest enemy with shock" className="col-span-3">
-                {unit.type === 'cavalry' ? 'Charge' : 'Assault'} <span className="text-neutral-400 font-mono">F</span>
+              <Btn onClick={handleChargeOrder} danger title="Assault the nearest enemy with shock" className="col-span-3">
+                {unit.type === 'cavalry' ? 'Charge' : 'Assault'} <span className="text-red-200 font-mono">F</span>
               </Btn>
             )}
           </div>
@@ -459,6 +527,7 @@ export const UnitDossier: React.FC<UnitDossierProps> = React.memo(({
               <Btn
                 onClick={() => onStartBombardTargeting?.(unit.id)}
                 active={isBombardTargeting}
+                danger
                 title="Select a target on the map"
               >
                 {isBombardTargeting ? 'Pick target' : 'Fire mission'}

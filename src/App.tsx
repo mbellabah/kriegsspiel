@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { BattleEngine, SimulationState } from './engine/simulation';
 import { REALISTIC_AUSTERLITZ_SCENARIO } from './data/austerlitzScenario';
 import { SandtableCanvas } from './components/SandtableCanvas';
@@ -7,6 +7,7 @@ import { UnitDossier } from './components/UnitDossier';
 import { LeftStaffRail, StaffTab } from './components/LeftStaffRail';
 import { HistoricalModal } from './components/HistoricalModal';
 import { TroopDoctrineModal } from './components/TroopDoctrineModal';
+import { AfterActionReview } from './components/AfterActionReview';
 
 import { TroopFilterType, Vector2D } from './types/game';
 
@@ -29,6 +30,12 @@ export const App: React.FC = () => {
   const isDispatchDeskOpen = activeStaffTab === 'dispatch';
 
   const [focusLocation, setFocusLocation] = useState<Vector2D | null>(null);
+
+  // After-action review and map replay
+  const [isAarOpen, setIsAarOpen] = useState(false);
+  const [replayTime, setReplayTime] = useState<number | null>(null);
+  const [isReplaying, setIsReplaying] = useState(false);
+  const aarAutoOpenedRef = useRef(false);
   const [isPickingCoordinates, setIsPickingCoordinates] = useState(false);
   const [pinpointedCoords, setPinpointedCoords] = useState<Vector2D | null>(null);
 
@@ -58,7 +65,9 @@ export const App: React.FC = () => {
       if (target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable)) {
         return;
       }
-      if (e.key.toLowerCase() === 'c' && e.shiftKey) {
+      if (e.key.toLowerCase() === 'g' && !e.metaKey && !e.ctrlKey) {
+        setShowHexGrid((v) => !v);
+      } else if (e.key.toLowerCase() === 'c' && e.shiftKey) {
         setIsCinematicMode((prev) => !prev);
       } else if (e.key === '`' || (e.key.toLowerCase() === 'd' && e.altKey)) {
         setActiveStaffTab((prev) => (prev === 'dispatch' ? null : 'dispatch'));
@@ -66,6 +75,38 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Open the review automatically once the battle reaches its end time
+  useEffect(() => {
+    if (!aarAutoOpenedRef.current && state.timeMinutes >= engine.endTimeMinutes) {
+      aarAutoOpenedRef.current = true;
+      setIsAarOpen(true);
+    }
+  }, [state.timeMinutes, engine]);
+
+  // Replay playback: 10 battle minutes per second, stopping at the last snapshot
+  useEffect(() => {
+    if (!isReplaying) return;
+    const end = engine.getState().snapshots.slice(-1)[0]?.timeMinutes ?? 0;
+    const id = window.setInterval(() => {
+      setReplayTime((t) => {
+        const next = (t ?? 0) + 1;
+        if (next >= end) {
+          setIsReplaying(false);
+          return end;
+        }
+        return next;
+      });
+    }, 100);
+    return () => window.clearInterval(id);
+  }, [isReplaying, engine]);
+
+  const handleOpenAar = useCallback(() => setIsAarOpen((v) => !v), []);
+  const handleCloseAar = useCallback(() => {
+    setIsAarOpen(false);
+    setIsReplaying(false);
+    setReplayTime(null);
   }, []);
 
   const selectedUnit = useMemo(() => {
@@ -133,6 +174,8 @@ export const App: React.FC = () => {
         activeStaffTab={activeStaffTab}
         onSelectStaffTab={setActiveStaffTab}
         onToggleDoctrine={handleToggleDoctrine}
+        isAarOpen={isAarOpen}
+        onOpenAar={handleOpenAar}
       />
 
       {/* Main Tactical Map Canvas */}
@@ -156,6 +199,7 @@ export const App: React.FC = () => {
         isDispatchDeskOpen={isDispatchDeskOpen}
         onInsertCompassText={handleInsertCompassText}
         onOpenSitrep={handleOpenSitrep}
+        replayTime={isAarOpen ? replayTime : null}
       />
 
       {/* Unified Left Staff Operations Rail (SITREP, DISPATCH, ORBAT, LOG) */}
@@ -177,10 +221,24 @@ export const App: React.FC = () => {
       )}
 
       {/* Right: Selected Unit Tactical Card (Cleanly docked at right-0, hidden in cinematic mode) */}
-      {selectedUnit && !isCinematicMode && (
+      {isAarOpen && !isCinematicMode && (
+        <AfterActionReview
+          engine={engine}
+          state={state}
+          replayTime={replayTime}
+          isReplaying={isReplaying}
+          onReplayTime={setReplayTime}
+          onTogglePlay={() => setIsReplaying((v) => !v)}
+          onClose={handleCloseAar}
+          onFocusLocation={handleFocusLocation}
+        />
+      )}
+
+      {selectedUnit && !isCinematicMode && !isAarOpen && (
         <UnitDossier
           unit={selectedUnit}
           engine={engine}
+          state={state}
           onClose={handleCloseUnitDossier}
           isBombardTargeting={isBombardTargeting}
           onStartBombardTargeting={handleStartBombardTargeting}

@@ -3,19 +3,6 @@ import { SimulationState, BattleEngine } from './simulation';
 import { eastingKm, northingKm, gridLineLabel, GRID_ZONE, GRID_SQUARE, PX_PER_KM, distanceMetres, gridBearing, degreesToMils, formatDistance, toGridRef } from './grid';
 import { getUnitSymbolFields, conditionColor, primaryStatusCode, APP6_FRAME, APP6_FRIEND_FILL, APP6_HOSTILE_FILL } from './symbology';
 
-export interface SmokeParticle {
-  x: number;
-  y: number;
-  radius: number;
-  alpha: number;
-  maxAlpha: number;
-  vx: number;
-  vy: number;
-  life: number;
-  maxLife: number;
-  isBlackpowder?: boolean;
-}
-
 export interface Camera {
   x: number;
   y: number;
@@ -51,9 +38,9 @@ export class SandtableRenderer {
     }
   }
 
-  private smokeParticles: SmokeParticle[] = [];
   private animFrame: number = 0;
   private viewZoom: number = 1;
+  private viewBounds = { minX: 0, maxX: 2400, minY: 0, maxY: 1500 };
   public showHexGrid: boolean = false;
   public showRangeRings: boolean = false;
   public showCorpsOverlay: boolean = false;
@@ -102,6 +89,11 @@ export class SandtableRenderer {
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     this.animFrame++;
     this.viewZoom = camera.zoom;
+    {
+      const w = (canvas.clientWidth || window.innerWidth) / camera.zoom;
+      const h = (canvas.clientHeight || window.innerHeight) / camera.zoom;
+      this.viewBounds = { minX: camera.x - w / 2, maxX: camera.x + w / 2, minY: camera.y - h / 2, maxY: camera.y + h / 2 };
+    }
 
     // Ensure physical canvas backing store matches CSS dimensions * DPR (avoids getBoundingClientRect layout thrashing)
     const cssW = canvas.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 2400);
@@ -2372,31 +2364,61 @@ export class SandtableRenderer {
   // =========================================================================
   // 8. HEX GRID (OPTIONAL WARGAME MODE)
   // =========================================================================
+  // Overlay grid: crisp 1 km MGRS lines with easting/northing labels pinned to the edges of the
+  // view, plus 100 m subdivisions once zoomed in far enough to use them.
   private renderHexGrid(ctx: CanvasRenderingContext2D) {
+    const s = this.symbolScale();
+    const v = this.viewBounds;
+    const x0 = Math.max(0, v.minX);
+    const x1 = Math.min(2400, v.maxX);
+    const y0 = Math.max(0, v.minY);
+    const y1 = Math.min(1500, v.maxY);
     ctx.save();
-    ctx.strokeStyle = 'rgba(80, 80, 80, 0.15)';
-    ctx.lineWidth = 0.5;
 
-    const hexRadius = 24;
-    const hexHeight = Math.sqrt(3) * hexRadius;
-    const side = (3 / 2) * hexRadius;
-
-    for (let x = 0; x < 2400; x += side) {
-      for (let y = 0; y < 1500; y += hexHeight) {
-        const cx = x;
-        const cy = y + ((x / side) % 2 === 0 ? 0 : hexHeight / 2);
-
-        ctx.beginPath();
-        for (let i = 0; i < 6; i++) {
-          const angle = (Math.PI / 3) * i;
-          const px = cx + hexRadius * Math.cos(angle);
-          const py = cy + hexRadius * Math.sin(angle);
-          if (i === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        }
-        ctx.closePath();
-        ctx.stroke();
+    if (this.viewZoom >= 2.2) {
+      const sub = PX_PER_KM / 10;
+      ctx.strokeStyle = 'rgba(30, 58, 138, 0.14)';
+      ctx.lineWidth = 0.6 * s;
+      ctx.beginPath();
+      for (let x = Math.ceil(x0 / sub) * sub; x <= x1; x += sub) {
+        if (x % PX_PER_KM === 0) continue;
+        ctx.moveTo(x, y0);
+        ctx.lineTo(x, y1);
       }
+      for (let y = Math.ceil(y0 / sub) * sub; y <= y1; y += sub) {
+        if (y % PX_PER_KM === 0) continue;
+        ctx.moveTo(x0, y);
+        ctx.lineTo(x1, y);
+      }
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = 'rgba(30, 58, 138, 0.55)';
+    ctx.lineWidth = 1 * s;
+    ctx.beginPath();
+    for (let x = Math.ceil(x0 / PX_PER_KM) * PX_PER_KM; x <= x1; x += PX_PER_KM) {
+      ctx.moveTo(x, y0);
+      ctx.lineTo(x, y1);
+    }
+    for (let y = Math.ceil(y0 / PX_PER_KM) * PX_PER_KM; y <= y1; y += PX_PER_KM) {
+      ctx.moveTo(x0, y);
+      ctx.lineTo(x1, y);
+    }
+    ctx.stroke();
+
+    // Labels along the top and left edges of whatever part of the sheet is in view
+    ctx.font = `bold ${9 * s}px ui-monospace, Menlo, monospace`;
+    ctx.fillStyle = '#1e3a8a';
+    const pad = 3 * s;
+    ctx.textBaseline = 'top';
+    for (let x = Math.ceil(x0 / PX_PER_KM) * PX_PER_KM; x <= x1; x += PX_PER_KM) {
+      ctx.textAlign = 'left';
+      this.strokedText(ctx, gridLineLabel(eastingKm(x)), x + pad, y0 + pad, '#1e3a8a');
+    }
+    ctx.textBaseline = 'bottom';
+    for (let y = Math.ceil(y0 / PX_PER_KM) * PX_PER_KM; y <= y1; y += PX_PER_KM) {
+      ctx.textAlign = 'left';
+      this.strokedText(ctx, gridLineLabel(northingKm(y)), x0 + pad, y - pad, '#1e3a8a');
     }
     ctx.restore();
   }
@@ -2637,31 +2659,31 @@ export class SandtableRenderer {
 
     // 6. Total War Ghost Unit Silhouette at Destination
     if (ghostUnit) {
+      // Same geometry as the live footprint: frontage (width) across the facing, depth along it
       const heading = finalHeading !== undefined ? finalHeading : finalAngle;
-      const gw = ghostUnit.width || 50;
-      const gh = ghostUnit.depth || 16;
+      const frontage = Math.max(8, ghostUnit.width || 50);
+      const depth = Math.max(6, ghostUnit.depth || 16);
 
       ctx.save();
       ctx.translate(lastP.x, lastP.y);
       ctx.rotate(heading);
 
-      ctx.fillStyle = ghostUnit.faction === 'french' ? 'rgba(0, 51, 204, 0.12)' : 'rgba(204, 17, 17, 0.12)';
+      ctx.fillStyle = ghostUnit.faction === 'french' ? 'rgba(0, 51, 204, 0.10)' : 'rgba(204, 17, 17, 0.10)';
       ctx.strokeStyle = color;
       ctx.lineWidth = 0.9;
       ctx.setLineDash([2, 2]);
       ctx.beginPath();
-      ctx.rect(-gw / 2, -gh / 2, gw, gh);
+      ctx.rect(-depth / 2, -frontage / 2, depth, frontage);
       ctx.fill();
       ctx.stroke();
+      ctx.setLineDash([]);
 
-      // Front direction arrow
-      ctx.fillStyle = color;
+      // Front (firing) edge
+      ctx.lineWidth = 1.8;
       ctx.beginPath();
-      ctx.moveTo(gw / 2 + 2, 0);
-      ctx.lineTo(gw / 2 - 2, -2);
-      ctx.lineTo(gw / 2 - 2, 2);
-      ctx.closePath();
-      ctx.fill();
+      ctx.moveTo(depth / 2, -frontage / 2);
+      ctx.lineTo(depth / 2, frontage / 2);
+      ctx.stroke();
 
       ctx.restore();
     }
@@ -2823,6 +2845,18 @@ export class SandtableRenderer {
 
       const color = unit.faction === 'french' ? '#0033cc' : '#cc1111';
 
+      // Preview the facing the unit will actually adopt on arrival: locked/attacked enemy's live
+      // position, else the nearest enemy, else the drafted heading
+      const dest = order.destination;
+      const aimAt = units.find(
+        (u) => (u.id === order.faceUnitId || u.id === order.targetUnitId) && u.status !== 'shattered' && u.strength > 0
+      );
+      const arrivalHeading = aimAt
+        ? Math.atan2(aimAt.position.y - dest.y, aimAt.position.x - dest.x)
+        : order.faceNearestEnemy && this.engine
+        ? this.engine.getNearestEnemyHeading(dest, unit.faction)
+        : order.finalHeading;
+
       this.renderTotalWarArrow(
         ctx,
         unit.position,
@@ -2832,7 +2866,7 @@ export class SandtableRenderer {
         color,
         order.status === 'executing',
         unit,
-        order.finalHeading,
+        arrivalHeading,
         false,
         isDelivering || order.status === 'standby'
       );
@@ -4088,12 +4122,63 @@ export class SandtableRenderer {
     ctx.fillStyle = APP6_FRAME;
     ctx.fillText('?', 0, 0.5);
 
-    if (isHovered || this.viewZoom >= 1.25) {
-      ctx.font = '7px Arial, sans-serif';
-      ctx.textAlign = 'left';
-      this.strokedText(ctx, unit.estimatedStrength || 'Str unknown', r + 3, 0, '#52525b');
+    ctx.font = '7px Arial, sans-serif';
+    ctx.textAlign = 'left';
+    this.strokedText(ctx, unit.estimatedStrength || 'Str unknown', r + 3, 0, '#52525b');
+
+    ctx.restore();
+  }
+
+  // Lost contact: the last reported position, fading with the age of the report and stamped with
+  // the time it was last seen. Dropped after 90 minutes.
+  private renderLastKnown(ctx: CanvasRenderingContext2D, unit: Unit, state: SimulationState) {
+    const lk = state.lastKnown?.[unit.id];
+    if (!lk) return;
+    const age = state.timeMinutes - lk.time;
+    if (age < 0 || age > 90) return;
+    const s = this.symbolScale();
+    const alpha = Math.max(0.2, 0.8 - (age / 90) * 0.6);
+    const hostileFrame = state.wargameSymbology === 'nato';
+
+    ctx.save();
+    ctx.translate(lk.position.x, lk.position.y);
+    ctx.scale(s, s);
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    if (hostileFrame) {
+      ctx.moveTo(0, -12);
+      ctx.lineTo(12, 0);
+      ctx.lineTo(0, 12);
+      ctx.lineTo(-12, 0);
+      ctx.closePath();
+    } else {
+      ctx.rect(-12, -8, 24, 16);
+    }
+    ctx.fillStyle = 'rgba(255, 128, 128, 0.25)';
+    ctx.fill();
+    ctx.strokeStyle = APP6_FRAME;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 2.5]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = APP6_FRAME;
+    ctx.font = 'bold 8px Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    if (lk.quality === 'identified') {
+      const f = getUnitSymbolFields(unit);
+      ctx.fillText(f.echelon, 0, -17);
+    } else {
+      ctx.fillText('?', 0, 0.5);
     }
 
+    ctx.font = '7px Arial, sans-serif';
+    ctx.textAlign = 'left';
+    const t = 7 * 60 + Math.floor(lk.time);
+    const hhmm = `${String(Math.floor(t / 60) % 24).padStart(2, '0')}${String(t % 60).padStart(2, '0')}`;
+    this.strokedText(ctx, `Last seen ${hhmm}`, 15, -4, '#3f3f46');
+    if (lk.estimatedStrength) this.strokedText(ctx, lk.estimatedStrength, 15, 5, '#71717a');
     ctx.restore();
   }
 
@@ -4156,56 +4241,6 @@ export class SandtableRenderer {
       ctx.setLineDash([]);
     }
 
-    // Direct fire: faint sector, front-rank pulse and short tracer ticks
-    if (unit.status === 'engaging' && unit.ammo !== undefined && unit.ammo > 0) {
-      const fireArcRange = Math.min(85, unit.range || 100);
-      const arcHalfAngle = 0.28;
-      const xFar = frontX + fireArcRange * Math.cos(arcHalfAngle);
-      const yTop = -spanY * 0.5 - fireArcRange * Math.sin(arcHalfAngle);
-      const yBottom = spanY * 0.5 + fireArcRange * Math.sin(arcHalfAngle);
-
-      ctx.fillStyle = 'rgba(245, 158, 11, 0.04)';
-      ctx.beginPath();
-      ctx.moveTo(frontX, -spanY * 0.5);
-      ctx.lineTo(xFar, yTop);
-      ctx.arcTo(frontX + fireArcRange + 4, 0, xFar, yBottom, fireArcRange);
-      ctx.lineTo(frontX, spanY * 0.5);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
-      ctx.lineWidth = 0.8;
-      ctx.setLineDash([3, 4]);
-      ctx.beginPath();
-      ctx.moveTo(frontX, -spanY * 0.5);
-      ctx.lineTo(xFar, yTop);
-      ctx.moveTo(frontX, spanY * 0.5);
-      ctx.lineTo(xFar, yBottom);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      const pulse = 0.5 + 0.5 * Math.sin((Date.now() + unit.id.charCodeAt(0) * 120) / 140);
-      ctx.strokeStyle = `rgba(234, 179, 8, ${0.8 * pulse})`;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(frontX + 1, -spanY);
-      ctx.lineTo(frontX + 1, spanY);
-      ctx.stroke();
-
-      if (pulse > 0.6) {
-        ctx.strokeStyle = `rgba(234, 179, 8, ${0.9 * pulse})`;
-        ctx.lineWidth = 1.0;
-        for (let y = -spanY * 0.7; y <= spanY * 0.7; y += 6) {
-          const startDist = frontX + 3 + Math.random() * 6;
-          const tracerLen = 6 + Math.random() * 8;
-          ctx.beginPath();
-          ctx.moveTo(startDist, y);
-          ctx.lineTo(startDist + tracerLen, y);
-          ctx.stroke();
-        }
-      }
-    }
-
     if (unit.status === 'melee') {
       const pulse = 0.5 + 0.5 * Math.sin(this.animFrame / 4);
       ctx.strokeStyle = `rgba(185, 28, 28, ${0.85 * pulse})`;
@@ -4250,7 +4285,10 @@ export class SandtableRenderer {
       if (unit.status === 'shattered' || unit.strength <= 0) continue;
 
       if (state.fogOfWarEnabled && unit.faction !== state.playerFaction) {
-        if (unit.detectionState === 'hidden') continue;
+        if (unit.detectionState === 'hidden') {
+          this.renderLastKnown(ctx, unit, state);
+          continue;
+        }
         if (unit.detectionState === 'contact') {
           this.renderContactDiamond(ctx, unit, hoveredUnitId === unit.id);
           continue;
@@ -4472,211 +4510,114 @@ export class SandtableRenderer {
 
 
   // =========================================================================
-  // 13. VISUAL EFFECTS (GENERIC NATO TACTICAL TRACERS, BALLISTIC ORDNANCE & IMPACTS)
-  // Clean, military symbology adapted per scenario era (Napoleonic solid roundshot & musket smoke vs Modern NATO ordnance & tracers)
+  // 13. DIRECT-FIRE DISPLAY
+  // C2-style engagement lines: a thin side-coloured line from the firer's front to its target,
+  // dashes flowing toward the target, and a brief square "rounds on target" pulse at the far end.
+  // No projectiles, smoke or muzzle flashes.
   // =========================================================================
-  private visualProjectiles: {
-    x: number;
-    y: number;
-    vx: number;
-    vy: number;
-    life: number;
-    maxLife: number;
-    isArtillery?: boolean;
-    isCanister?: boolean;
-  }[] = [];
-
-  private muzzleFlashes: {
-    x: number;
-    y: number;
-    heading: number;
-    life: number;
-    maxLife: number;
-  }[] = [];
-
-  public spawnSmoke(x: number, y: number, count: number = 2, isHeavy = false) {
-    for (let i = 0; i < count; i++) {
-      const maxLife = (isHeavy ? 26 : 16) + Math.random() * 8;
-      const radius = (isHeavy ? 2.8 : 1.8) + Math.random() * 1.2;
-      const alpha = isHeavy ? 0.25 : 0.16;
-
-      this.smokeParticles.push({
-        x: x + (Math.random() - 0.5) * (isHeavy ? 6 : 3),
-        y: y + (Math.random() - 0.5) * (isHeavy ? 6 : 3),
-        radius,
-        alpha,
-        maxAlpha: alpha,
-        vx: 0.02 + (Math.random() - 0.5) * 0.04,
-        vy: -0.015 - Math.random() * 0.03,
-        life: 0,
-        maxLife,
-      });
+  // The enemy a unit is currently firing on, mirroring the simulation's direct-fire rule:
+  // any formation that is not routing fires on enemies inside its direct engagement range.
+  private findFireTarget(unit: Unit, state: SimulationState): Unit | null {
+    if (unit.status === 'routing' || unit.status === 'shattered' || unit.strength <= 0) return null;
+    if (unit.maxAmmo > 0 && unit.ammo <= 0) return null;
+    const range = this.engine ? this.engine.getDirectEngagementRange(unit) : unit.range || 100;
+    const holdFire = unit.volleyReady ? unit.currentOrder?.holdFireThreshold || 65 : Infinity;
+    const reach = Math.min(range, holdFire);
+    if (unit.suppressingTargetId) {
+      const t = state.units.find((u) => u.id === unit.suppressingTargetId && u.status !== 'shattered' && u.strength > 0);
+      if (t && Math.hypot(t.position.x - unit.position.x, t.position.y - unit.position.y) <= reach) return t;
     }
+    let best: Unit | null = null;
+    let bestD = Infinity;
+    for (const u of state.units) {
+      if (u.faction === unit.faction || u.status === 'shattered' || u.strength <= 0) continue;
+      const d = Math.hypot(u.position.x - unit.position.x, u.position.y - unit.position.y);
+      if (d <= reach && d < bestD) {
+        best = u;
+        bestD = d;
+      }
+    }
+    return best;
   }
 
   private updateAndRenderEffects(ctx: CanvasRenderingContext2D, state: SimulationState) {
-    if (state.isRunning) {
-      for (const unit of state.units) {
-        const isEngaging = unit.status === 'engaging' && unit.ammo !== undefined && unit.ammo > 0;
-        const isBombarding = unit.type === 'artillery' && unit.currentOrder?.status === 'executing' && unit.currentOrder.type === 'bombard' && unit.ammo !== undefined && unit.ammo > 0;
-
-        if (isEngaging || isBombarding) {
-          const isArtillery = unit.type === 'artillery';
-          const fireChance = isBombarding ? 0.08 : isArtillery ? 0.05 : 0.15;
-          
-          if (Math.random() < fireChance) {
-            // Weapon station coordinates along the unit's front rank
-            const w = (unit.width || 50) * 0.6;
-            const h = (unit.depth || 16) * 0.6;
-            const spread = (Math.random() - 0.5) * w;
-            const frontDist = h / 2 + 3;
-            
-            const px = unit.position.x + Math.cos(unit.heading) * frontDist - Math.sin(unit.heading) * spread;
-            const py = unit.position.y + Math.sin(unit.heading) * frontDist + Math.cos(unit.heading) * spread;
-
-            // 1. Realistic small muzzle smoke discharge
-            this.spawnSmoke(px, py, isArtillery ? 2 : 1, isArtillery);
-
-            // 2. Subtle micro muzzle flash spark (1-2 frames)
-            this.muzzleFlashes.push({
-              x: px,
-              y: py,
-              heading: unit.heading,
-              life: 0,
-              maxLife: 2,
-            });
-
-            // 3. Direct fire: Realistic small micro-tracers (no cartoon balls or parabolic arcs)
-            // (Bombardment is visualized cleanly at destination via renderArtilleryImpacts)
-            if (!isBombarding) {
-              if (isArtillery && unit.canisterActive) {
-                // Canister close defense: small fan of subtle micro-flechettes
-                for (let k = 0; k < 5; k++) {
-                  const spreadAngle = unit.heading + (Math.random() - 0.5) * 0.35;
-                  const speed = 9.5 + Math.random() * 2.0;
-                  this.visualProjectiles.push({
-                    x: px,
-                    y: py,
-                    vx: Math.cos(spreadAngle) * speed,
-                    vy: Math.sin(spreadAngle) * speed,
-                    life: 0,
-                    maxLife: 6,
-                    isArtillery: true,
-                    isCanister: true,
-                  });
-                }
-              } else if (isArtillery) {
-                // Artillery direct roundshot fire: solid, high-velocity cannon projectile (never musket bullets!)
-                const spreadAngle = unit.heading + (Math.random() - 0.5) * 0.04;
-                const speed = 12.0 + Math.random() * 2.0;
-                this.visualProjectiles.push({
-                  x: px,
-                  y: py,
-                  vx: Math.cos(spreadAngle) * speed,
-                  vy: Math.sin(spreadAngle) * speed,
-                  life: 0,
-                  maxLife: 9,
-                  isArtillery: true,
-                  isCanister: false,
-                });
-              } else {
-                // Musket volley / direct small arms fire: subtle, razor-thin micro-tracer line
-                const spreadAngle = unit.heading + (Math.random() - 0.5) * 0.10;
-                const speed = 8.5 + Math.random() * 2.0;
-                this.visualProjectiles.push({
-                  x: px,
-                  y: py,
-                  vx: Math.cos(spreadAngle) * speed,
-                  vy: Math.sin(spreadAngle) * speed,
-                  life: 0,
-                  maxLife: 8,
-                });
-              }
-            }
-          }
-        }
-      }
-    }
+    if (!state.isRunning && state.timeMinutes === 0) return;
+    const s = this.symbolScale();
+    const now = Date.now() / 1000;
+    const isHiddenFromPlayer = (u: Unit) =>
+      state.fogOfWarEnabled && u.faction !== state.playerFaction && u.detectionState !== 'identified';
 
     ctx.save();
+    ctx.lineCap = 'butt';
+    for (const unit of state.units) {
+      if (unit.currentOrder?.type === 'bombard' && unit.currentOrder.status === 'executing') continue; // shown as fire mission
+      const target = this.findFireTarget(unit, state);
+      if (!target) continue;
+      if (isHiddenFromPlayer(unit) || isHiddenFromPlayer(target)) continue;
 
-    // 1. Subtle, realistic micro muzzle flash sparks
-    for (let i = this.muzzleFlashes.length - 1; i >= 0; i--) {
-      const mf = this.muzzleFlashes[i];
-      mf.life++;
-      if (mf.life >= mf.maxLife) {
-        this.muzzleFlashes.splice(i, 1);
-        continue;
+      const isFrench = unit.faction === 'french';
+      const rgb = isFrench ? '30, 58, 138' : '185, 28, 28';
+      const isArty = unit.type === 'artillery';
+      const frontDist = Math.max(3, (unit.depth || 12) / 2);
+      const sx = unit.position.x + Math.cos(unit.heading) * frontDist;
+      const sy = unit.position.y + Math.sin(unit.heading) * frontDist;
+      const ang = Math.atan2(target.position.y - sy, target.position.x - sx);
+      const len = Math.hypot(target.position.x - sx, target.position.y - sy);
+      const stop = Math.max(0, len - 15 * s);
+      const ex = sx + Math.cos(ang) * stop;
+      const ey = sy + Math.sin(ang) * stop;
+
+      let seed = 0;
+      for (let i = 0; i < unit.id.length; i++) seed = (seed * 31 + unit.id.charCodeAt(i)) % 997;
+      const cycle = isArty ? 1.6 : 1.1;
+      const phase = ((now + seed / 97) % cycle) / cycle;
+
+      // 1. Engagement line (direct fire), firer to target
+      ctx.strokeStyle = `rgba(${rgb}, 0.9)`;
+      ctx.lineWidth = (isArty ? 2 : 1.5) * s;
+      ctx.setLineDash(isArty ? [2.5 * s, 3 * s] : [7 * s, 4 * s]);
+      ctx.lineDashOffset = 0;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 2. Volley travelling down the line: a short solid slug, once per fire cycle
+      if (phase < 0.45) {
+        const p = phase / 0.45;
+        const slug = Math.min(stop, 14 * s);
+        const head = slug + (stop - slug) * p;
+        ctx.strokeStyle = `rgba(${rgb}, 1)`;
+        ctx.lineWidth = (isArty ? 3.2 : 2.6) * s;
+        ctx.beginPath();
+        ctx.moveTo(sx + Math.cos(ang) * (head - slug), sy + Math.sin(ang) * (head - slug));
+        ctx.lineTo(sx + Math.cos(ang) * head, sy + Math.sin(ang) * head);
+        ctx.stroke();
       }
-      const alpha = 1 - mf.life / mf.maxLife;
+
+      // 3. Arrowhead at the target end
+      ctx.fillStyle = `rgba(${rgb}, 1)`;
       ctx.save();
-      ctx.translate(mf.x, mf.y);
-      ctx.rotate(mf.heading);
-      ctx.strokeStyle = `rgba(254, 240, 138, ${0.85 * alpha})`;
-      ctx.lineWidth = 0.9;
+      ctx.translate(ex, ey);
+      ctx.rotate(ang);
       ctx.beginPath();
       ctx.moveTo(0, 0);
-      ctx.lineTo(3.5, 0);
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    // 2. Realistic small direct-fire micro-tracers (razor-thin, fast line ticks - no large balls or circles!)
-    for (let i = this.visualProjectiles.length - 1; i >= 0; i--) {
-      const p = this.visualProjectiles[i];
-      p.life++;
-      p.x += p.vx;
-      p.y += p.vy;
-
-      if (p.life >= p.maxLife) {
-        this.visualProjectiles.splice(i, 1);
-        continue;
-      }
-
-      const alpha = Math.max(0, 0.75 * (1 - p.life / p.maxLife));
-      ctx.beginPath();
-      if (p.isArtillery && !p.isCanister) {
-        // Solid cannon roundshot tracer: longer, heavier stroke
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(p.x - p.vx * 0.65, p.y - p.vy * 0.65);
-        ctx.strokeStyle = `rgba(254, 215, 170, ${alpha * 1.1})`;
-        ctx.lineWidth = 2.0;
-      } else if (p.isCanister) {
-        // Canister flechette / pellet spark
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(p.x - p.vx * 0.35, p.y - p.vy * 0.35);
-        ctx.strokeStyle = `rgba(251, 191, 36, ${alpha})`;
-        ctx.lineWidth = 1.1;
-      } else {
-        // Musket bullet line
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(p.x - p.vx * 0.4, p.y - p.vy * 0.4);
-        ctx.strokeStyle = `rgba(254, 240, 138, ${alpha})`;
-        ctx.lineWidth = 0.75;
-      }
-      ctx.stroke();
-    }
-
-    // 3. Gunpowder Smoke Puffs Drifting with Wind
-    for (let i = this.smokeParticles.length - 1; i >= 0; i--) {
-      const p = this.smokeParticles[i];
-      p.life++;
-      p.x += p.vx;
-      p.y += p.vy;
-      p.radius += 0.06;
-      p.alpha = p.maxAlpha * (1 - p.life / p.maxLife);
-
-      if (p.life >= p.maxLife) {
-        this.smokeParticles.splice(i, 1);
-        continue;
-      }
-
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(212, 212, 216, ${p.alpha})`;
+      ctx.lineTo(-7 * s, -3.5 * s);
+      ctx.lineTo(-7 * s, 3.5 * s);
+      ctx.closePath();
       ctx.fill();
-    }
+      ctx.restore();
 
+      // 4. Rounds on target: square bracket expands and fades as the volley lands
+      if (phase >= 0.45 && phase < 0.85) {
+        const p = (phase - 0.45) / 0.4;
+        const half = (13 + p * 9) * s;
+        ctx.strokeStyle = `rgba(${rgb}, ${0.9 * (1 - p)})`;
+        ctx.lineWidth = 1.5 * s;
+        ctx.strokeRect(target.position.x - half, target.position.y - half, half * 2, half * 2);
+      }
+    }
     ctx.restore();
   }
 
