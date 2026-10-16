@@ -2885,6 +2885,8 @@ export class SandtableRenderer {
     }
   }
 
+  // Order preview at the destination: the formation's true frontage rotated to the drafted facing
+  // (front edge emphasised, so the firing line reads exactly), with an upright APP-6 frame on top.
   private renderGhostNatoChit(
     ctx: CanvasRenderingContext2D,
     pos: Vector2D,
@@ -2893,78 +2895,89 @@ export class SandtableRenderer {
     _color: string
   ) {
     const isFrench = unit.faction === 'french';
-    const natoW = unit.type === 'headquarters' ? 28 : 24;
-    const natoH = 14;
+    const tone = isFrench ? '0, 51, 204' : '204, 17, 17';
+    const depth = Math.max(6, unit.depth || 12);
+    const width = Math.max(8, unit.width || 40);
 
     ctx.save();
     ctx.translate(pos.x, pos.y);
-    ctx.rotate(heading);
 
-    // Ghost chip background
-    ctx.fillStyle = isFrench ? 'rgba(0, 51, 204, 0.45)' : 'rgba(204, 17, 17, 0.45)';
-    ctx.fillRect(-natoW / 2, -natoH / 2, natoW, natoH);
-
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.2;
-    ctx.setLineDash([3, 2]);
-    ctx.strokeRect(-natoW / 2, -natoH / 2, natoW, natoH);
-
-    // NATO Symbol inside ghost chit
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.1;
-    ctx.setLineDash([]);
-    if (unit.type === 'infantry' || unit.type === 'guard') {
+    if (unit.type !== 'headquarters') {
+      ctx.save();
+      ctx.rotate(heading);
+      ctx.fillStyle = `rgba(${tone}, 0.10)`;
+      ctx.fillRect(-depth / 2, -width / 2, depth, width);
+      ctx.strokeStyle = `rgba(${tone}, 0.6)`;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 2]);
+      ctx.strokeRect(-depth / 2, -width / 2, depth, width);
+      ctx.setLineDash([]);
+      ctx.strokeStyle = `rgba(${tone}, 0.95)`;
+      ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(-natoW / 2 + 4, -natoH / 2 + 2.5);
-      ctx.lineTo(natoW / 2 - 4, natoH / 2 - 2.5);
-      ctx.moveTo(natoW / 2 - 4, -natoH / 2 + 2.5);
-      ctx.lineTo(-natoW / 2 + 4, natoH / 2 - 2.5);
+      ctx.moveTo(depth / 2, -width / 2);
+      ctx.lineTo(depth / 2, width / 2);
       ctx.stroke();
-      if (unit.type === 'guard') {
-        ctx.fillStyle = '#fde047';
-        ctx.beginPath();
-        ctx.arc(0, 0, 2, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    } else if (unit.type === 'cavalry') {
-      ctx.beginPath();
-      ctx.moveTo(-natoW / 2 + 4, natoH / 2 - 2.5);
-      ctx.lineTo(natoW / 2 - 4, -natoH / 2 + 2.5);
-      ctx.stroke();
-    } else if (unit.type === 'artillery') {
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      ctx.beginPath();
-      ctx.moveTo(-natoW / 2 + 5, -natoH / 2 + 3);
-      ctx.lineTo(-natoW / 2 + 5, natoH / 2 - 3);
-      ctx.stroke();
+      ctx.restore();
     }
 
-    // Forward Direction Arrow Pip
-    ctx.fillStyle = '#ffffff';
+    const s = this.symbolScale();
+    ctx.scale(s, s);
+    ctx.globalAlpha = 0.6;
     ctx.beginPath();
-    ctx.moveTo(natoW / 2 + 4, 0);
-    ctx.lineTo(natoW / 2, -2.5);
-    ctx.lineTo(natoW / 2, 2.5);
-    ctx.closePath();
+    ctx.rect(-12, -8, 24, 16);
+    ctx.fillStyle = isFrench ? APP6_FRIEND_FILL : APP6_HOSTILE_FILL;
     ctx.fill();
-
-    ctx.restore();
-
-    // Upright unit label
-    ctx.save();
-    ctx.font = 'bold 7px Arial, sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.shadowColor = 'rgba(0,0,0,0.85)';
-    ctx.shadowBlur = 3;
-    const shortName = unit.name.split(' ')[0];
-    ctx.fillText(shortName, pos.x, pos.y + 16);
+    ctx.strokeStyle = APP6_FRAME;
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([3, 2]);
+    ctx.stroke();
+    ctx.setLineDash([]);
     ctx.restore();
   }
+
+  // Facing readout for an order preview; names the enemy when the facing has snapped onto one
+  private renderFacingTag(ctx: CanvasRenderingContext2D, at: Vector2D, heading: number, snappedTo?: Unit) {
+    const s = this.symbolScale();
+    const brg = gridBearing(at, { x: at.x + Math.cos(heading), y: at.y + Math.sin(heading) });
+    const tag = snappedTo
+      ? `Facing ${String(brg).padStart(3, '0')}° · on ${getUnitSymbolFields(snappedTo).designation}`
+      : `Facing ${String(brg).padStart(3, '0')}°`;
+    ctx.save();
+    ctx.font = `${8.5 * s}px Arial, sans-serif`;
+    const tw = ctx.measureText(tag).width;
+    const x = at.x - tw / 2 - 4 * s;
+    const y = at.y - 38 * s;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.fillRect(x, y, tw + 8 * s, 13 * s);
+    ctx.strokeStyle = '#111111';
+    ctx.lineWidth = 1 * s;
+    ctx.strokeRect(x, y, tw + 8 * s, 13 * s);
+    ctx.fillStyle = '#111111';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(tag, x + 4 * s, y + 6.5 * s);
+    ctx.restore();
+  }
+
+  // Thin sight line from the order slot to the enemy the facing is locked onto
+  private renderFacingLock(ctx: CanvasRenderingContext2D, from: Vector2D, enemy: Unit) {
+    const s = this.symbolScale();
+    ctx.save();
+    ctx.strokeStyle = 'rgba(17, 17, 17, 0.55)';
+    ctx.lineWidth = 1 * s;
+    ctx.setLineDash([2 * s, 3 * s]);
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(enemy.position.x, enemy.position.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = '#111111';
+    ctx.lineWidth = 1.2 * s;
+    ctx.strokeRect(enemy.position.x - 17 * s, enemy.position.y - 17 * s, 34 * s, 34 * s);
+    ctx.restore();
+  }
+
 
   private renderDraftingArrow(ctx: CanvasRenderingContext2D, drawingOrder: DraftingManeuver) {
     const { startUnit, currentTarget, waypoints, curveOffset, curveControl, finalHeading, dragStartPoint, selectedUnits, isFreehandPath } = drawingOrder;
@@ -3024,7 +3037,10 @@ export class SandtableRenderer {
       ctx.fillText(badgeText, currentTarget.x, currentTarget.y - 17);
 
       // Ghost unit at endpoint
-      const endHeadingFinal = finalHeading !== undefined ? finalHeading : endHeading;
+      // Freehand routes square up on the nearest enemy on arrival, so preview that facing
+      const endHeadingFinal = this.engine
+        ? this.engine.getNearestEnemyHeading(currentTarget, startUnit.faction)
+        : finalHeading !== undefined ? finalHeading : endHeading;
       this.renderGhostNatoChit(ctx, currentTarget, endHeadingFinal, startUnit, color);
       ctx.restore();
       return;
@@ -3038,22 +3054,19 @@ export class SandtableRenderer {
       const dy = currentTarget.y - dragStartPoint.y;
       const lineLen = Math.hypot(dx, dy);
 
-      const heading = finalHeading !== undefined 
-        ? finalHeading 
+      const draftedHeading = finalHeading !== undefined
+        ? finalHeading
         : Math.atan2(dy, dx) - Math.PI / 2;
+      const lineMid = { x: (dragStartPoint.x + currentTarget.x) / 2, y: (dragStartPoint.y + currentTarget.y) / 2 };
+      const groupSnap = this.engine?.snapFacingToEnemy(lineMid, draftedHeading, startUnit.faction);
+      const lockedEnemy = groupSnap?.enemyId ? this.engine?.getState().units.find((u) => u.id === groupSnap.enemyId) : undefined;
+      const heading = groupSnap ? groupSnap.heading : draftedHeading;
+      const slots = BattleEngine.lineSlots(n, dragStartPoint, currentTarget);
 
       // Draw each unit's leader line and ghost chit
       unitsToRender.forEach((u, idx) => {
-        let dest: Vector2D;
-        if (lineLen < 15) {
-          dest = { x: dragStartPoint.x + (idx - (n - 1) / 2) * 45, y: dragStartPoint.y };
-        } else {
-          const t = (idx + 0.5) / n;
-          dest = {
-            x: dragStartPoint.x + dx * t,
-            y: dragStartPoint.y + dy * t,
-          };
-        }
+        const dest = slots[idx];
+        const slotHeading = lockedEnemy ? Math.atan2(lockedEnemy.position.y - dest.y, lockedEnemy.position.x - dest.x) : heading;
 
         // Clean dashed leader line from current unit pos to designated slot
         ctx.save();
@@ -3067,8 +3080,9 @@ export class SandtableRenderer {
         ctx.restore();
 
         // Render Ghost NATO counter at designated slot
-        this.renderGhostNatoChit(ctx, dest, heading, u, color);
+        this.renderGhostNatoChit(ctx, dest, slotHeading, u, color);
       });
+      if (lockedEnemy) this.renderFacingLock(ctx, lineMid, lockedEnemy);
 
       // Circular wheeling pivot guide at anchor
       ctx.save();
@@ -3145,7 +3159,10 @@ export class SandtableRenderer {
       const dx = currentTarget.x - dragStartPoint.x;
       const dy = currentTarget.y - dragStartPoint.y;
       const dragDist = Math.hypot(dx, dy);
-      const heading = dragDist > 10 ? Math.atan2(dy, dx) : (finalHeading !== undefined ? finalHeading : startUnit.heading);
+      const draftedHeading = dragDist > 10 ? Math.atan2(dy, dx) : (finalHeading !== undefined ? finalHeading : startUnit.heading);
+      const snap = dragDist > 10 ? this.engine?.snapFacingToEnemy(destination, draftedHeading, startUnit.faction) : undefined;
+      const lockedEnemy = snap?.enemyId ? this.engine?.getState().units.find((u) => u.id === snap.enemyId) : undefined;
+      const heading = snap ? snap.heading : draftedHeading;
 
       // Path from current pos to destination
       ctx.save();
@@ -3181,20 +3198,8 @@ export class SandtableRenderer {
         ctx.arc(currentTarget.x, currentTarget.y, 3, 0, Math.PI * 2);
         ctx.fill();
 
-        // Orientation tag
-        const deg = Math.round(((heading * 180) / Math.PI + 360) % 360);
-        const tag = `FACING ${deg}°`;
-        ctx.font = 'bold 8.5px Arial, sans-serif';
-        const tw = ctx.measureText(tag).width;
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-        ctx.fillRect(destination.x - tw / 2 - 4, destination.y - 30, tw + 8, 14);
-        ctx.strokeStyle = '#f59e0b';
-        ctx.lineWidth = 0.8;
-        ctx.strokeRect(destination.x - tw / 2 - 4, destination.y - 30, tw + 8, 14);
-        ctx.fillStyle = '#f59e0b';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(tag, destination.x, destination.y - 23);
+        if (lockedEnemy) this.renderFacingLock(ctx, destination, lockedEnemy);
+        this.renderFacingTag(ctx, destination, heading, lockedEnemy);
       }
       ctx.restore();
 

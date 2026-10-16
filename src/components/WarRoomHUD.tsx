@@ -5,6 +5,7 @@ import { REALISTIC_AUSTERLITZ_SCENARIO } from '../data/austerlitzScenario';
 import { sounds } from '../engine/soundEffects';
 import { TroopFilterType } from '../types/game';
 import { StaffTab } from './LeftStaffRail';
+import { AttritionPanel } from './AttritionPanel';
 
 interface WarRoomHUDProps {
   engine: BattleEngine;
@@ -62,6 +63,7 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
   const [isLayersOpen, setIsLayersOpen] = useState(false);
   const [isSpeedOpen, setIsSpeedOpen] = useState(false);
   const [isRatiosOpen, setIsRatiosOpen] = useState(false);
+  const [isAttritionOpen, setIsAttritionOpen] = useState(false);
 
   const activeEngagementsCount = state.activeEngagements?.length || 0;
   const needsReinforcementsCount = state.activeEngagements?.filter((e) => e.needsReinforcements).length || 0;
@@ -332,13 +334,42 @@ export const WarRoomHUD: React.FC<WarRoomHUDProps> = React.memo(({
           </div>
         )}
 
-        {/* Casualty Box */}
-        <div className="flex items-center gap-2 text-[10px] font-mono bg-[#f4f4f5] px-2 py-0.5 border border-[#a1a1aa] shadow-inner font-bold uppercase tracking-tight">
-          <span className="text-neutral-500 font-sans normal-case font-normal">Losses</span>
-          <span className="text-[#1e3a8a]">FRA {Math.floor(state.frenchLosses).toLocaleString()}</span>
-          <span className="text-neutral-400">|</span>
-          <span className="text-[#b91c1c]">ALL {Math.floor(state.alliedLosses).toLocaleString()}</span>
-        </div>
+        {/* Losses and casualty rate; opens the attrition panel */}
+        {(() => {
+          const rates = engine.getCasualtyRates(10);
+          return (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setIsAttritionOpen((v) => !v)}
+                className={`flex items-center gap-2 h-6 px-2 text-[10px] font-mono border cursor-pointer transition-colors ${
+                  isAttritionOpen ? 'bg-white border-[#1e3a8a]' : 'bg-white border-[#a1a1aa] hover:bg-[#f4f4f5]'
+                }`}
+                title="Casualties, rate over the last 10 minutes (per hour) — click for attrition"
+              >
+                <span className="text-neutral-500 font-sans">Losses</span>
+                <span>
+                  <span className="text-neutral-500">FRA</span> {Math.floor(state.frenchLosses).toLocaleString()}
+                  <span className="text-neutral-500"> +{Math.round(rates.frenchPerHour).toLocaleString()}/h</span>
+                </span>
+                <span className="text-neutral-300">|</span>
+                <span>
+                  <span className="text-neutral-500">ALL</span> {Math.floor(state.alliedLosses).toLocaleString()}
+                  <span className="text-neutral-500"> +{Math.round(rates.alliesPerHour).toLocaleString()}/h</span>
+                </span>
+                <GlyphChevron dir={isAttritionOpen ? 'up' : 'down'} size={10} />
+              </button>
+              {isAttritionOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setIsAttritionOpen(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-50">
+                    <AttritionPanel engine={engine} state={state} />
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* CLUSTER 3 & 4: Tactical View & Staff Hubs (Right) */}

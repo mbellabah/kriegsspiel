@@ -1,6 +1,12 @@
 import { Unit, ManeuverOrder, Scenario, TerrainFeature, CombatLogEntry, BattleStateSnapshot, HistoricalEvent, HistoricalDispatch, Vector2D, OperationalGraphic, ActiveEngagement, TargetReferencePoint, SectorForceRatios, WargameSymbology, TacticalObjective, Formation, CampaignEra, OrderCondition, OrderSource, ContactType, SitrepNotification, ERA_WEAPON_PROFILES } from '../types/game';
 import { sounds } from './soundEffects';
 
+export interface LossSample {
+  t: number; // battle minutes since 07:00
+  french: number;
+  allies: number;
+}
+
 export interface SimulationState {
   era: CampaignEra;
   playerFaction: 'french' | 'allies';
@@ -18,6 +24,7 @@ export interface SimulationState {
   activeOrders: ManeuverOrder[];
   frenchLosses: number;
   alliedLosses: number;
+  lossHistory: LossSample[];
   combatLogs: CombatLogEntry[];
   selectedUnitId: string | null;
   selectedUnitIds: string[]; // Multi-unit group selection
@@ -181,6 +188,7 @@ export class BattleEngine {
       activeOrders: [],
       frenchLosses: 0,
       alliedLosses: 0,
+      lossHistory: [{ t: 0, french: 0, allies: 0 }],
       combatLogs: [
         {
           id: 'log_0',
@@ -705,7 +713,7 @@ export class BattleEngine {
     return newTrp;
   }
 
-  public issueGroupLineOrder(unitIds: string[], start: Vector2D, end: Vector2D, finalHeading?: number) {
+  public issueGroupLineOrder(unitIds: string[], start: Vector2D, end: Vector2D, finalHeading?: number, faceUnitId?: string) {
     const validUnits = this.state.units.filter((u) => unitIds.includes(u.id) && u.status !== 'shattered');
     if (validUnits.length === 0) return;
 
@@ -726,6 +734,7 @@ export class BattleEngine {
         destination: lineLen < 15 ? start : { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 },
         waypoints: [],
         finalHeading: heading,
+        faceUnitId,
         plannedTime: this.state.timeMinutes,
       });
       this.notify();
@@ -752,10 +761,28 @@ export class BattleEngine {
         destination: dest,
         waypoints: [],
         finalHeading: heading,
+        faceUnitId,
         plannedTime: this.state.timeMinutes,
       });
     });
     this.notify();
+  }
+
+  // Slot positions for a line of units dressed between start and end (shared with the order preview)
+  public static lineSlots(n: number, start: Vector2D, end: Vector2D): Vector2D[] {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const lineLen = Math.hypot(dx, dy);
+    if (n === 1) return [lineLen < 15 ? { ...start } : { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }];
+    const dirX = lineLen > 0.001 ? dx / lineLen : 1;
+    const dirY = lineLen > 0.001 ? dy / lineLen : 0;
+    const spacing = Math.max(68, lineLen / (n - 1));
+    const midX = (start.x + end.x) / 2;
+    const midY = (start.y + end.y) / 2;
+    return Array.from({ length: n }, (_, idx) => {
+      const offset = (idx - (n - 1) / 2) * spacing;
+      return { x: midX + dirX * offset, y: midY + dirY * offset };
+    });
   }
 
   public issueGroupFormationMove(unitIds: string[], targetCenter: Vector2D) {
@@ -1522,6 +1549,23 @@ export class BattleEngine {
     return `${displayHours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')} ${period}`;
   }
 
+  // Casualties suffered over the trailing window, and the same expressed per hour of battle
+  public getCasualtyRates(windowMinutes = 10): { french: number; allies: number; frenchPerHour: number; alliesPerHour: number } {
+    const hist = this.state.lossHistory;
+    const now = { t: this.state.timeMinutes, french: this.state.frenchLosses, allies: this.state.alliedLosses };
+    let base = hist[0] || { t: 0, french: 0, allies: 0 };
+    for (let i = hist.length - 1; i >= 0; i--) {
+      if (now.t - hist[i].t >= windowMinutes) {
+        base = hist[i];
+        break;
+      }
+    }
+    const span = Math.max(1, now.t - base.t);
+    const french = Math.max(0, now.french - base.french);
+    const allies = Math.max(0, now.allies - base.allies);
+    return { french, allies, frenchPerHour: (french / span) * 60, alliesPerHour: (allies / span) * 60 };
+  }
+
   // Scrubbing to specific time
   public scrubToTime(targetMinutes: number) {
     // Find closest snapshot <= targetMinutes
@@ -1533,6 +1577,7 @@ export class BattleEngine {
       this.state.activeOrders = JSON.parse(JSON.stringify(closest.activeOrders));
       this.state.frenchLosses = closest.frenchLosses;
       this.state.alliedLosses = closest.alliedLosses;
+      this.state.lossHistory = this.state.lossHistory.filter((l) => l.t <= closest.timeMinutes);
       this.state.combatLogs = JSON.parse(JSON.stringify(closest.combatLogs));
     } else {
       this.resetBattle();
@@ -1612,6 +1657,16 @@ export class BattleEngine {
       this.updateEncirclement(evalSeconds);
       this.updateFogOfWar();
       this.state.sectorForceRatios = this.computeSectorRatios(this.state.units, this.state.playerFaction);
+    }
+
+    // 3.9 Sample cumulative casualties every battle minute for attrition rates
+    const lastLoss = this.state.lossHistory[this.state.lossHistory.length - 1];
+    if (!lastLoss || this.state.timeMinutes - lastLoss.t >= 1) {
+      this.state.lossHistory.push({
+        t: this.state.timeMinutes,
+        french: this.state.frenchLosses,
+        allies: this.state.alliedLosses,
+      });
     }
 
     // 4. Save periodic snapshots (approx every 8 battle minutes)
@@ -2135,8 +2190,9 @@ export class BattleEngine {
           unit.position.x = order.destination.x;
           unit.position.y = order.destination.y;
         }
-        if (order.finalHeading !== undefined) {
-          unit.heading = order.finalHeading;
+        const arrivalFacing = this.resolveOrderFacing(unit, order);
+        if (arrivalFacing !== undefined) {
+          unit.heading = arrivalFacing;
         }
 
         // If this is a hold order, maintain defensive stance at destination
@@ -4389,6 +4445,41 @@ export class BattleEngine {
       occludingElevation: maxOcclusion,
       occludingPoint,
     };
+  }
+
+  // Facing to adopt on arrival: track a designated enemy, else the nearest one, else the drafted heading
+  private resolveOrderFacing(unit: Unit, order: ManeuverOrder): number | undefined {
+    if (order.faceUnitId) {
+      const target = this.state.units.find((u) => u.id === order.faceUnitId && u.status !== 'shattered' && u.strength > 0);
+      if (target) return Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
+    }
+    if (order.faceNearestEnemy) return this.getNearestEnemyHeading(unit.position, unit.faction);
+    return order.finalHeading;
+  }
+
+  // Snap a drafted facing onto a visible enemy whose bearing is within the tolerance, so the
+  // firing edge squares up on it exactly. Returns the original heading when nothing is close.
+  public snapFacingToEnemy(
+    from: Vector2D,
+    heading: number,
+    faction: string,
+    toleranceRad = 0.35,
+    maxRange = 700
+  ): { heading: number; enemyId?: string } {
+    let best: { heading: number; enemyId: string; diff: number } | null = null;
+    for (const u of this.state.units) {
+      if (u.faction === faction || u.status === 'shattered' || u.strength <= 0) continue;
+      if (this.state.fogOfWarEnabled && u.detectionState === 'hidden') continue;
+      const d = Math.hypot(u.position.x - from.x, u.position.y - from.y);
+      if (d > maxRange || d < 1) continue;
+      const bearing = Math.atan2(u.position.y - from.y, u.position.x - from.x);
+      let diff = bearing - heading;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      diff = Math.abs(diff);
+      if (diff <= toleranceRad && (!best || diff < best.diff)) best = { heading: bearing, enemyId: u.id, diff };
+    }
+    return best ? { heading: best.heading, enemyId: best.enemyId } : { heading };
   }
 
   public getNearestEnemyHeading(pos: Vector2D, faction: string): number {

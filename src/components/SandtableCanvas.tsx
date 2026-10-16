@@ -86,7 +86,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [hoveredUnitId, setHoveredUnitId] = useState<string | null>(null);
   const [drawingOrder, setDrawingOrder] = useState<DraftingManeuver | null>(null);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(sounds.enabled);
 
 
   // Quick cursor coordinate copy toast feedback
@@ -1167,6 +1167,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
             destination: finalDest,
             waypoints: [...intermediateWaypoints],
             finalHeading: autoEnemyHeading,
+            faceNearestEnemy: true,
             plannedTime: engine.getState().timeMinutes,
           });
         });
@@ -1185,6 +1186,7 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
             destination: anchor,
             waypoints: [],
             finalHeading: autoEnemyHeading,
+            faceNearestEnemy: true,
             plannedTime: engine.getState().timeMinutes,
           });
         } else {
@@ -1193,31 +1195,37 @@ export const SandtableCanvas: React.FC<SandtableCanvasProps> = React.memo(({
           units.forEach((u) => {
             if (u.currentOrder) {
               u.currentOrder.finalHeading = autoEnemyHeading;
+              u.currentOrder.faceNearestEnemy = true;
             }
           });
         }
         sounds.playDispatchStamp();
       } else {
         // B. RIGHT CLICK DRAG: Formation Array Order
+        // Facing within ~20° of a visible enemy snaps onto it so the firing edge squares up exactly
         if (units.length === 1) {
-          const heading = Math.atan2(dy, dx);
+          const snap = engine.snapFacingToEnemy(anchor, Math.atan2(dy, dx), units[0].faction);
           engine.issueOrder(units[0].id, {
             unitId: units[0].id,
             type: 'assault',
             destination: anchor,
             waypoints: [],
-            finalHeading: heading,
+            finalHeading: snap.heading,
+            faceUnitId: snap.enemyId,
             plannedTime: engine.getState().timeMinutes,
           });
         } else {
-          const heading = drawingOrder.finalHeading !== undefined 
-            ? drawingOrder.finalHeading 
+          const drafted = drawingOrder.finalHeading !== undefined
+            ? drawingOrder.finalHeading
             : Math.atan2(dy, dx) - Math.PI / 2;
+          const mid = { x: (anchor.x + worldPos.x) / 2, y: (anchor.y + worldPos.y) / 2 };
+          const snap = engine.snapFacingToEnemy(mid, drafted, units[0].faction);
           engine.issueGroupLineOrder(
             units.map((u) => u.id),
             anchor,
             worldPos,
-            heading
+            snap.heading,
+            snap.enemyId
           );
         }
         sounds.playDispatchStamp();

@@ -48,6 +48,8 @@ export interface ManeuverOrder {
   waypoints: Vector2D[];
   curveControl?: Vector2D; // Bézier control point for curved flanking arrows
   targetUnitId?: string;
+  faceUnitId?: string; // On arrival, square the firing edge onto this enemy's current position
+  faceNearestEnemy?: boolean; // On arrival, square the firing edge onto whichever enemy is nearest then
   targetFormation?: Formation;
   plannedTime: number; // in battle minutes from start (e.g. 0 to 540 for 9 hours)
   dispatchArrivalTime?: number; // Time (in battle minutes) when the courier reaches the unit
