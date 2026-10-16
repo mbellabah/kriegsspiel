@@ -13,6 +13,31 @@ const MAX_SITUATIONAL_MULTIPLIER = 3.0;
 // ~7,700/h from one battery on a column in the open; now ~800/h)
 const ROUNDSHOT_LETHALITY = 0.065;
 
+// Morale tuning for direct combat (continuous rates are per effectiveSpeed second = 0.5 battle minutes).
+// Before this, casualties barely moved morale (20% losses cost 16 points) and the time-based drains
+// decided every rout, so units broke at 3-10% losses, and nothing ever brought morale back.
+// Morale lost per unit fraction of the unit's men lost: 20% losses now cost 50 points (was 80, i.e. 16)
+const CASUALTY_MORALE_SHOCK = 250;
+// Continuous pressure of being under fire / in melee, once per target (was 0.4 / 2.5 per firer)
+const FIRE_MORALE_DRAIN = 0.15;
+const MELEE_MORALE_DRAIN = 1.0;
+// Continuous drain while fired on from the flank / rear, weighted by the share of incoming fire from there
+// (was 2.0 / 4.5 per firer: a division flanked by two or three units broke in under 10 battle minutes)
+const FLANK_MORALE_DRAIN = 0.8;
+const REAR_MORALE_DRAIN = 2.0;
+// Concentrated crossfire: at least two firers whose bearings differ by this much (was 40 deg, which
+// two neighbouring enemy divisions in an ordinary line satisfied), and its continuous drain (was 2.5)
+const ENFILADE_MIN_ANGLE = (80 * Math.PI) / 180;
+const ENFILADE_MORALE_DRAIN = 0.5;
+// Passive recovery: units that have taken no casualties for a few battle minutes regain morale slowly,
+// up to a ceiling that falls with losses. Routed units rally once out of contact and back above RALLY_MORALE.
+const MORALE_RECOVERY_RATE = 0.6;
+const MORALE_RECOVERY_QUIET_MINUTES = 3;
+const RALLY_MORALE = 40;
+const RALLY_CONTACT_RADIUS = 160;
+// Routing units fall back at about half infantry march speed (was 0.4, too slow ever to break contact)
+const ROUT_SPEED = 2.0;
+
 export interface LossSample {
   t: number; // battle minutes since 07:00
   french: number;
@@ -87,6 +112,8 @@ export class BattleEngine {
   private accumulatedTacticalSeconds = 0;
   private accumulatedTacticalMinutes = 0;
   private lastSitrepTimes: Map<string, { timeMinutes: number; contactType: ContactType }> = new Map();
+  // Last casualty count seen per unit and when it last changed, for passive morale recovery
+  private lastCasualtySeen: Map<string, { casualties: number; timeMinutes: number }> = new Map();
 
   constructor(scenario: Scenario) {
     this.scenario = scenario;
@@ -1667,6 +1694,7 @@ export class BattleEngine {
       this.updatePlayerSubordinateAI(evalSeconds);
       this.updateEngineering();
       this.updateEncirclement(evalSeconds);
+      this.updateMoraleRecovery(evalSeconds);
       this.updateFogOfWar();
       this.state.sectorForceRatios = this.computeSectorRatios(this.state.units, this.state.playerFaction);
     }
@@ -1911,7 +1939,7 @@ export class BattleEngine {
         // Routing units drift backwards
         if (unit.status === 'routing') {
           const fleeDir = unit.faction === 'french' ? -1 : 1;
-          unit.position.x += fleeDir * 0.4 * effectiveSpeed;
+          unit.position.x += fleeDir * ROUT_SPEED * effectiveSpeed;
         }
         continue;
       }
@@ -3747,7 +3775,7 @@ export class BattleEngine {
     const frenchUnits = this.state.units.filter((u) => u.faction === 'french' && u.status !== 'shattered');
     const alliedUnits = this.state.units.filter((u) => u.faction === 'allies' && u.status !== 'shattered');
 
-    // Pre-calculate incoming angles to detect Concentrated Enfilade Crossfire (>= 40 deg angle difference)
+    // Pre-calculate incoming angles to detect Concentrated Enfilade Crossfire (bearings >= ENFILADE_MIN_ANGLE apart)
     const incomingAngles = new Map<string, number[]>();
     // Number of enemies each unit is firing on this tick: its fire is divided between them
     const targetCounts = new Map<string, number>();
@@ -3789,7 +3817,7 @@ export class BattleEngine {
           for (let j = i + 1; j < angles.length; j++) {
             let diff = Math.abs(angles[i] - angles[j]);
             while (diff > Math.PI) diff = Math.abs(diff - 2 * Math.PI);
-            if (diff >= (40 * Math.PI) / 180) { // >= 40 deg
+            if (diff >= ENFILADE_MIN_ANGLE) {
               u.isEnfiladed = true;
               break;
             }
@@ -3866,19 +3894,19 @@ export class BattleEngine {
           this.state.alliedLosses += damage;
 
           // Continuous combat morale drain (rate scaled per second by effectiveSpeed)
-          // Continuous pressure is per firing pair, so scale it by this attacker's share of its own fire
-          // (as with damage) and count enfilade — a property of the target, needing 2+ firers — once per target
-          const fireShare = 1 / Math.max(1, targetCounts.get(french.id) || 1);
-          const enfiladeShare = 1 / Math.max(1, incomingAngles.get(allied.id)?.length || 1);
-          const continuousMeleeShock = (isFrenchMelee ? 2.5 : 0.4) * fireShare * effectiveSpeed;
-          const continuousFlankShock = (isRear ? 4.5 : isFlanking ? 2.0 : 0) * fireShare * effectiveSpeed;
-          const continuousEnfiladeShock = allied.isEnfiladed ? 2.5 * enfiladeShare * effectiveSpeed : 0;
-          const casualtyMoraleShock = (effectiveDamage / Math.max(1, allied.initialStrength)) * 80;
+          // Continuous pressure is a state of the target, so each of its N firers adds 1/N: being under fire,
+          // in melee or enfiladed counts once however many units are firing (more firers already cost more
+          // casualties), and flank / rear pressure scales with the share of incoming fire from that direction.
+          const incomingShare = 1 / Math.max(1, incomingAngles.get(allied.id)?.length || 1);
+          const continuousMeleeShock = (isFrenchMelee ? MELEE_MORALE_DRAIN : FIRE_MORALE_DRAIN) * incomingShare * effectiveSpeed;
+          const continuousFlankShock = (isRear ? REAR_MORALE_DRAIN : isFlanking ? FLANK_MORALE_DRAIN : 0) * incomingShare * effectiveSpeed;
+          const continuousEnfiladeShock = allied.isEnfiladed ? ENFILADE_MORALE_DRAIN * incomingShare * effectiveSpeed : 0;
+          const casualtyMoraleShock = (effectiveDamage / Math.max(1, allied.initialStrength)) * CASUALTY_MORALE_SHOCK;
 
           // Discrete one-time shock: point-blank battalion volley delivers a sharp 8-point shock burst once
           const discreteVolleyShock = isDischargingVolley ? 8.0 : 0;
 
-          const moraleLoss = casualtyMoraleShock + continuousMeleeShock + continuousFlankShock + continuousEnfiladeShock + discreteVolleyShock + 0.04 * effectiveSpeed;
+          const moraleLoss = casualtyMoraleShock + continuousMeleeShock + continuousFlankShock + continuousEnfiladeShock + discreteVolleyShock + 0.04 * incomingShare * effectiveSpeed;
           allied.morale = Math.max(0, allied.morale - moraleLoss);
 
           // Suppression buildup under fire, melee press, suppressive mission, and enfilade crossfire
@@ -3886,7 +3914,7 @@ export class BattleEngine {
           const suppressiveMult = isSuppressive ? 2.5 : 1.0;
           const suppressiveBonus = isSuppressive ? 12.0 * effectiveSpeed : 0;
           const volleySuppression = isDischargingVolley ? 45 : 0;
-          const enfiladeSuppression = allied.isEnfiladed ? 0.35 * enfiladeShare * effectiveSpeed : 0;
+          const enfiladeSuppression = allied.isEnfiladed ? 0.35 * incomingShare * effectiveSpeed : 0;
           allied.suppression = Math.min(
             100,
             (allied.suppression || 0) +
@@ -3945,19 +3973,19 @@ export class BattleEngine {
         this.state.frenchLosses += damage;
 
         // Continuous combat morale drain (rate scaled per second by effectiveSpeed)
-        // Continuous pressure is per firing pair, so scale it by this attacker's share of its own fire
-        // (as with damage) and count enfilade — a property of the target, needing 2+ firers — once per target
-        const fireShare = 1 / Math.max(1, targetCounts.get(allied.id) || 1);
-        const enfiladeShare = 1 / Math.max(1, incomingAngles.get(french.id)?.length || 1);
-        const continuousMeleeShock = (isAlliedMelee ? 2.5 : 0.4) * fireShare * effectiveSpeed;
-        const continuousFlankShock = (isRear ? 4.5 : isFlanking ? 2.0 : 0) * fireShare * effectiveSpeed;
-        const continuousEnfiladeShock = french.isEnfiladed ? 2.5 * enfiladeShare * effectiveSpeed : 0;
-        const casualtyMoraleShock = (effectiveDamage / Math.max(1, french.initialStrength)) * 80;
+        // Continuous pressure is a state of the target, so each of its N firers adds 1/N: being under fire,
+        // in melee or enfiladed counts once however many units are firing (more firers already cost more
+        // casualties), and flank / rear pressure scales with the share of incoming fire from that direction.
+        const incomingShare = 1 / Math.max(1, incomingAngles.get(french.id)?.length || 1);
+        const continuousMeleeShock = (isAlliedMelee ? MELEE_MORALE_DRAIN : FIRE_MORALE_DRAIN) * incomingShare * effectiveSpeed;
+        const continuousFlankShock = (isRear ? REAR_MORALE_DRAIN : isFlanking ? FLANK_MORALE_DRAIN : 0) * incomingShare * effectiveSpeed;
+        const continuousEnfiladeShock = french.isEnfiladed ? ENFILADE_MORALE_DRAIN * incomingShare * effectiveSpeed : 0;
+        const casualtyMoraleShock = (effectiveDamage / Math.max(1, french.initialStrength)) * CASUALTY_MORALE_SHOCK;
 
         // Discrete one-time shock: point-blank battalion volley delivers a sharp 8-point shock burst once
         const discreteVolleyShock = isDischargingVolley ? 8.0 : 0;
 
-        const moraleLoss = casualtyMoraleShock + continuousMeleeShock + continuousFlankShock + continuousEnfiladeShock + discreteVolleyShock + 0.04 * effectiveSpeed;
+        const moraleLoss = casualtyMoraleShock + continuousMeleeShock + continuousFlankShock + continuousEnfiladeShock + discreteVolleyShock + 0.04 * incomingShare * effectiveSpeed;
         french.morale = Math.max(0, french.morale - moraleLoss);
 
         // Suppression buildup
@@ -3965,7 +3993,7 @@ export class BattleEngine {
         const suppressiveMult = isSuppressive ? 2.5 : 1.0;
         const suppressiveBonus = isSuppressive ? 12.0 * effectiveSpeed : 0;
         const volleySuppression = isDischargingVolley ? 45 : 0;
-        const enfiladeSuppression = french.isEnfiladed ? 0.35 * enfiladeShare * effectiveSpeed : 0;
+        const enfiladeSuppression = french.isEnfiladed ? 0.35 * incomingShare * effectiveSpeed : 0;
         french.suppression = Math.min(
           100,
           (french.suppression || 0) +
@@ -4264,7 +4292,7 @@ export class BattleEngine {
       }
     }
 
-    // Concentrated Enfilade Crossfire: defender caught in converging angles (>= 40 deg split) takes +50% damage
+    // Concentrated Enfilade Crossfire: defender caught in converging angles (>= ENFILADE_MIN_ANGLE split) takes +50% damage
     if (defender.isEnfiladed) {
       power *= 1.50;
     }
@@ -4543,6 +4571,47 @@ export class BattleEngine {
     return faction === 'french' ? 0 : Math.PI;
   }
 
+  // Passive morale recovery. A unit that has taken no casualties for MORALE_RECOVERY_QUIET_MINUTES
+  // regains morale slowly, up to a ceiling that falls with its losses (95 at full strength, 73 at 60%).
+  // A routed unit recovers the same way once no enemy is within RALLY_CONTACT_RADIUS, and rallies
+  // (stops fleeing and takes orders again) once back to RALLY_MORALE.
+  private updateMoraleRecovery(effectiveSpeed: number) {
+    const now = this.state.timeMinutes;
+    for (const unit of this.state.units) {
+      if (unit.status === 'shattered' || unit.strength <= 0) continue;
+      let seen = this.lastCasualtySeen.get(unit.id);
+      if (!seen || seen.casualties !== unit.casualtiesTaken || now < seen.timeMinutes) {
+        seen = { casualties: unit.casualtiesTaken, timeMinutes: now };
+        this.lastCasualtySeen.set(unit.id, seen);
+      }
+      if (now - seen.timeMinutes < MORALE_RECOVERY_QUIET_MINUTES || unit.isEncircled) continue;
+
+      const isRouting = unit.status === 'routing';
+      if (isRouting) {
+        const inContact = this.state.units.some(
+          (e) =>
+            e.faction !== unit.faction &&
+            e.status !== 'shattered' &&
+            e.strength > 0 &&
+            Math.hypot(e.position.x - unit.position.x, e.position.y - unit.position.y) <= RALLY_CONTACT_RADIUS
+        );
+        if (inContact) continue;
+      }
+
+      const ceiling = 40 + 55 * (unit.strength / Math.max(1, unit.initialStrength));
+      if (unit.morale < ceiling) {
+        unit.morale = Math.min(ceiling, unit.morale + MORALE_RECOVERY_RATE * effectiveSpeed);
+      }
+      if (isRouting) {
+        if (unit.morale < RALLY_MORALE) continue;
+        unit.status = 'wavering';
+        this.addLog(`[RALLY] ${unit.name} has rallied out of contact and re-formed (${Math.round(unit.morale)}% morale).`, unit.faction, 'highlight');
+      }
+      // Out of contact nothing else re-evaluates status, so let a recovered unit stop wavering
+      this.updateMoraleStatus(unit);
+    }
+  }
+
   private updateMoraleStatus(unit: Unit) {
     const minShatterStrength = unit.type === 'artillery' ? 1 : 80;
     // Units shatter only when fighting headcount is annihilated
@@ -4586,6 +4655,8 @@ export class BattleEngine {
         this.addLog(`[PANIC] ${unit.name} morale has broken! Troops are routing in disarray!`, unit.faction, 'critical');
         this.triggerContactSitrep(unit, 'routing');
       }
+    } else if (unit.status === 'routing') {
+      // A routed unit keeps fleeing until updateMoraleRecovery rallies it out of contact
     } else if (unit.morale <= 50) {
       if (!unit.hasTriggeredWaveringSitrep) {
         unit.hasTriggeredWaveringSitrep = true;

@@ -153,7 +153,7 @@ export interface Unit {
   subordinateInitiativeActive?: boolean; // True when operating under autonomous subordinate commander initiative
 
   // Advanced Tactical Fire Missions & Combined Arms Links
-  isEnfiladed?: boolean; // True when caught in converging crossfire (>= 40 deg angle difference)
+  isEnfiladed?: boolean; // True when caught in converging crossfire (2+ firers >= 80 deg apart)
   volleyReady?: boolean; // True when holding fire for point-blank battalion volley
   suppressingTargetId?: string; // ID of target being suppressed with continuous covering fire
   observerForBatteryId?: string; // ID of artillery battery this unit is currently spotting for
