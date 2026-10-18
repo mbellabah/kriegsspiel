@@ -93,3 +93,7 @@ src/
 ```
 
 Built with React 19, TypeScript, Vite and Tailwind. All rendering is done on a single HTML canvas, and the sound effects are synthesized with the Web Audio API (muted by default).
+
+## License
+
+[MIT](LICENSE)
