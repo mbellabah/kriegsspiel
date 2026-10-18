@@ -1,4 +1,4 @@
-# Kriegspiel — Austerlitz 1805
+# Kriegsspiel — Austerlitz 1805
 
 A real-time command-and-control wargame of the Battle of Austerlitz that runs in the browser. You play Napoleon's staff, not his soldiers: you send orders by courier, they arrive late, your picture of the enemy goes out of date, and the map looks like a modern NATO operations overlay laid on a topographic atlas.
 
